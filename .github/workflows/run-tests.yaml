@@ -2,24 +2,22 @@ name: C/C++ CI
 
 on:
   push:
-      branches: [ master, develop ]
+    branches: [ master, develop ]
   pull_request:
-      branches: [ master, develop ]
+    branches: [ master, develop ]
 
 jobs:
-  build-and-test:
-      runs-on: ubuntu-latest
-      steps:
-      - uses: actions/checkout@v2
-      
-      - name: install cpp-libs
+  build:
+
+    runs-on: ubuntu-20.04
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: get packages
       run: sudo apt install -y gfortran liblapack-dev libblas-dev python3.9
-      
-      - name: configure
+    - name: configure
       run: ./configure
-      
-      - name: make
+    - name: make
       run: make -j cuda=0
-      
-      - name: run_test
+    - name: run tests
       run: cd test && ./run_travis_test.py
