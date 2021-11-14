@@ -1,8 +1,14 @@
-name: Compile and run CPU tests
+# This action compiles only the different variants of CPU and GPU.
+#
+# It does not run tests since the workers are CPU-only Virtual Machines. 
+# To enable GPU tests it would have to build a GPU version and run it on 
+# an external Github worker in some other cloud.
+
+name: Compile-only CPU, GPU and CPU-GPU variants 
 
 on:
   push:
-    branches: [ master, develop ]
+    branches: [ master, develop, github-actions-gpu ]
   pull_request:
     branches: [ master, develop ]
 
@@ -13,6 +19,7 @@ jobs:
     strategy:
       matrix:
         cuda_option: ['cuda=0 cpu=1', 'cuda=1 cpu=0', 'cuda=1 cpu=1']
+        full_double: ['full_double=0', 'full_double=1']
 
     steps:
     - uses: actions/checkout@v2
