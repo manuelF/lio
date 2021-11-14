@@ -11,11 +11,15 @@ jobs:
       runs-on: ubuntu-latest
       steps:
       - uses: actions/checkout@v2
-      - name: install cppunit
-      run: sudo apt install -y libcppunit-dev
+      
+      - name: install cpp-libs
+      run: sudo apt install -y gfortran liblapack-dev libblas-dev python3.5
+      
       - name: configure
       run: ./configure
+      
       - name: make
-      run: make
-      - name: make test
-      run: make test
+      run: make -j cuda=0
+      
+      - name: run_test
+      run: cd test && ./run_travis_test.py
