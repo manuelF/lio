@@ -14,7 +14,7 @@ on:
 
 jobs:
   build:
-    name: 'Build with ${{ matrix.cuda_option }}'
+    name: 'Build with ${{ matrix.cuda_option }} ${{ matrix.full_double }}'
     runs-on: ubuntu-20.04
     strategy:
       matrix:
@@ -27,5 +27,5 @@ jobs:
       run: sudo apt install -y gfortran liblapack-dev libblas-dev python3.9 linux-headers-$(uname -r) nvidia-cuda-toolkit
     - name: configure
       run: ./configure
-    - name: make ${{ matrix.cuda_option }}
-      run: make -j ${{ matrix.cuda_option}}
+    - name: make ${{ matrix.cuda_option }} ${{ matrix.full_double }}
+      run: make -j ${{ matrix.cuda_option}} ${{ matrix.full_double }}
