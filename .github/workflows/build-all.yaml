@@ -4,7 +4,7 @@
 # To enable GPU tests it would have to build a GPU version and run it on 
 # an external Github worker in some other cloud.
 
-name: Compile-only CPU, GPU and CPU-GPU variants 
+name: Compile-only CPU and CPU-GPU variants 
 
 on:
   push:
@@ -14,12 +14,13 @@ on:
 
 jobs:
   build:
-    name: 'Build with ${{ matrix.cuda_option }} ${{ matrix.full_double }}'
+    name: 'Build with ${{ matrix.cuda_option }} ${{ matrix.precision }} ${{ matrix.analytics }}'
     runs-on: ubuntu-20.04
     strategy:
       matrix:
-        cuda_option: ['cuda=0 cpu=1', 'cuda=1 cpu=0', 'cuda=1 cpu=1']
-        full_double: ['full_double=0', 'full_double=1']
+        cuda_option: ['cuda=0', 'cuda=1']
+        precision: ['precision=0', 'precision=1']
+        analytics: ['analytics=0', 'analytics=2']
 
     steps:
     - uses: actions/checkout@v2
@@ -27,5 +28,5 @@ jobs:
       run: sudo apt install -y gfortran liblapack-dev libblas-dev python3.9 linux-headers-$(uname -r) nvidia-cuda-toolkit
     - name: configure
       run: ./configure
-    - name: make ${{ matrix.cuda_option }} ${{ matrix.full_double }}
-      run: make -j ${{ matrix.cuda_option}} ${{ matrix.full_double }}
+    - name: make ${{ matrix.cuda_option }} ${{ matrix.precision }} ${{ matrix.analytics }}
+      run: make -j ${{ matrix.cuda_option}} ${{ matrix.precision }} ${{ matrix.analytics }}
