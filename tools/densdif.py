@@ -1,12 +1,12 @@
 #!/usr/bin/python3
 import numpy as np
+from typing import List
 
 
-def read_dens(file_name):
-
+def read_dens(file_name: str):
     data_file = open(file_name, "r")
 
-    dens_vals = []
+    dens_vals: List[float] = []
     for data_line in data_file.readlines():
         dens_val1 = float(data_line.split()[0])
         dens_vals.append(dens_val1)
@@ -15,8 +15,7 @@ def read_dens(file_name):
     return dens_vals
 
 
-def print_dens_td(file_name, dens_vals):
-
+def print_dens_td(file_name: str, dens_vals: List[float]):
     data_file = open(file_name, 'w')
 
     for dens_val1 in dens_vals:
@@ -26,8 +25,7 @@ def print_dens_td(file_name, dens_vals):
     return 0
 
 
-def print_dens(file_name, dens_vals):
-
+def print_dens(file_name: str, dens_vals: List[float]):
     data_file = open(file_name, 'w')
 
     basis_size = int(np.sqrt(len(dens_vals)))
@@ -47,7 +45,7 @@ def print_dens(file_name, dens_vals):
 dens0 = read_dens("dens_neg.in")
 dens1 = read_dens("dens_pos.in")
 
-densf = []
+densf: List[float] = []
 for idx in range(len(dens1)):
     densf.append(dens1[idx] - dens0[idx])
 

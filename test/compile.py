@@ -3,19 +3,20 @@
 import os
 import subprocess
 import itertools
+from typing import List, Dict
 
 
-def set_options(flag):
+def set_options(flag: Dict[str, str]) -> str:
     opt = ["%s=%s" % (k, v) for (k, v) in flag_set.items()]
     opt_str = "%s" % (" ".join(opt),)
     options = opt_str.rstrip()
     return options
 
 
-def compile_lio(options):
+def compile_lio(options: str):
     liodir = os.path.abspath("../")
     devnull = open(os.devnull, "w")
-    cmd = ["tests_engine/build.sh", liodir, options]
+    cmd: List[str] = ["tests_engine/build.sh", liodir, options]
     process = subprocess.Popen(cmd, stdout=devnull, stderr=devnull)
     process.wait()
     return process.returncode
@@ -27,10 +28,9 @@ def run_lio():
     process.wait()
     return process.returncode
 
-# Verifies if CUDA is installed.
-
 
 def cuda_is_installed():
+    """ Verifies if CUDA is installed."""
     devnull = open(os.devnull, 'wb')
     process = subprocess.Popen(
         ["nvcc --version"],
@@ -51,10 +51,9 @@ def cuda_is_installed():
 
     return is_installed
 
-# Checks if Intel compilers are present.
-
 
 def intel_is_installed():
+    """Checks if Intel compilers are present."""
     devnull = open(os.devnull, 'wb')
     process = subprocess.Popen(
         ["icc --version"],
@@ -84,7 +83,7 @@ if __name__ == "__main__":
     if (intel_is_installed()):
         comp.append("intel")
     seq = list(itertools.product(["0", "1"], repeat=len(comp)))
-    all_sets = []
+    all_sets: List[Dict[str, str]] = []
 
     for cases in seq:
         compile_opts = dict([(comp[i], cases[i]) for i in range(0, len(comp))])
