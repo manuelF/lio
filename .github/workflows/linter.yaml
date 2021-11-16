@@ -31,6 +31,7 @@ jobs:
           # TODO: Enable this when codebase is clang-format compliant.
           # VALIDATE_CPP: true
           VALIDATE_PYTHON_BLACK: true
+          VALIDATE_PYTHON_MYPY: true
           # TODO: Enable this when codebase is bash-exec compliant.
           # VALIDATE_BASH: true 
           # VALIDATE_BASH_EXEC: true 
