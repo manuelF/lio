@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 import os
 import re
-from typing import List, Literal, TextIO, Union
+from typing import List, Literal, TextIO, Tuple
 
 
-def obtain_fukui(file_in: TextIO) -> Union[List[float], Literal[-1]]:
+def obtain_fukui(file_in: TextIO) -> Tuple[Literal[0, -1], List[float]]:
     lista: List[float] = []
     for line in file_in.readlines():
         m = re.match(
@@ -17,12 +17,12 @@ def obtain_fukui(file_in: TextIO) -> Union[List[float], Literal[-1]]:
             lista.append(float(m.group(4)))
 
     if len(lista) < 1:
-        return -1
+        return (-1, [])
 
-    return lista
+    return (0, lista)
 
 
-def error(fuk: List[float], fukok: List[float]) -> Literal[0, -1, 1]:
+def error(fuk: List[float], fukok: List[float]) -> Literal[0, -1]:
     dim1 = len(fuk)
     dim2 = len(fukok)
 
@@ -34,41 +34,39 @@ def error(fuk: List[float], fukok: List[float]) -> Literal[0, -1, 1]:
     for num in range(dim1):
         value = abs(fuk[num] - fukok[num])
         if value > 1e-2:
-            scr = 1
+            scr = -1
             print("Error in fukui:")
             print("Value of fukui", fuk[num])
             print("Value of fukui.ok", fukok[num])
 
     if scr == 0:
         return 0
-    return 1
+    return -1
 
 
 def Check() -> Literal[0, -1]:
     # Output
-    fuk = []
     is_file = os.path.isfile("fukui")
     if not is_file:
         print("The fukui file is missing.")
         return -1
 
     f = open("fukui", "r")
-    fuk = obtain_fukui(f)
+    status, fuk = obtain_fukui(f)
     f.close
-    if not fuk:
+    if status != 0:
         print("Error in reading fukui.")
 
     # Ideal Output
-    fukok = []
     is_file = os.path.isfile("fukui")
     if not is_file:
         print("The fukui.ok file is missing.")
         return -1
 
     f = open("fukui.ok", "r")
-    fukok = obtain_fukui(f)
+    status, fukok = obtain_fukui(f)
     f.close
-    if not fukok:
+    if status != 0:
         print("Error in reading fukui.ok.")
 
     ok_output = error(fuk, fukok)
