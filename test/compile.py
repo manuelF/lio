@@ -3,16 +3,17 @@
 import os
 import subprocess
 import itertools
+from typing import List, Dict, Tuple, Iterator
 
 
-def set_options(flag):
+def set_options(flag_set: Dict[str, str]) -> str:
     opt = ["%s=%s" % (k, v) for (k, v) in flag_set.items()]
     opt_str = "%s" % (" ".join(opt),)
     options = opt_str.rstrip()
     return options
 
 
-def compile_lio(options):
+def compile_lio(options: str) -> int:
     liodir = os.path.abspath("../")
     devnull = open(os.devnull, "w")
     cmd = ["tests_engine/build.sh", liodir, options]
@@ -21,56 +22,43 @@ def compile_lio(options):
     return process.returncode
 
 
-def run_lio():
+def run_lio() -> int:
     cmd = ["./new_tests.py"]
     process = subprocess.Popen(cmd, cwd=os.path.abspath("."))
     process.wait()
     return process.returncode
 
 
-# Verifies if CUDA is installed.
-
-
-def cuda_is_installed():
+def cuda_is_installed() -> bool:
+    """Verifies if CUDA is installed."""
     devnull = open(os.devnull, "wb")
-    process = subprocess.Popen(
-        ["nvcc --version"], shell=True, stdout=devnull, stderr=devnull
-    )
+    command = ["nvcc --version"]
+
+    process = subprocess.Popen(command, shell=True, stdout=devnull, stderr=devnull)
     try:
-        stdout, stderr = process.communicate()
+        _, _ = process.communicate()
     except BaseException:
         process.kill()
         process.wait()
         raise
     retcode = process.poll()
-
-    is_installed = False
-    if retcode == 0:
-        is_installed = True
-
+    is_installed = retcode == 0
     return is_installed
 
 
-# Checks if Intel compilers are present.
-
-
-def intel_is_installed():
+def intel_is_installed() -> bool:
+    """Checks if Intel compilers are present"""
     devnull = open(os.devnull, "wb")
-    process = subprocess.Popen(
-        ["icc --version"], shell=True, stdout=devnull, stderr=devnull
-    )
+    command = ["icc --version"]
+    process = subprocess.Popen(command, shell=True, stdout=devnull, stderr=devnull)
     try:
-        stdout, stderr = process.communicate()
+        _, _ = process.communicate()
     except BaseException:
         process.kill()
         process.wait()
         raise
     retcode = process.poll()
-
-    is_installed = False
-    if retcode == 0:
-        is_installed = True
-
+    is_installed = retcode == 0
     return is_installed
 
 
@@ -81,11 +69,14 @@ if __name__ == "__main__":
         comp.append("cuda")
     if intel_is_installed():
         comp.append("intel")
-    seq = list(itertools.product(["0", "1"], repeat=len(comp)))
-    all_sets = []
+
+    switches = ["0", "1"]
+    zips: Iterator[Tuple[str, ...]] = itertools.product(switches, repeat=len(comp))
+    seq: List[Tuple[str, ...]] = list(zips)
+    all_sets: List[Dict[str, str]] = []
 
     for cases in seq:
-        compile_opts = dict([(comp[i], cases[i]) for i in range(0, len(comp))])
+        compile_opts = dict(zip(comp, cases))
         if cuda_is_installed():
             if compile_opts["cuda"] == "1":
                 compile_opts["cuda"] = "2"
