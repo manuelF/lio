@@ -71,11 +71,13 @@ if __name__ == "__main__":
         comp.append("intel")
 
     switches = ["0", "1"]
-    zips: Iterator[Tuple[str, ...]] = itertools.product(switches, repeat=len(comp))
-    seq: List[Tuple[str, ...]] = list(zips)
+    all_combinations_tuple: Iterator[Tuple[str, ...]] = itertools.product(
+        switches, repeat=len(comp)
+    )
+    all_combinations: List[Tuple[str, ...]] = list(all_combinations_tuple)
     all_sets: List[Dict[str, str]] = []
 
-    for cases in seq:
+    for cases in all_combinations:
         compile_opts = dict(zip(comp, cases))
         if cuda_is_installed():
             if compile_opts["cuda"] == "1":

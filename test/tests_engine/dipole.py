@@ -53,7 +53,6 @@ def Check(*opt: str) -> Literal[0, -1]:
     else:
         file_in = "dipole_moment"
 
-    dip = []
     is_file = os.path.isfile(file_in)
     if not is_file:
         print("The %s file is missing." % file_in)
