@@ -4,7 +4,7 @@ import re
 from typing import List, Literal, TextIO, Union
 
 
-def obtain_fukui(file_in: TextIO) -> Union[List[float], float]:
+def obtain_fukui(file_in: TextIO) -> Union[List[float], Literal[-1]]:
     lista: List[float] = []
     for line in file_in.readlines():
         m = re.match(
@@ -25,12 +25,12 @@ def obtain_fukui(file_in: TextIO) -> Union[List[float], float]:
 def error(fuk: List[float], fukok: List[float]) -> Literal[0, -1, 1]:
     dim1 = len(fuk)
     dim2 = len(fukok)
-    scr = 0
 
     if dim1 != dim2:
         print("There are different number of Fukui charges in outputs.")
         return -1
 
+    scr = 0
     for num in range(dim1):
         value = abs(fuk[num] - fukok[num])
         if value > 1e-2:
@@ -39,10 +39,12 @@ def error(fuk: List[float], fukok: List[float]) -> Literal[0, -1, 1]:
             print("Value of fukui", fuk[num])
             print("Value of fukui.ok", fukok[num])
 
-    return scr
+    if scr == 0:
+        return 0
+    return 1
 
 
-def Check():
+def Check() -> Literal[0, -1]:
     # Output
     fuk = []
     is_file = os.path.isfile("fukui")
@@ -75,3 +77,5 @@ def Check():
         print("Test Fukui:      ERROR")
     else:
         print("Test Fukui:      OK")
+
+    return 0

@@ -22,7 +22,7 @@ def read_restart(file_in: TextIO) -> Literal[0, -1]:
     return -1
 
 
-def Check():
+def Check() -> Literal[0, -1]:
     # Output
     is_file = os.path.isfile("output")
     if not is_file:
@@ -36,3 +36,4 @@ def Check():
         print("Test Restart:    ERROR")
     else:
         print("Test Restart:    OK")
+    return 0

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os
 import re
-from typing import List, TextIO
+from typing import List, Literal, TextIO
 
 
 def obtain_forces(file_in: TextIO) -> List[float]:
@@ -35,7 +35,7 @@ def error(fc: List[float], fc_ok: List[float]) -> int:
     return scr
 
 
-def Check():
+def Check() -> Literal[0, -1]:
     # Output
     fc = []
     is_file = os.path.isfile("forces")
@@ -68,3 +68,4 @@ def Check():
         print("Test Forces:     ERROR")
     else:
         print("Test Forces:     OK")
+    return 0

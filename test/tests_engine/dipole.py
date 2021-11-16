@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os
 import re
-from typing import List, Literal, TextIO
+from typing import Iterable, List, Literal, TextIO, Tuple
 
 
 def obtain_dipole(file_in: TextIO) -> List[float]:
@@ -39,10 +39,12 @@ def error(dip: List[float], dip_ok: List[float]) -> Literal[0, -1]:
             print("Value of dipole moment", dip[num])
             print("Value of ideal dipole moment", dip_ok[num])
 
-    return scr
+    if scr == 0:
+        return 0
+    return -1
 
 
-def Check(*opt):
+def Check(*opt: str) -> Literal[0, -1]:
     option = "".join(opt)
 
     # Ouput
@@ -83,3 +85,4 @@ def Check(*opt):
         print("Test Dipole:     ERROR")
     else:
         print("Test Dipole:     OK")
+    return 0

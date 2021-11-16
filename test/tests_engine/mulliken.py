@@ -34,10 +34,12 @@ def error(mull: List[float], mull_ok: List[float]) -> Literal[0, -1]:
             print("Valor en mulliken", mull[num])
             print("Valor en mulliken.ok", mull_ok[num])
 
-    return scr
+    if scr == 0:
+        return 0
+    return -1
 
 
-def Check():
+def Check() -> Literal[0, -1]:
     # Output
     mull = []
     is_file = os.path.isfile("mulliken")
@@ -71,3 +73,4 @@ def Check():
         print("Test Mulliken:   ERROR")
     else:
         print("Test Mulliken:   OK")
+    return 0

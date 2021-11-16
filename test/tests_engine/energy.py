@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 import os
 import re
-from typing import List, Literal, TextIO
+from typing import List, Literal, TextIO, Union
 
 
-def obtain_energies(file_in: TextIO) -> List[float]:
+def obtain_energies(file_in: TextIO) -> Union[List[float], Literal[-1]]:
     energies = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     for line in file_in.readlines():
         # Total Energy
@@ -91,7 +91,7 @@ def error(ene: List[float], ene_ok: List[float]) -> Literal[0, -1]:
     return scr
 
 
-def Check():
+def Check() -> Literal[0, -1]:
     # Output
     is_file = os.path.isfile("output")
     if not is_file:
@@ -126,3 +126,4 @@ def Check():
         print("Test Energy:     ERROR")
     else:
         print("Test Energy:     OK")
+    return 0
