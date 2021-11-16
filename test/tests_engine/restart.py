@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 import os
 import re
+from typing import Literal, TextIO
 
 
-def read_restart(file_in):
+def read_restart(file_in: TextIO) -> Literal[0, -1]:
     is_file = os.path.isfile("restart.in")
     if not is_file:
         print("The restart.in file doesn't exist.")
         return -1
 
     for line in file_in.readlines():
-        m = re.match("\\s+VCInp =\\s+(\\w)", line)
+        m = re.match(r"\s+VCInp =\s+(\w)", line)
         if m:
             rest = "".join(m.group(1))
             if rest == "T":
@@ -18,6 +19,7 @@ def read_restart(file_in):
             else:
                 print("The test didn't read restart.in file.")
                 return -1
+    return -1
 
 
 def Check():

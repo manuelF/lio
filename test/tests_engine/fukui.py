@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-import re
 import os
+import re
+from typing import List, Literal, TextIO, Union
 
 
-def obtain_fukui(file_in):
-    lista = []
+def obtain_fukui(file_in: TextIO) -> Union[List[float], float]:
+    lista: List[float] = []
     for line in file_in.readlines():
         m = re.match(
-            "\\s+\\d+\\s+([0-9.-]+)\\s+([0-9.-]+)\\s+([0-9.-]+)\\s+([0-9.-]+)", line
+            r"\s+\d+\s+([0-9.-]+)\s+([0-9.-]+)\s+([0-9.-]+)\s+([0-9.-]+)", line
         )
         if m:
             lista.append(float(m.group(1)))
@@ -21,7 +22,7 @@ def obtain_fukui(file_in):
     return lista
 
 
-def error(fuk, fukok):
+def error(fuk: List[float], fukok: List[float]) -> Literal[0, -1, 1]:
     dim1 = len(fuk)
     dim2 = len(fukok)
     scr = 0

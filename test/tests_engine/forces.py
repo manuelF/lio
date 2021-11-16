@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-import re
 import os
+import re
+from typing import List, TextIO
 
 
-def obtain_forces(file_in):
-    lista = []
+def obtain_forces(file_in: TextIO) -> List[float]:
+    lista: List[float] = []
     for line in file_in.readlines():
-        m = re.match("\\s+\\d+\\s+([0-9.-]+)\\s+([0-9.-]+)\\s+([0-9.-]+)", line)
+        m = re.match(r"\s+\d+\s+([0-9.-]+)\s+([0-9.-]+)\s+([0-9.-]+)", line)
         if m:
             lista.append(float(m.group(1)))
             lista.append(float(m.group(2)))
@@ -15,7 +16,7 @@ def obtain_forces(file_in):
     return lista
 
 
-def error(fc, fc_ok):
+def error(fc: List[float], fc_ok: List[float]) -> int:
     dim1 = len(fc)
     dim2 = len(fc_ok)
     scr = 0

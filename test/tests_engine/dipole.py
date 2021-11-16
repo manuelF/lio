@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-import re
 import os
+import re
+from typing import List, Literal, TextIO
 
 
-def obtain_dipole(file_in):
-    dip = []
-    condition = re.match("\\w+td", file_in.name)
+def obtain_dipole(file_in: TextIO) -> List[float]:
+    dip: List[float] = []
+    condition = re.match(r"\w+td", file_in.name)
 
     if condition:
-        patron = "\\s+([0-9.-]+E[-+0-9]\\d+)\\s+([0-9.-]+E[-+0-9]\\d+)\\s+([0-9.-]+E[-+0-9]\\d+)\\s+([0-9.-]+E[-+0-9]\\d+)"
+        patron = r"\s+([0-9.-]+E[-+0-9]\d+)\s+([0-9.-]+E[-+0-9]\d+)\s+([0-9.-]+E[-+0-9]\d+)\s+([0-9.-]+E[-+0-9]\d+)"
     else:
-        patron = "\\s+([0-9.-E-\\d+]+)\\s+([0-9.-E-\\d+]+)\\s+([0-9.-E-\\d+]+)\\s+([0-9.-E-\\d+]+)"
+        patron = (
+            r"\s+([0-9.-E-\d+]+)\s+([0-9.-E-\d+]+)\s+([0-9.-E-\d+]+)\s+([0-9.-E-\d+]+)"
+        )
 
     for line in file_in.readlines():
         m = re.match(patron, line)
@@ -20,7 +23,7 @@ def obtain_dipole(file_in):
     return dip
 
 
-def error(dip, dip_ok):
+def error(dip: List[float], dip_ok: List[float]) -> Literal[0, -1]:
     dim1 = len(dip)
     dim2 = len(dip_ok)
     scr = 0
@@ -31,7 +34,7 @@ def error(dip, dip_ok):
     for num in range(dim1):
         value = abs(dip[num] - dip_ok[num])
         if value > 1e-3:
-            src = -1
+            scr = -1
             print("Error in dipole:")
             print("Value of dipole moment", dip[num])
             print("Value of ideal dipole moment", dip_ok[num])

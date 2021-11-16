@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
-import re
 import os
+import re
+from typing import List, Literal, TextIO
 
 
-def obtain_mulliken(file_in):
-    lista = []
+def obtain_mulliken(file_in: TextIO) -> List[float]:
+    lista: List[float] = []
     for line in file_in.readlines():
-        m = re.match("\\s+\\d+\\s+\\d+\\s+([0-9.-]+)", line)
+        m = re.match(r"\s+\d+\s+\d+\s+([0-9.-]+)", line)
         if m:
             lista.append(float(m.group(1)))
 
-        m = re.match("\\s+Total Charge =\\s+([0-9.-]+)", line)
+        m = re.match(r"\s+Total Charge =\s+([0-9.-]+)", line)
         if m:
             lista.append(float(m.group(1)))
 
     return lista
 
 
-def error(mull, mull_ok):
+def error(mull: List[float], mull_ok: List[float]) -> Literal[0, -1]:
     dim1 = len(mull)
     dim2 = len(mull_ok)
     scr = 0
@@ -28,7 +29,7 @@ def error(mull, mull_ok):
     for num in range(dim1):
         value = abs(mull[num] - mull_ok[num])
         if value > 1e-2:
-            src = -1
+            scr = -1
             print("Error in mulliken charges:")
             print("Valor en mulliken", mull[num])
             print("Valor en mulliken.ok", mull_ok[num])

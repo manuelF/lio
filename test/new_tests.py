@@ -4,6 +4,7 @@ import re
 import os
 import argparse
 import subprocess
+from typing import List
 
 
 def lio_env():
@@ -24,7 +25,7 @@ def lio_env():
     return lioenv
 
 
-def run_lio(dirs_with_tests):
+def run_lio(dirs_with_tests: List[str]):
     "Runs all Tests"
     lioenv = lio_env()
 
