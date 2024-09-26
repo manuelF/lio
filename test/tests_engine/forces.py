@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-import re
 import os
+import re
+from typing import List, Literal, TextIO
 
 
-def obtain_forces(file_in):
-    lista = []
+def obtain_forces(file_in: TextIO) -> List[float]:
+    lista: List[float] = []
     for line in file_in.readlines():
         m = re.match(r"\s+\d+\s+([0-9.-]+)\s+([0-9.-]+)\s+([0-9.-]+)", line)
         if m:
@@ -15,7 +16,7 @@ def obtain_forces(file_in):
     return lista
 
 
-def error(fc, fc_ok):
+def error(fc: List[float], fc_ok: List[float]) -> int:
     dim1 = len(fc)
     dim2 = len(fc_ok)
     scr = 0
@@ -34,7 +35,7 @@ def error(fc, fc_ok):
     return scr
 
 
-def Check():
+def Check() -> Literal[0, -1]:
     # Output
     fc = []
     is_file = os.path.isfile("forces")
@@ -67,3 +68,4 @@ def Check():
         print("Test Forces:     ERROR")
     else:
         print("Test Forces:     OK")
+    return 0

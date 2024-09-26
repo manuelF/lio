@@ -4,9 +4,10 @@ import re
 import os
 import argparse
 import subprocess
+from typing import List, Dict
 
 
-def lio_env():
+def lio_env() -> Dict[str, str]:
     """
     Sets lio enviroment variables, adding g2g and
     lioamber to LD_LIBRARY_PATH.
@@ -24,7 +25,7 @@ def lio_env():
     return lioenv
 
 
-def run_lio(dirs_with_tests):
+def run_lio(dirs_with_tests: List[str]) -> None:
     "Runs all Tests"
     lioenv = lio_env()
 
@@ -59,7 +60,7 @@ if __name__ == "__main__":
         "--filter_rx", help="RegExp used to filter which tests are run.", default=".*"
     )
     args = parser.parse_args()
-    filterrx = args.filter_rx
+    filterrx: str = args.filter_rx
 
     # This obtain tests folder
     subdirs = list(os.walk("LIO_test/"))[0][1]
@@ -69,4 +70,4 @@ if __name__ == "__main__":
         dirs_with_tests[i] = "LIO_test/" + dirs_with_tests[i]
 
     # Run lio
-    filed = run_lio(dirs_with_tests)
+    run_lio(dirs_with_tests)

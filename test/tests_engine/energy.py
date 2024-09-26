@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-import re
 import os
-import subprocess
+import re
+from typing import List, Literal, TextIO, Tuple
 
 
-def obtain_energies(file_in):
+def obtain_energies(file_in: TextIO) -> Tuple[Literal[0, -1], List[float]]:
     energies = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     for line in file_in.readlines():
         # Total Energy
@@ -53,12 +53,12 @@ def obtain_energies(file_in):
             energies[8] = float(m.group(1))
 
     if len(energies) < 1:
-        return -1
+        return (-1, [])
 
-    return energies
+    return (0, energies)
 
 
-def error(ene, ene_ok):
+def error(ene: List[float], ene_ok: List[float]) -> Literal[0, -1]:
     tipo = [
         "Total energy",
         "One electron",
@@ -88,10 +88,12 @@ def error(ene, ene_ok):
             print("Value in output", ene[num])
             print("Value in output.ok", ene_ok[num])
 
-    return scr
+    if scr == 0:
+        return 0
+    return -1
 
 
-def Check():
+def Check() -> Literal[0, -1]:
     # Output
     is_file = os.path.isfile("output")
     if not is_file:
@@ -99,10 +101,9 @@ def Check():
         return -1
 
     f = open("output", "r")
-    energies = []
-    energies = obtain_energies(f)
+    status, energies = obtain_energies(f)
     f.close()
-    if not energies:
+    if status != 0:
         print("Error in reading energies in output.")
         return -1
 
@@ -113,10 +114,9 @@ def Check():
         return -1
 
     f = open("output.ok", "r")
-    energiesok = []
-    energiesok = obtain_energies(f)
+    status, energiesok = obtain_energies(f)
     f.close()
-    if not energiesok:
+    if status != 0:
         print("Error in reading energies in output.ok.")
         return -1
 
@@ -126,3 +126,4 @@ def Check():
         print("Test Energy:     ERROR")
     else:
         print("Test Energy:     OK")
+    return 0
