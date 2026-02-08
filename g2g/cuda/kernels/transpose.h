@@ -1,7 +1,8 @@
 #define BLOCK_DIM 16
 
 template <class input_type>
-__global__ void transpose(input_type *odata, input_type *idata, int width,
+__global__ void transpose(input_type* __restrict__ odata,
+                          const input_type* __restrict__ idata, int width,
                           int height) {
   __shared__ input_type block[BLOCK_DIM][BLOCK_DIM + 1];
 
