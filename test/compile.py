@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python3
 
 import os
 import subprocess
@@ -46,16 +46,16 @@ def cuda_is_installed():
 
 if __name__ == "__main__":
    if (cuda_is_installed()):
-      print "CUDA Libraries detected."
+      print("CUDA Libraries detected.")
       comp = ["cuda","intel","precision"]
    else:
-      print "CUDA libraries not detected. Will attempt CPU-only compilations."
+      print( "CUDA libraries not detected. Will attempt CPU-only compilations.")
       comp = ["intel","precision"]
    seq = list(itertools.product(["0","1"],repeat=len(comp)))
    all_sets = []
 
    for cases in seq:
-      compile_opts = dict([(comp[i],cases[i]) for i in xrange(0,len(comp))])
+      compile_opts = dict([(comp[i],cases[i]) for i in range(0,len(comp))])
       if compile_opts["cuda"] == "1":
          compile_opts["cuda"] =  "2"
 
@@ -63,16 +63,16 @@ if __name__ == "__main__":
 
    for flag_set in all_sets:
       opts = set_options(flag_set)
-      print "Compiling LIO with Options: %s" % opts.rstrip()
+      print( "Compiling LIO with Options: %s" % opts.rstrip())
       error = compile_lio(opts)
       if not error:
-         print "\tSuccessfully compiled."
+         print( "\tSuccessfully compiled.")
       else:
-         print "\tError!"
+         print( "\tError!")
  
       error = run_lio()
       if not error:
-         print "run_lio successfully finished."
+         print( "run_lio successfully finished.")
       else:
-         print "run_lio Error!"
+         print( "run_lio Error!")
          exit(-1)

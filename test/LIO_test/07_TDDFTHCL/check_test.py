@@ -1,8 +1,7 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python3
 import sys
 
-sys.path.insert(0,"../../tests_engine")
+sys.path.insert(0, "../../tests_engine")
 import dipole
 
 dipole.Check("td")
-

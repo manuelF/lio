@@ -54,7 +54,7 @@ subroutine liomain(E, dipxyz)
        if ( first_step ) call SCF( E, dipxyz )
        call ehrendyn_main( E, dipxyz )
     else
-       call SCF(E)
+       call SCF(E, dipxyz)
     endif
     if ( (restart_freq.gt.0) .and. (MOD(npas, restart_freq).eq.0) ) &
        call do_restart(88, Pmat_vec)
