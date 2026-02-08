@@ -11,13 +11,17 @@ static __inline__ __device__ double fetch_double(cudaTextureObject_t t, float x,
 
 template <class scalar_type, bool compute_energy, bool compute_factor, bool lda>
 __global__ void gpu_compute_density(
-    cudaTextureObject_t rmm_input_gpu_tex, scalar_type* const energy,
-    scalar_type* const factor, const scalar_type* const point_weights,
-    uint points, const scalar_type* function_values,
-    const vec_type<scalar_type, 4>* gradient_values,
-    const vec_type<scalar_type, 4>* hessian_values, uint m,
-    scalar_type* out_partial_density, vec_type<scalar_type, 4>* out_dxyz,
-    vec_type<scalar_type, 4>* out_dd1, vec_type<scalar_type, 4>* out_dd2) {
+    cudaTextureObject_t rmm_input_gpu_tex,
+    scalar_type* __restrict__ const energy,
+    scalar_type* __restrict__ const factor,
+    const scalar_type* __restrict__ const point_weights, uint points,
+    const scalar_type* __restrict__ function_values,
+    const vec_type<scalar_type, 4>* __restrict__ gradient_values,
+    const vec_type<scalar_type, 4>* __restrict__ hessian_values, uint m,
+    scalar_type* __restrict__ out_partial_density,
+    vec_type<scalar_type, 4>* __restrict__ out_dxyz,
+    vec_type<scalar_type, 4>* __restrict__ out_dd1,
+    vec_type<scalar_type, 4>* __restrict__ out_dd2) {
   uint point = blockIdx.x;
 
   uint i = threadIdx.x + blockIdx.y * 2 * DENSITY_BLOCK_SIZE;
@@ -73,37 +77,88 @@ __global__ void gpu_compute_density(
     vec_type<scalar_type, 3> fh2jreg;
 
     if (valid_thread) {
-      for (int j = 0; j < DENSITY_BLOCK_SIZE; j++) {
-        fjreg = fj_sh[j];
+      // Optimization: Check if the whole block is valid for i.
+      // If i >= bj + DENSITY_BLOCK_SIZE - 1, then for all j in [0, 63], bj+j <=
+      // i. This removes the branch inside the loop for most blocks
+      // (off-diagonal).
+      bool full_block = (i >= bj + DENSITY_BLOCK_SIZE - 1);
 
-        if (!lda) {
-          fgjreg = fgj_sh[j];
-          fh1jreg = fh1j_sh[j];
-          fh2jreg = fh2j_sh[j];
-        }
-        // fetch es una macro para tex2D
-
-        if ((bj + j) <= i) {
+      if (full_block) {
+#pragma unroll 4
+        for (int j = 0; j < DENSITY_BLOCK_SIZE; j++) {
+          scalar_type fjreg = fj_sh[j];
           scalar_type rdm_this_thread =
               fetch(rmm_input_gpu_tex, (float)(bj + j), (float)i);
           w += rdm_this_thread * fjreg;
 
           if (!lda) {
+            vec_type<scalar_type, 3> fgjreg = fgj_sh[j];
+            vec_type<scalar_type, 3> fh1jreg = fh1j_sh[j];
+            vec_type<scalar_type, 3> fh2jreg = fh2j_sh[j];
+
             w3 += fgjreg * rdm_this_thread;
             ww1 += fh1jreg * rdm_this_thread;
             ww2 += fh2jreg * rdm_this_thread;
           }
+
+          if (valid_thread2) {
+            // If i is full block, i2 (which is > i) is also full block
+            scalar_type rdm_this_thread2 =
+                fetch(rmm_input_gpu_tex, (float)(bj + j), (float)i2);
+            w2 += rdm_this_thread2 * fjreg;
+
+            if (!lda) {
+              w32 += fgj_sh[j] * rdm_this_thread2;
+              ww12 += fh1j_sh[j] * rdm_this_thread2;
+              ww22 += fh2j_sh[j] * rdm_this_thread2;
+            }
+          }
         }
+      } else {
+// Fallback for diagonal blocks where boundary check is needed
+#pragma unroll 4
+        for (int j = 0; j < DENSITY_BLOCK_SIZE; j++) {
+          scalar_type fjreg = fj_sh[j];
 
-        if (valid_thread2 && ((bj + j) <= i2)) {
-          scalar_type rdm_this_thread2 =
-              fetch(rmm_input_gpu_tex, (float)(bj + j), (float)i2);
-          w2 += rdm_this_thread2 * fjreg;
+          if ((bj + j) <= i) {
+            scalar_type rdm_this_thread =
+                fetch(rmm_input_gpu_tex, (float)(bj + j), (float)i);
+            w += rdm_this_thread * fjreg;
 
-          if (!lda) {
-            w32 += fgjreg * rdm_this_thread2;
-            ww12 += fh1jreg * rdm_this_thread2;
-            ww22 += fh2jreg * rdm_this_thread2;
+            if (!lda) {
+              vec_type<scalar_type, 3> fgjreg = fgj_sh[j];
+              vec_type<scalar_type, 3> fh1jreg = fh1j_sh[j];
+              vec_type<scalar_type, 3> fh2jreg = fh2j_sh[j];
+
+              w3 += fgjreg * rdm_this_thread;
+              ww1 += fh1jreg * rdm_this_thread;
+              ww2 += fh2jreg * rdm_this_thread;
+
+              if (valid_thread2 && ((bj + j) <= i2)) {
+                scalar_type rdm_this_thread2 =
+                    fetch(rmm_input_gpu_tex, (float)(bj + j), (float)i2);
+                w2 += rdm_this_thread2 * fjreg;
+                w32 += fgjreg * rdm_this_thread2;
+                ww12 += fh1jreg * rdm_this_thread2;
+                ww22 += fh2jreg * rdm_this_thread2;
+              }
+            } else {
+              if (valid_thread2 && ((bj + j) <= i2)) {
+                scalar_type rdm_this_thread2 =
+                    fetch(rmm_input_gpu_tex, (float)(bj + j), (float)i2);
+                w2 += rdm_this_thread2 * fjreg;
+              }
+            }
+          } else if (valid_thread2 && ((bj + j) <= i2)) {
+            scalar_type rdm_this_thread2 =
+                fetch(rmm_input_gpu_tex, (float)(bj + j), (float)i2);
+            w2 += rdm_this_thread2 * fjreg;
+
+            if (!lda) {
+              w32 += fgj_sh[j] * rdm_this_thread2;
+              ww12 += fh1j_sh[j] * rdm_this_thread2;
+              ww22 += fh2j_sh[j] * rdm_this_thread2;
+            }
           }
         }
       }
