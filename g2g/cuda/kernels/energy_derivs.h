@@ -3,8 +3,9 @@
 
 template <class scalar_type>
 __global__ void gpu_compute_density_derivs(
-    scalar_type* function_values, vec_type<scalar_type, 4>* gradient_values,
-    uint* nuc, vec_type<scalar_type, 4>* density_deriv, uint points, uint m,
+    cudaTextureObject_t rmm_input_gpu_tex, scalar_type* function_values,
+    vec_type<scalar_type, 4>* gradient_values, uint* nuc,
+    vec_type<scalar_type, 4>* density_deriv, uint points, uint m,
     uint nuc_count) {
   uint point = index_x(blockDim, blockIdx, threadIdx);
   bool valid_thread = (point < points);
@@ -58,8 +59,10 @@ __global__ void gpu_compute_density_derivs(
 //===================================================================================================================
 template <class scalar_type>
 __global__ void gpu_compute_density_derivs_open(
-    scalar_type* function_values, vec_type<scalar_type, 4>* gradient_values,
-    uint* nuc, vec_type<scalar_type, 4>* density_deriv_a,
+    cudaTextureObject_t rmm_input_gpu_tex,
+    cudaTextureObject_t rmm_input_gpu_tex2, scalar_type* function_values,
+    vec_type<scalar_type, 4>* gradient_values, uint* nuc,
+    vec_type<scalar_type, 4>* density_deriv_a,
     vec_type<scalar_type, 4>* density_deriv_b, uint points, uint m,
     uint nuc_count) {
   uint point = index_x(blockDim, blockIdx, threadIdx);

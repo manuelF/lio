@@ -32,10 +32,10 @@ namespace AINT
 cudaArray* gammaArray;
 __device__ __constant__ uint gpu_m;
 #if !AINT_MP || FULL_DOUBLE
-texture<int2, cudaTextureType2D, cudaReadModeElementType> str_tex; // Texture for STR array (used in F(m,U))
+__constant__ cudaTextureObject_t str_tex; // Texture for STR array (used in F(m,U))
 __device__ __constant__ double gpu_fac[17];
 #else
-texture<float, cudaTextureType2D, cudaReadModeElementType> str_tex;
+__constant__ cudaTextureObject_t str_tex;
 __device__ __constant__ float gpu_fac[17];
 #endif
 
@@ -85,11 +85,32 @@ void OSIntegral<scalar_type>::load_params(void)
       h_fac(i) = integral_vars.fac(i);
     }
 
-    str_tex.normalized = false;
-    str_tex.filterMode = cudaFilterModePoint;
-
-    cudaMallocArray(&gammaArray,&str_tex.channelDesc,880,22);
+    cudaChannelFormatDesc channelDesc;
+#if !AINT_MP || FULL_DOUBLE
+    channelDesc = cudaCreateChannelDesc<int2>();
+#else
+    channelDesc = cudaCreateChannelDesc<float>();
+#endif
+    cudaMallocArray(&gammaArray, &channelDesc, 880, 22);
     cudaMemcpyToArray(gammaArray,0,0,h_str.data,sizeof(scalar_type)*880*22,cudaMemcpyHostToDevice);
+
+    cudaResourceDesc resDesc;
+    memset(&resDesc, 0, sizeof(resDesc));
+    resDesc.resType = cudaResourceTypeArray;
+    resDesc.res.array.array = gammaArray;
+
+    cudaTextureDesc texDesc;
+    memset(&texDesc, 0, sizeof(texDesc));
+    texDesc.addressMode[0] = cudaAddressModeClamp;
+    texDesc.addressMode[1] = cudaAddressModeClamp;
+    texDesc.filterMode = cudaFilterModePoint;
+    texDesc.readMode = cudaReadModeElementType;
+    texDesc.normalizedCoords = 0;
+
+    cudaTextureObject_t texObj = 0;
+    cudaCreateTextureObject(&texObj, &resDesc, &texDesc, NULL);
+    cudaMemcpyToSymbol(str_tex, &texObj, sizeof(cudaTextureObject_t));
+
     cudaMemcpyToSymbol(gpu_fac,h_fac.data,h_fac.bytes(),0,cudaMemcpyHostToDevice);
 
     cudaSetDevice(previous_device);
@@ -130,6 +151,9 @@ template<class scalar_type>
 void OSIntegral<scalar_type>::deinit( void )
 {
     clear();
+    cudaTextureObject_t texObj = 0;
+    cudaMemcpyFromSymbol(&texObj, str_tex, sizeof(cudaTextureObject_t));
+    cudaDestroyTextureObject(texObj);
 
     cudaFreeArray(gammaArray);
 

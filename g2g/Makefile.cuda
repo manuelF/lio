@@ -193,7 +193,7 @@ CUDA_OLD := $(shell echo "`nvcc --version | tail -n 1 | awk -F',' '{ print $$2 }
 ifeq ($(CUDA_OLD),1)
   GENCODE_FLAGS ?= $(GENCODE_SM30)
 else
-  GENCODE_FLAGS ?= $(GENCODE_SM30) $(GENCODE_SM52) $(GENCODE_SM61)
+  GENCODE_FLAGS ?= $(GENCODE_SM50) $(GENCODE_SM52) $(GENCODE_SM60) $(GENCODE_SM61) $(GENCODE_SM75)
 endif
 
 NVCCFLAGS     += $(GENCODE_FLAGS)
