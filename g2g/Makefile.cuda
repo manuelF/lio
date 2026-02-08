@@ -179,6 +179,15 @@ ifeq ($(sm75),1)
   GENCODE_FLAGS   += $(GENCODE_SM75)
 endif
 
+# If no specific architecture is set, try to detect the GPU
+ifeq ($(GENCODE_FLAGS),)
+  DETECTED_SM := $(shell nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -n 1 | tr -d '.')
+  ifneq ($(DETECTED_SM),)
+    GENCODE_FLAGS := -gencode arch=compute_$(DETECTED_SM),code=compute_$(DETECTED_SM)
+    GENCODE_FLAGS += -gencode arch=compute_$(DETECTED_SM),code=sm_$(DETECTED_SM)
+  endif
+endif
+
 # Checks for versions older than 8.0
 CUDA_OLD := $(shell echo "`nvcc --version | tail -n 1 | awk -F',' '{ print $$2 }' | awk '{ print $$2 }'` < 8" | bc)
 ifeq ($(CUDA_OLD),1)
