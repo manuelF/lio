@@ -224,13 +224,12 @@ __global__ void gpu_compute_density_opened(
   }
   __syncthreads();
 
-  for (int j = 2; j <= DENSITY_BLOCK_SIZE; j = j * 2) {
-    int index = position + DENSITY_BLOCK_SIZE / j;
-    if (position < DENSITY_BLOCK_SIZE / j) {
-      fj_sh[position] += fj_sh[index];
-      fgj_sh[position] += fgj_sh[index];
-      fh1j_sh[position] += fh1j_sh[index];
-      fh2j_sh[position] += fh2j_sh[index];
+  if (position < 32) {
+    warpReduceScalar(fj_sh, position);
+    if (!lda) {
+      warpReduceVector3(fgj_sh, position);
+      warpReduceVector3(fh1j_sh, position);
+      warpReduceVector3(fh2j_sh, position);
     }
   }
   if (threadIdx.x == 0) {
@@ -256,13 +255,12 @@ __global__ void gpu_compute_density_opened(
   }
   __syncthreads();
 
-  for (int j = 2; j <= DENSITY_BLOCK_SIZE; j = j * 2) {
-    int index = position + DENSITY_BLOCK_SIZE / j;
-    if (position < DENSITY_BLOCK_SIZE / j) {
-      fj_sh[position] += fj_sh[index];
-      fgj_sh[position] += fgj_sh[index];
-      fh1j_sh[position] += fh1j_sh[index];
-      fh2j_sh[position] += fh2j_sh[index];
+  if (position < 32) {
+    warpReduceScalar(fj_sh, position);
+    if (!lda) {
+      warpReduceVector3(fgj_sh, position);
+      warpReduceVector3(fh1j_sh, position);
+      warpReduceVector3(fh2j_sh, position);
     }
   }
   if (threadIdx.x == 0) {

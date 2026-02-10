@@ -200,18 +200,20 @@ void PointGroupGPU<scalar_type>::solve_closed(
   function_values_transposed.resize(
       group_m, COALESCED_DIMENSION(this->number_of_points));
 
-  if (fortran_vars.do_forces || fortran_vars.gga)
+  if (fortran_vars.do_forces || fortran_vars.gga) {
     gradient_values_transposed.resize(
         group_m, COALESCED_DIMENSION(this->number_of_points));
+  }
 
   transpose<<<transpose_grid, transpose_threads>>>(
       function_values_transposed.data, function_values.data,
       COALESCED_DIMENSION(this->number_of_points), group_m);
 
-  if (fortran_vars.do_forces || fortran_vars.gga)
+  if (fortran_vars.do_forces || fortran_vars.gga) {
     transpose<<<transpose_grid, transpose_threads>>>(
         gradient_values_transposed.data, gradient_values.data,
         COALESCED_DIMENSION(this->number_of_points), group_m);
+  }
   // fin intercalado al pedo
 
   HostMatrix<scalar_type> rmm_input_cpu(COALESCED_DIMENSION(group_m),
@@ -233,27 +235,23 @@ void PointGroupGPU<scalar_type>::solve_closed(
    **********************************************************************
    */
 
-  cudaArray* cuArray;
-  cudaChannelFormatDesc channelDesc;
+  cudaArray* cuArray = nullptr;
+  cudaChannelFormatDesc channelDesc =
 #if FULL_DOUBLE
-  channelDesc = cudaCreateChannelDesc<int2>();
+      cudaCreateChannelDesc<int2>();
 #else
-  channelDesc = cudaCreateChannelDesc<float>();
+      cudaCreateChannelDesc<float>();
 #endif
   cudaMallocArray(&cuArray, &channelDesc, rmm_input_cpu.width,
                   rmm_input_cpu.height);
-  cudaMemcpyToArray(
-      cuArray, 0, 0, rmm_input_cpu.data,
-      sizeof(scalar_type) * rmm_input_cpu.width * rmm_input_cpu.height,
-      cudaMemcpyHostToDevice);
+  cudaMemcpyToArray(cuArray, 0, 0, rmm_input_cpu.data, rmm_input_cpu.bytes(),
+                    cudaMemcpyHostToDevice);
 
-  cudaResourceDesc resDesc;
-  memset(&resDesc, 0, sizeof(resDesc));
+  cudaResourceDesc resDesc = {};
   resDesc.resType = cudaResourceTypeArray;
   resDesc.res.array.array = cuArray;
 
-  cudaTextureDesc texDesc;
-  memset(&texDesc, 0, sizeof(texDesc));
+  cudaTextureDesc texDesc = {};
   texDesc.addressMode[0] = cudaAddressModeClamp;
   texDesc.addressMode[1] = cudaAddressModeClamp;
   texDesc.filterMode = cudaFilterModePoint;
@@ -292,13 +290,13 @@ void PointGroupGPU<scalar_type>::solve_closed(
     // gpu_compute_density
     if (compute_forces || compute_rmm) {
       if (lda) {
-        gpu_compute_density<scalar_type, true, true, true>
+        gpu_compute_density<scalar_type, true>
             <<<threadGrid, threadBlock>>>(compute_parameters);
         gpu_accumulate_point<scalar_type, true, true, true>
             <<<threadGrid_accumulate, threadBlock_accumulate>>>(
                 accumulate_parameters);
       } else {
-        gpu_compute_density<scalar_type, true, true, false>
+        gpu_compute_density<scalar_type, false>
             <<<threadGrid, threadBlock>>>(compute_parameters);
 #if USE_LIBXC
         if (fortran_vars.use_libxc) {
@@ -342,13 +340,13 @@ void PointGroupGPU<scalar_type>::solve_closed(
       }
     } else {
       if (lda) {
-        gpu_compute_density<scalar_type, true, false, true>
+        gpu_compute_density<scalar_type, true>
             <<<threadGrid, threadBlock>>>(compute_parameters);
         gpu_accumulate_point<scalar_type, true, false, true>
             <<<threadGrid_accumulate, threadBlock_accumulate>>>(
                 accumulate_parameters);
       } else {
-        gpu_compute_density<scalar_type, true, false, false>
+        gpu_compute_density<scalar_type, false>
             <<<threadGrid, threadBlock>>>(compute_parameters);
 #if USE_LIBXC
         if (fortran_vars.use_libxc) {
@@ -413,13 +411,13 @@ void PointGroupGPU<scalar_type>::solve_closed(
       block_height, partial_densities_gpu.data, dxyz_gpu.data, dd1_gpu.data, \
       dd2_gpu.data
     if (lda) {
-      gpu_compute_density<scalar_type, false, true, true>
+      gpu_compute_density<scalar_type, true>
           <<<threadGrid, threadBlock>>>(compute_parameters);
       gpu_accumulate_point<scalar_type, false, true, true>
           <<<threadGrid_accumulate, threadBlock_accumulate>>>(
               accumulate_parameters);
     } else {
-      gpu_compute_density<scalar_type, false, true, false>
+      gpu_compute_density<scalar_type, false>
           <<<threadGrid, threadBlock>>>(compute_parameters);
 #if USE_LIBXC
       if (fortran_vars.use_libxc) {
@@ -470,7 +468,7 @@ void PointGroupGPU<scalar_type>::solve_closed(
   /* compute forces */
   if (compute_forces) {
     //************ Repongo los valores que puse a cero antes, para las fuerzas
-    //son necesarios (o por lo mens utiles)
+    // son necesarios (o por lo mens utiles)
     for (uint i = 0; i < (group_m); i++) {
       for (uint j = 0; j < (group_m); j++) {
         if ((i >= group_m) || (j >= group_m) || (j > i)) {
@@ -481,10 +479,8 @@ void PointGroupGPU<scalar_type>::solve_closed(
     }
 
     timers.density_derivs.start_and_sync();
-    cudaMemcpyToArray(
-        cuArray, 0, 0, rmm_input_cpu.data,
-        sizeof(scalar_type) * rmm_input_cpu.width * rmm_input_cpu.height,
-        cudaMemcpyHostToDevice);
+    cudaMemcpyToArray(cuArray, 0, 0, rmm_input_cpu.data, rmm_input_cpu.bytes(),
+                      cudaMemcpyHostToDevice);
 
     timers.density_derivs.start_and_sync();
     dim3 threads = dim3(this->number_of_points);
@@ -697,39 +693,32 @@ void PointGroupGPU<scalar_type>::solve_opened(
   **********************************************************************
   */
 
-  cudaArray* cuArray1;
-  cudaArray* cuArray2;
-  cudaChannelFormatDesc channelDesc;
+  cudaArray* cuArray1 = nullptr;
+  cudaArray* cuArray2 = nullptr;
+  cudaChannelFormatDesc channelDesc =
 #if FULL_DOUBLE
-  channelDesc = cudaCreateChannelDesc<int2>();
+      cudaCreateChannelDesc<int2>();
 #else
-  channelDesc = cudaCreateChannelDesc<float>();
+      cudaCreateChannelDesc<float>();
 #endif
   cudaMallocArray(&cuArray1, &channelDesc, rmm_input_a_cpu.width,
                   rmm_input_a_cpu.height);
   cudaMallocArray(&cuArray2, &channelDesc, rmm_input_b_cpu.width,
                   rmm_input_b_cpu.height);
-  cudaMemcpyToArray(
-      cuArray1, 0, 0, rmm_input_a_cpu.data,
-      sizeof(scalar_type) * rmm_input_a_cpu.width * rmm_input_a_cpu.height,
-      cudaMemcpyHostToDevice);
-  cudaMemcpyToArray(
-      cuArray2, 0, 0, rmm_input_b_cpu.data,
-      sizeof(scalar_type) * rmm_input_b_cpu.width * rmm_input_b_cpu.height,
-      cudaMemcpyHostToDevice);
+  cudaMemcpyToArray(cuArray1, 0, 0, rmm_input_a_cpu.data,
+                    rmm_input_a_cpu.bytes(), cudaMemcpyHostToDevice);
+  cudaMemcpyToArray(cuArray2, 0, 0, rmm_input_b_cpu.data,
+                    rmm_input_b_cpu.bytes(), cudaMemcpyHostToDevice);
 
-  cudaResourceDesc resDesc1;
-  memset(&resDesc1, 0, sizeof(resDesc1));
+  cudaResourceDesc resDesc1 = {};
   resDesc1.resType = cudaResourceTypeArray;
   resDesc1.res.array.array = cuArray1;
 
-  cudaResourceDesc resDesc2;
-  memset(&resDesc2, 0, sizeof(resDesc2));
+  cudaResourceDesc resDesc2 = {};
   resDesc2.resType = cudaResourceTypeArray;
   resDesc2.res.array.array = cuArray2;
 
-  cudaTextureDesc texDesc;
-  memset(&texDesc, 0, sizeof(texDesc));
+  cudaTextureDesc texDesc = {};
   texDesc.addressMode[0] = cudaAddressModeClamp;
   texDesc.addressMode[1] = cudaAddressModeClamp;
   texDesc.filterMode = cudaFilterModePoint;
@@ -836,14 +825,10 @@ void PointGroupGPU<scalar_type>::solve_opened(
       }
     }
 
-    cudaMemcpyToArray(
-        cuArray1, 0, 0, rmm_input_a_cpu.data,
-        sizeof(scalar_type) * rmm_input_a_cpu.width * rmm_input_a_cpu.height,
-        cudaMemcpyHostToDevice);
-    cudaMemcpyToArray(
-        cuArray2, 0, 0, rmm_input_b_cpu.data,
-        sizeof(scalar_type) * rmm_input_b_cpu.width * rmm_input_b_cpu.height,
-        cudaMemcpyHostToDevice);
+    cudaMemcpyToArray(cuArray1, 0, 0, rmm_input_a_cpu.data,
+                      rmm_input_a_cpu.bytes(), cudaMemcpyHostToDevice);
+    cudaMemcpyToArray(cuArray2, 0, 0, rmm_input_b_cpu.data,
+                      rmm_input_b_cpu.bytes(), cudaMemcpyHostToDevice);
 
     dim3 threads;
     timers.density_derivs.start_and_sync();

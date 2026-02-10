@@ -2,12 +2,14 @@
 
 /**
  * @file energy.h
- * @brief CUDA kernels for numerical integration of the density and its derivatives.
+ * @brief CUDA kernels for numerical integration of the density and its
+ * derivatives.
  *
  * This file implements the evaluation of the electron density rho(r) and its
- * spatial derivatives (gradients and Hessians) on a numerical grid for closed-shell systems.
- * It utilizes texture memory for efficient access to the density matrix (RMM)
- * and shared memory to minimize global memory bandwidth for basis function values.
+ * spatial derivatives (gradients and Hessians) on a numerical grid for
+ * closed-shell systems. It utilizes texture memory for efficient access to the
+ * density matrix (RMM) and shared memory to minimize global memory bandwidth
+ * for basis function values.
  */
 
 #ifndef G2G_KERNELS_ENERGY_H
@@ -15,14 +17,16 @@
 
 /* ==========================================================================================
  * TEXTURE FETCH HELPERS
- * ========================================================================================== */
+ * ==========================================================================================
+ */
 
 #if FULL_DOUBLE
 /**
  * @brief Helper to fetch double precision values from a 2D texture.
  * Maps the int2 texture format back to a double.
  */
-static __inline__ __device__ double fetch_double(cudaTextureObject_t t, float x, float y) {
+static __inline__ __device__ double fetch_double(cudaTextureObject_t t, float x,
+                                                 float y) {
   int2 v = tex2D<int2>(t, x, y);
   return __hiloint2double(v.y, v.x);
 }
@@ -36,7 +40,8 @@ static __inline__ __device__ double fetch_double(cudaTextureObject_t t, float x,
 
 /* ==========================================================================================
  * REDUCTION HELPERS
- * ========================================================================================== */
+ * ==========================================================================================
+ */
 
 /**
  * @brief Performs a warp-level reduction for a scalar value.
@@ -55,30 +60,44 @@ __device__ __forceinline__ void warpReduceScalar(volatile T* sdata, int tid) {
  * @brief Performs a warp-level reduction for a 3D vector.
  */
 template <typename T>
-__device__ __forceinline__ void warpReduceVector3(volatile vec_type<T, 3>* sdata, int tid) {
-  sdata[tid].x += sdata[tid + 32].x; sdata[tid].y += sdata[tid + 32].y; sdata[tid].z += sdata[tid + 32].z;
-  sdata[tid].x += sdata[tid + 16].x; sdata[tid].y += sdata[tid + 16].y; sdata[tid].z += sdata[tid + 16].z;
-  sdata[tid].x += sdata[tid + 8].x;  sdata[tid].y += sdata[tid + 8].y;  sdata[tid].z += sdata[tid + 8].z;
-  sdata[tid].x += sdata[tid + 4].x;  sdata[tid].y += sdata[tid + 4].y;  sdata[tid].z += sdata[tid + 4].z;
-  sdata[tid].x += sdata[tid + 2].x;  sdata[tid].y += sdata[tid + 2].y;  sdata[tid].z += sdata[tid + 2].z;
-  sdata[tid].x += sdata[tid + 1].x;  sdata[tid].y += sdata[tid + 1].y;  sdata[tid].z += sdata[tid + 1].z;
+__device__ __forceinline__ void warpReduceVector3(
+    volatile vec_type<T, 3>* sdata, int tid) {
+  sdata[tid].x += sdata[tid + 32].x;
+  sdata[tid].y += sdata[tid + 32].y;
+  sdata[tid].z += sdata[tid + 32].z;
+  sdata[tid].x += sdata[tid + 16].x;
+  sdata[tid].y += sdata[tid + 16].y;
+  sdata[tid].z += sdata[tid + 16].z;
+  sdata[tid].x += sdata[tid + 8].x;
+  sdata[tid].y += sdata[tid + 8].y;
+  sdata[tid].z += sdata[tid + 8].z;
+  sdata[tid].x += sdata[tid + 4].x;
+  sdata[tid].y += sdata[tid + 4].y;
+  sdata[tid].z += sdata[tid + 4].z;
+  sdata[tid].x += sdata[tid + 2].x;
+  sdata[tid].y += sdata[tid + 2].y;
+  sdata[tid].z += sdata[tid + 2].z;
+  sdata[tid].x += sdata[tid + 1].x;
+  sdata[tid].y += sdata[tid + 1].y;
+  sdata[tid].z += sdata[tid + 1].z;
 }
 
 /* ==========================================================================================
  * CLOSED-SHELL DENSITY KERNEL
- * ========================================================================================== */
+ * ==========================================================================================
+ */
 
 /**
- * @brief CUDA kernel to compute density and derivatives for closed-shell systems.
+ * @brief CUDA kernel to compute density and derivatives for closed-shell
+ * systems.
  *
  * rho(p) = sum_{ij} R_ij * phi_i(p) * phi_j(p)
  *
  * @tparam scalar_type    Precision type.
- * @tparam compute_energy Unused.
- * @tparam compute_factor Unused.
- * @tparam lda           If true, only compute density. If false, compute gradients/Hessians.
+ * @tparam lda           If true, only compute density. If false, compute
+ * gradients/Hessians.
  */
-template <class scalar_type, bool compute_energy, bool compute_factor, bool lda>
+template <class scalar_type, bool lda>
 __global__ void gpu_compute_density(
     cudaTextureObject_t rmm_input_gpu_tex,
     scalar_type* __restrict__ const energy,
@@ -91,7 +110,6 @@ __global__ void gpu_compute_density(
     vec_type<scalar_type, 4>* __restrict__ out_dxyz,
     vec_type<scalar_type, 4>* __restrict__ out_dd1,
     vec_type<scalar_type, 4>* __restrict__ out_dd2) {
-
   uint point = blockIdx.x;
   uint i = threadIdx.x + blockIdx.y * 2 * DENSITY_BLOCK_SIZE;
   uint i2 = i + DENSITY_BLOCK_SIZE;
@@ -103,7 +121,7 @@ __global__ void gpu_compute_density(
   scalar_type w = 0.0f, w2 = 0.0f;
   vec_type<scalar_type, 3> w3, ww1, ww2;
   vec_type<scalar_type, 3> w32, ww12, ww22;
-  
+
   if (!lda) {
     w3 = ww1 = ww2 = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
     w32 = ww12 = ww22 = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
@@ -120,11 +138,14 @@ __global__ void gpu_compute_density(
   for (int bj = 0; bj <= min_i; bj += DENSITY_BLOCK_SIZE) {
     __syncthreads();
     if (bj + tid < m) {
-      fj_sh[tid] = function_values[(m) * point + (bj + tid)];
+      fj_sh[tid] = function_values[(m)*point + (bj + tid)];
       if (!lda) {
-        fgj_sh[tid] = vec_type<scalar_type, 3>(gradient_values[(m) * point + (bj + tid)]);
-        fh1j_sh[tid] = vec_type<scalar_type, 3>(hessian_values[(m) * 2 * point + (2 * (bj + tid) + 0)]);
-        fh2j_sh[tid] = vec_type<scalar_type, 3>(hessian_values[(m) * 2 * point + (2 * (bj + tid) + 1)]);
+        fgj_sh[tid] =
+            vec_type<scalar_type, 3>(gradient_values[(m)*point + (bj + tid)]);
+        fh1j_sh[tid] = vec_type<scalar_type, 3>(
+            hessian_values[(m) * 2 * point + (2 * (bj + tid) + 0)]);
+        fh2j_sh[tid] = vec_type<scalar_type, 3>(
+            hessian_values[(m) * 2 * point + (2 * (bj + tid) + 1)]);
       }
     }
     __syncthreads();
@@ -144,7 +165,8 @@ __global__ void gpu_compute_density(
           }
         }
         if (valid_thread2 && (full_block || (bj + j) <= i2)) {
-          scalar_type rdm2 = fetch(rmm_input_gpu_tex, (float)(bj + j), (float)i2);
+          scalar_type rdm2 =
+              fetch(rmm_input_gpu_tex, (float)(bj + j), (float)i2);
           scalar_type fj_val = fj_sh[j];
           w2 += rdm2 * fj_val;
           if (!lda) {
@@ -158,45 +180,59 @@ __global__ void gpu_compute_density(
   }
 
   scalar_type partial_rho(0.0f);
-  vec_type<scalar_type, 3> dxyz(0.0f, 0.0f, 0.0f), dd1(0.0f, 0.0f, 0.0f), dd2(0.0f, 0.0f, 0.0f);
+  vec_type<scalar_type, 3> dxyz(0.0f, 0.0f, 0.0f), dd1(0.0f, 0.0f, 0.0f),
+      dd2(0.0f, 0.0f, 0.0f);
 
   if (valid_thread) {
-    scalar_type Fi = function_values[(m) * point + i];
+    scalar_type Fi = function_values[(m)*point + i];
     partial_rho = Fi * w;
     if (!lda) {
-      vec_type<scalar_type, 3> Fgi(gradient_values[(m) * point + i]);
-      vec_type<scalar_type, 3> Fhi1(hessian_values[(m) * 2 * point + (2 * i + 0)]);
-      vec_type<scalar_type, 3> Fhi2(hessian_values[(m) * 2 * point + (2 * i + 1)]);
+      vec_type<scalar_type, 3> Fgi(gradient_values[(m)*point + i]);
+      vec_type<scalar_type, 3> Fhi1(
+          hessian_values[(m) * 2 * point + (2 * i + 0)]);
+      vec_type<scalar_type, 3> Fhi2(
+          hessian_values[(m) * 2 * point + (2 * i + 1)]);
       dxyz = Fgi * w + w3 * Fi;
       dd1 = Fgi * w3 * 2.0f + Fhi1 * w + ww1 * Fi;
       vec_type<scalar_type, 3> FgXXY(Fgi.x, Fgi.x, Fgi.y);
-      dd2 = FgXXY * vec_type<scalar_type, 3>(w3.y, w3.z, w3.z) + vec_type<scalar_type, 3>(Fgi.y, Fgi.z, Fgi.z) * vec_type<scalar_type, 3>(w3.x, w3.x, w3.y) + Fhi2 * w + ww2 * Fi;
+      dd2 = FgXXY * vec_type<scalar_type, 3>(w3.y, w3.z, w3.z) +
+            vec_type<scalar_type, 3>(Fgi.y, Fgi.z, Fgi.z) *
+                vec_type<scalar_type, 3>(w3.x, w3.x, w3.y) +
+            Fhi2 * w + ww2 * Fi;
     }
     if (valid_thread2) {
-      scalar_type Fi2 = function_values[(m) * point + i2];
+      scalar_type Fi2 = function_values[(m)*point + i2];
       partial_rho += Fi2 * w2;
       if (!lda) {
-        vec_type<scalar_type, 3> Fgi2(gradient_values[(m) * point + i2]);
-        vec_type<scalar_type, 3> Fhi12(hessian_values[(m) * 2 * point + (2 * i2 + 0)]);
-        vec_type<scalar_type, 3> Fhi22(hessian_values[(m) * 2 * point + (2 * i2 + 1)]);
+        vec_type<scalar_type, 3> Fgi2(gradient_values[(m)*point + i2]);
+        vec_type<scalar_type, 3> Fhi12(
+            hessian_values[(m) * 2 * point + (2 * i2 + 0)]);
+        vec_type<scalar_type, 3> Fhi22(
+            hessian_values[(m) * 2 * point + (2 * i2 + 1)]);
         dxyz += Fgi2 * w2 + w32 * Fi2;
         dd1 += Fgi2 * w32 * 2.0f + Fhi12 * w2 + ww12 * Fi2;
         vec_type<scalar_type, 3> FgXXY2(Fgi2.x, Fgi2.x, Fgi2.y);
-        dd2 += FgXXY2 * vec_type<scalar_type, 3>(w32.y, w32.z, w32.z) + vec_type<scalar_type, 3>(Fgi2.y, Fgi2.z, Fgi2.z) * vec_type<scalar_type, 3>(w32.x, w32.x, w32.y) + Fhi22 * w2 + ww22 * Fi2;
+        dd2 += FgXXY2 * vec_type<scalar_type, 3>(w32.y, w32.z, w32.z) +
+               vec_type<scalar_type, 3>(Fgi2.y, Fgi2.z, Fgi2.z) *
+                   vec_type<scalar_type, 3>(w32.x, w32.x, w32.y) +
+               Fhi22 * w2 + ww22 * Fi2;
       }
     }
   }
 
   __syncthreads();
   fj_sh[tid] = partial_rho;
-  fgj_sh[tid] = dxyz; fh1j_sh[tid] = dd1; fh2j_sh[tid] = dd2;
+  fgj_sh[tid] = dxyz;
+  fh1j_sh[tid] = dd1;
+  fh2j_sh[tid] = dd2;
   __syncthreads();
 
-  for (int j = 2; j <= DENSITY_BLOCK_SIZE; j *= 2) {
-    int index = tid + DENSITY_BLOCK_SIZE / j;
-    if (tid < DENSITY_BLOCK_SIZE / j) {
-      fj_sh[tid] += fj_sh[index];
-      fgj_sh[tid] += fgj_sh[index]; fh1j_sh[tid] += fh1j_sh[index]; fh2j_sh[tid] += fh2j_sh[index];
+  if (tid < 32) {
+    warpReduceScalar(fj_sh, tid);
+    if (!lda) {
+      warpReduceVector3(fgj_sh, tid);
+      warpReduceVector3(fh1j_sh, tid);
+      warpReduceVector3(fh2j_sh, tid);
     }
   }
 
@@ -209,4 +245,4 @@ __global__ void gpu_compute_density(
   }
 }
 
-#endif // G2G_KERNELS_ENERGY_H
+#endif  // G2G_KERNELS_ENERGY_H
