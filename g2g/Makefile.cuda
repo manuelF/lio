@@ -103,7 +103,7 @@ ifeq ($(dbg),1)
   NVCCDBGFLAGS  += -O1 --debug --device-debug --generate-line-info
   NVCCAINTFLAGS += -O3 --compiler-options -fno-strict-aliasing
 else
-  NVCCFLAGS   += -O3 --compiler-options -fno-strict-aliasing -res-usage --generate-line-info -Xptxas -v
+  NVCCFLAGS   += -O3 --compiler-options -fno-strict-aliasing --generate-line-info -Xptxas -v
 endif
 
 ifneq ($(cpu),0)
