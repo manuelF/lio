@@ -277,9 +277,9 @@ size_t PointGroup<scalar_type>::size_in_gpu() const {
   uint single_matrix_cost =
       COALESCED_DIMENSION(number_of_points) * total_functions();
 
-  total_cost += single_matrix_cost;  // 1 scalar_type functions
+  total_cost += single_matrix_cost * 2;  // 1 scalar_type functions + transposed
   if (fortran_vars.do_forces || fortran_vars.gga)
-    total_cost += (single_matrix_cost * 4);  // 4 vec_type gradient
+    total_cost += (single_matrix_cost * 4 * 2);  // 4 vec_type gradient + transposed
   if (fortran_vars.gga)
     total_cost += (single_matrix_cost * 8);  // 2*4 vec_type hessian
   return total_cost *
@@ -317,6 +317,83 @@ void PointGroupGPU<scalar_type>::deallocate() {
     function_values.deallocate();
     gradient_values.deallocate();
     hessian_values_transposed.deallocate();
+    function_values_transposed.deallocate();
+    gradient_values_transposed.deallocate();
+
+    if (rmm_cuArray) {
+      cudaDestroyTextureObject(rmm_tex);
+      cudaFreeArray(rmm_cuArray);
+      rmm_cuArray = nullptr;
+      rmm_tex = 0;
+    }
+    rmm_input_cpu_cache.deallocate();
+
+    if (rmm_cuArray_a) {
+      cudaDestroyTextureObject(rmm_tex_a);
+      cudaFreeArray(rmm_cuArray_a);
+      rmm_cuArray_a = nullptr;
+      rmm_tex_a = 0;
+    }
+    rmm_input_a_cpu_cache.deallocate();
+
+    if (rmm_cuArray_b) {
+      cudaDestroyTextureObject(rmm_tex_b);
+      cudaFreeArray(rmm_cuArray_b);
+      rmm_cuArray_b = nullptr;
+      rmm_tex_b = 0;
+    }
+    rmm_input_b_cpu_cache.deallocate();
+
+    // Deallocate cached temporary matrices
+    partial_densities_gpu.deallocate();
+    dxyz_gpu.deallocate();
+    dd1_gpu.deallocate();
+    dd2_gpu.deallocate();
+    factors_gpu.deallocate();
+
+    partial_densities_a_gpu.deallocate();
+    dxyz_a_gpu.deallocate();
+    dd1_a_gpu.deallocate();
+    dd2_a_gpu.deallocate();
+
+    partial_densities_b_gpu.deallocate();
+    dxyz_b_gpu.deallocate();
+    dd1_b_gpu.deallocate();
+    dd2_b_gpu.deallocate();
+
+    factors_a_gpu.deallocate();
+    factors_b_gpu.deallocate();
+
+    hessian_values.deallocate();
+    rmm_output_gpu.deallocate();
+    rmm_output_a_gpu.deallocate();
+    rmm_output_b_gpu.deallocate();
+
+    point_weights_gpu.deallocate();
+    point_weights_cpu.deallocate();
+
+    dd_gpu.deallocate();
+    forces_gpu.deallocate();
+
+    dd_gpu_a.deallocate();
+    dd_gpu_b.deallocate();
+    forces_gpu_a.deallocate();
+    forces_gpu_b.deallocate();
+
+    energy_host.deallocate();
+    forces_host.deallocate();
+    rmm_output_host.deallocate();
+
+    energy_a_host.deallocate();
+    energy_b_host.deallocate();
+    forces_a_host.deallocate();
+    forces_b_host.deallocate();
+
+    accumulated_densities_gpu.deallocate();
+    dxyz_accum_gpu.deallocate();
+    dd1_accum_gpu.deallocate();
+    dd2_accum_gpu.deallocate();
+
     this->inGlobal = false;
   }
 }
@@ -328,7 +405,7 @@ PointGroupGPU<scalar_type>::~PointGroupGPU<scalar_type>() {
 
 void Partition::compute_functions(bool forces, bool gga) {
   Timer t1;
-  t1.start_and_sync();
+  t1.start();
 
 #pragma omp parallel for schedule(guided, 8)
   for (uint i = 0; i < cubes.size(); i++) {
@@ -340,7 +417,7 @@ void Partition::compute_functions(bool forces, bool gga) {
     if (!spheres[i]->is_big_group()) spheres[i]->compute_functions(forces, gga);
   }
 
-  t1.stop_and_sync();
+  t1.stop();
   if (timer_single) cout << "Functions: " << t1 << endl;
 }
 
@@ -452,7 +529,7 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
 
     Timers ts;
     Timer t;
-    t.start_and_sync();
+    t.start();
 
     if (compute_forces) fort_forces_ms[i].zero();
     if (compute_rmm) {
@@ -467,7 +544,7 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
     for (uint j = 0; j < work[i].size(); j++) {
       int ind = work[i][j];
       Timer element;
-      element.start_and_sync();
+      element.start();
       if (OPEN) {
         if (ind >= cubes.size()) {
           spheres[ind - cubes.size()]->solve_opened(
@@ -494,16 +571,10 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
         }
       }
 
-#if GPU_KERNELS
-      if (gpu_thread) {
-        cudaDeviceSynchronize();
-      }
-#endif
-
-      element.stop_and_sync();
+      element.stop();
       timeforgroup[ind] = element.getTotal();
     }
-    t.stop_and_sync();
+    t.stop();
 
     next[i] = t.getTotal();
 

@@ -220,8 +220,78 @@ class PointGroupGPU: public PointGroup<scalar_type> {
     G2G::CudaMatrix<scalar_type> function_values;
     G2G::CudaMatrix<vec_type4> gradient_values;
     G2G::CudaMatrix<vec_type4> hessian_values_transposed;
+    G2G::CudaMatrix<scalar_type> function_values_transposed;
+    G2G::CudaMatrix<vec_type4> gradient_values_transposed;
     int current_device;
 
+    // Cache for solve_closed
+    G2G::HostMatrix<scalar_type> rmm_input_cpu_cache;
+    cudaArray* rmm_cuArray;
+    cudaTextureObject_t rmm_tex;
+
+    // Cache for solve_opened
+    G2G::HostMatrix<scalar_type> rmm_input_a_cpu_cache;
+    G2G::HostMatrix<scalar_type> rmm_input_b_cpu_cache;
+    cudaArray* rmm_cuArray_a;
+    cudaArray* rmm_cuArray_b;
+    cudaTextureObject_t rmm_tex_a;
+    cudaTextureObject_t rmm_tex_b;
+
+    // Cached temporary matrices to avoid malloc/free in loops
+    G2G::CudaMatrix<scalar_type> partial_densities_gpu;
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> dxyz_gpu;
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> dd1_gpu;
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> dd2_gpu;
+    G2G::CudaMatrix<scalar_type> factors_gpu;
+
+    // Cached temporary matrices for open shell
+    G2G::CudaMatrix<scalar_type> partial_densities_a_gpu;
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> dxyz_a_gpu;
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> dd1_a_gpu;
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> dd2_a_gpu;
+
+    G2G::CudaMatrix<scalar_type> partial_densities_b_gpu;
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> dxyz_b_gpu;
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> dd1_b_gpu;
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> dd2_b_gpu;
+
+    G2G::CudaMatrix<scalar_type> factors_a_gpu;
+    G2G::CudaMatrix<scalar_type> factors_b_gpu;
+
+    // Remaining cached temporary matrices
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> hessian_values;
+    G2G::CudaMatrix<scalar_type> rmm_output_gpu;
+    G2G::CudaMatrix<scalar_type> rmm_output_a_gpu;
+    G2G::CudaMatrix<scalar_type> rmm_output_b_gpu;
+
+    G2G::CudaMatrix<scalar_type> point_weights_gpu;
+    G2G::HostMatrix<scalar_type> point_weights_cpu;
+
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> dd_gpu;
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> forces_gpu;
+
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> dd_gpu_a;
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> dd_gpu_b;
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> forces_gpu_a;
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> forces_gpu_b;
+
+    // Cached host matrices for results (Pinned)
+    G2G::HostMatrix<scalar_type> energy_host;
+    G2G::HostMatrix<vec_type<scalar_type, 4>> forces_host;
+    G2G::HostMatrix<scalar_type> rmm_output_host;
+
+    G2G::HostMatrix<scalar_type> energy_a_host;
+    G2G::HostMatrix<scalar_type> energy_b_host;
+    G2G::HostMatrix<vec_type<scalar_type, 4>> forces_a_host;
+    G2G::HostMatrix<vec_type<scalar_type, 4>> forces_b_host;
+
+    // Libxc cached temporary matrices
+    G2G::CudaMatrix<scalar_type> accumulated_densities_gpu;
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> dxyz_accum_gpu;
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> dd1_accum_gpu;
+    G2G::CudaMatrix<vec_type<scalar_type, 4>> dd2_accum_gpu;
+
+    PointGroupGPU() : rmm_cuArray(nullptr), rmm_tex(0), rmm_cuArray_a(nullptr), rmm_cuArray_b(nullptr), rmm_tex_a(0), rmm_tex_b(0) {}
 };
 
 #if FULL_DOUBLE
