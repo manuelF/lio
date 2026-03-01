@@ -1,0 +1,95 @@
+# ---------------------------------------------------------------------------
+# Shared build rules for CUDA kernel unit tests.
+#
+# Each kernel test's Makefile must define these variables before including:
+#
+#   TEST_NAME   - Binary name, e.g. transpose_test
+#   TEST_SRC    - Source file,  e.g. transpose_test.cu
+#   COMMON_DIR  - Path to this directory (containing Makefile.rules)
+#   G2G_DIR     - Absolute path to the project's g2g/ directory
+#
+# Overridable on the command line:
+#   CUDA_HOME     - CUDA installation root   (default: /usr/local/cuda)
+#   GENCODE_FLAGS - Full -gencode flag set   (default: auto-detected via nvidia-smi)
+#   EXTRA_FLAGS   - Any additional nvcc flags
+# ---------------------------------------------------------------------------
+
+CUDA_HOME ?= /usr/local/cuda
+# Use the nvcc on PATH, matching g2g/Makefile.cuda convention.
+# Set CUDA_HOME to control include paths; set NVCC to point to a specific
+# nvcc binary if the one in PATH is not the right version.
+NVCC      ?= nvcc
+
+# ---------------------------------------------------------------------------
+# GPU architecture detection — mirrors g2g/Makefile.cuda exactly.
+#
+# Priority:
+#  1. User-supplied GENCODE_FLAGS (command line or environment)
+#  2. nvidia-smi auto-detection: both PTX (code=compute_XX) for forward
+#     compatibility and a cubin (code=sm_XX) for direct execution.
+#  3. CUDA-version-aware fallback when no GPU is visible at build time.
+#
+# Example override:
+#   make GENCODE_FLAGS="-gencode arch=compute_80,code=compute_80 \
+#                       -gencode arch=compute_80,code=sm_80"
+# ---------------------------------------------------------------------------
+ifeq ($(GENCODE_FLAGS),)
+  DETECTED_SM := $(shell nvidia-smi --query-gpu=compute_cap \
+                   --format=csv,noheader 2>/dev/null | head -n 1 | tr -d '.')
+  ifneq ($(DETECTED_SM),)
+    GENCODE_FLAGS := -gencode arch=compute_$(DETECTED_SM),code=compute_$(DETECTED_SM)
+    GENCODE_FLAGS += -gencode arch=compute_$(DETECTED_SM),code=sm_$(DETECTED_SM)
+  endif
+endif
+
+# Fallback when nvidia-smi is unavailable or returned nothing —
+# same logic as g2g/Makefile.cuda (CUDA < 8 → Kepler; else → Maxwell+).
+CUDA_VER  := $(shell nvcc --version 2>/dev/null | grep -oP 'release \K[0-9]+' | head -1)
+CUDA_OLD  := $(shell [ -n "$(CUDA_VER)" ] && [ "$(CUDA_VER)" -lt 8 ] && echo 1 || echo 0)
+ifeq ($(CUDA_OLD),1)
+  GENCODE_FLAGS ?= -gencode arch=compute_30,code=compute_30 \
+                   -gencode arch=compute_30,code=sm_30
+else
+  GENCODE_FLAGS ?= -gencode arch=compute_50,code=compute_50 \
+                   -gencode arch=compute_50,code=sm_50 \
+                   -gencode arch=compute_60,code=compute_60 \
+                   -gencode arch=compute_60,code=sm_60 \
+                   -gencode arch=compute_75,code=compute_75 \
+                   -gencode arch=compute_75,code=sm_75
+endif
+
+# ---------------------------------------------------------------------------
+# Compiler flags
+# ---------------------------------------------------------------------------
+NVCCFLAGS  := -std=c++14
+NVCCFLAGS  += -I$(COMMON_DIR)
+NVCCFLAGS  += -I$(G2G_DIR)
+NVCCFLAGS  += $(GENCODE_FLAGS)
+NVCCFLAGS  += -g -G           # device debug info (line numbers in compute-sanitizer)
+NVCCFLAGS  += -O0             # no device optimisation — catches more correctness bugs
+NVCCFLAGS  += --ptxas-options=-v   # print register / shared-mem usage per kernel
+NVCCFLAGS  += $(EXTRA_FLAGS)
+
+LDFLAGS    := -lcudart
+
+# ---------------------------------------------------------------------------
+# Targets
+# ---------------------------------------------------------------------------
+.PHONY: all build run clean
+
+all: build run
+
+build: $(TEST_NAME)
+
+$(TEST_NAME): $(TEST_SRC) $(COMMON_DIR)/test_utils.h
+	$(NVCC) $(NVCCFLAGS) -o $@ $< $(LDFLAGS)
+
+run: $(TEST_NAME)
+	@echo ""
+	@echo "Running $(TEST_NAME) ..."
+	@echo "----------------------------------------"
+	./$(TEST_NAME)
+	@echo "----------------------------------------"
+
+clean:
+	rm -f $(TEST_NAME) *.o

@@ -6,6 +6,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 LIO is a Quantum Mechanical software package based on Density Functional Theory (DFT) and real-time Time-Dependent Density Functional Theory (TD-DFT). It is primarily designed for hybrid QM/MM (Quantum Mechanics/Molecular Mechanics) simulations and runs performance-critical kernels on NVIDIA GPUs via CUDA.
 
+## CUDA Build Environment
+
+**Always use bare `nvcc` (from PATH)**, not `$(CUDA_HOME)/bin/nvcc`.
+On this machine `/usr/local/cuda` is managed by `update-alternatives` and
+currently symlinks to CUDA 13.1, which **drops Pascal (SM 6.x) support**.
+The `nvcc` in PATH resolves to CUDA 12.0 and correctly supports SM 6.1 (GTX 1080).
+`g2g/Makefile.cuda` already follows this convention throughout.
+
+GPU arch flags must include **both** PTX and cubin entries so the binary is
+usable across driver versions. The detection pattern (from `g2g/Makefile.cuda`):
+```makefile
+DETECTED_SM := $(shell nvidia-smi --query-gpu=compute_cap \
+                 --format=csv,noheader 2>/dev/null | head -n 1 | tr -d '.')
+GENCODE_FLAGS := -gencode arch=compute_$(DETECTED_SM),code=compute_$(DETECTED_SM)
+GENCODE_FLAGS += -gencode arch=compute_$(DETECTED_SM),code=sm_$(DETECTED_SM)
+```
+
+Current hardware: **GTX 1080, SM 6.1 (Pascal)**, CUDA 12.0 on PATH.
+
+---
+
 ## Build Commands
 
 ```bash
@@ -68,6 +89,28 @@ make check
 ```
 
 Each test directory under `test/LIO_test/` contains a `run.sh` script and a `check_test.py` that validates the output against `.ok` reference files.
+
+### CUDA Kernel Unit Tests
+
+Low-level unit tests for individual CUDA kernels live in `test/unit_tests/`.
+They compile and run independently of the full library.
+
+```bash
+# Build and run all kernel unit tests
+cd test/unit_tests && make
+
+# Build only
+cd test/unit_tests && make build
+
+# Run a specific kernel suite
+cd test/unit_tests/kernels/transpose && make
+
+# Clean
+cd test/unit_tests && make clean
+```
+
+To add a test for a new kernel, create `test/unit_tests/kernels/<name>/` with a
+four-line `Makefile` and a `<name>_test.cu`. See `g2g/CLAUDE.md` for details.
 
 ## Architecture
 

@@ -1,0 +1,61 @@
+COMMON_DIR := $(abspath ../common)
+G2G_DIR    := $(abspath ../../../g2g)
+
+NVCC      ?= nvcc
+CUDA_HOME ?= /usr/local/cuda
+
+# ---------------------------------------------------------------------------
+# GPU architecture detection — mirrors g2g/Makefile.cuda exactly.
+# ---------------------------------------------------------------------------
+ifeq ($(GENCODE_FLAGS),)
+  DETECTED_SM := $(shell nvidia-smi --query-gpu=compute_cap \
+                   --format=csv,noheader 2>/dev/null | head -n 1 | tr -d '.')
+  ifneq ($(DETECTED_SM),)
+    GENCODE_FLAGS := -gencode arch=compute_$(DETECTED_SM),code=compute_$(DETECTED_SM)
+    GENCODE_FLAGS += -gencode arch=compute_$(DETECTED_SM),code=sm_$(DETECTED_SM)
+  endif
+endif
+
+CUDA_VER  := $(shell nvcc --version 2>/dev/null | grep -oP 'release \K[0-9]+' | head -1)
+CUDA_OLD  := $(shell [ -n "$(CUDA_VER)" ] && [ "$(CUDA_VER)" -lt 8 ] && echo 1 || echo 0)
+ifeq ($(CUDA_OLD),1)
+  GENCODE_FLAGS ?= -gencode arch=compute_30,code=compute_30 \
+                   -gencode arch=compute_30,code=sm_30
+else
+  GENCODE_FLAGS ?= -gencode arch=compute_50,code=compute_50 \
+                   -gencode arch=compute_50,code=sm_50 \
+                   -gencode arch=compute_60,code=compute_60 \
+                   -gencode arch=compute_60,code=sm_60 \
+                   -gencode arch=compute_75,code=compute_75 \
+                   -gencode arch=compute_75,code=sm_75
+endif
+
+NVCCFLAGS := -std=c++14 -I$(COMMON_DIR) -I$(G2G_DIR) $(GENCODE_FLAGS) \
+             -g -G -O0 --ptxas-options=-v $(EXTRA_FLAGS)
+LDFLAGS   := -lcudart
+
+# ---------------------------------------------------------------------------
+# Auto-discover all *_test.cu sources and derive binary names.
+# ---------------------------------------------------------------------------
+SRCS := $(wildcard *_test.cu)
+BINS := $(SRCS:.cu=)
+
+.PHONY: all build run clean
+
+all: build run
+
+build: $(BINS)
+
+%_test: %_test.cu $(COMMON_DIR)/test_utils.h
+	$(NVCC) $(NVCCFLAGS) -o $@ $< $(LDFLAGS)
+
+run: build
+	@for t in $(BINS); do \
+	  echo "----------------------------------------"; \
+	  echo "Running $$t ..."; \
+	  echo "----------------------------------------"; \
+	  ./$$t; \
+	done
+
+clean:
+	rm -f $(BINS) *.o

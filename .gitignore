@@ -48,6 +48,7 @@ lioamber/liosubs/utests/Output-*
 ###########################################################
 # Unit test
 ###########################################################
+test/unit_tests/kernels/*_test
 test/unit_test/accumulate_point/main_gpu
 test/unit_test/accumulate_point/main_cpu
 test/unit_test/accumulate_point/output/*
