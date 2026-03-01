@@ -102,15 +102,12 @@ cd test/unit_tests && make
 # Build only
 cd test/unit_tests && make build
 
-# Run a specific kernel suite
-cd test/unit_tests/kernels/transpose && make
-
 # Clean
 cd test/unit_tests && make clean
 ```
 
-To add a test for a new kernel, create `test/unit_tests/kernels/<name>/` with a
-four-line `Makefile` and a `<name>_test.cu`. See `g2g/CLAUDE.md` for details.
+To add a test for a new kernel, drop `<name>_test.cu` into `test/unit_tests/kernels/`.
+The shared `Makefile` there picks it up automatically. See `g2g/CLAUDE.md` for details.
 
 ## Architecture
 
@@ -149,6 +146,56 @@ Fortran calls C++ functions via `extern "C"` bindings with trailing underscores 
 - **Precision**: Core classes and kernels are templated on `scalar_type` (`float` or `double`) controlled by the `FULL_DOUBLE` macro.
 - **CUDA block sizes**: Constants like `FUNCTIONS_BLOCK_SIZE`, `WEIGHT_BLOCK_SIZE`, etc. are defined in `g2g/common.h` — must be multiples of 16.
 - **Fortran**: Uses `implicit none`, allocatable arrays, and `garcha_mod` for global state.
+
+## Code Organization Conventions
+
+### Test directory layout
+
+Three test tiers, each with its own structure:
+
+| Tier | Location | Purpose |
+|---|---|---|
+| CUDA kernel unit tests | `test/unit_tests/kernels/` | Fast, isolated GPU kernel correctness checks |
+| LIO integration tests | `test/LIO_test/NN_<name>/` | Full end-to-end molecule simulations |
+| AMBER coupling tests | `test/AMBER_test/<scenario>/` | QM/MM tests requiring AMBER |
+
+### CUDA kernel unit tests — flat layout
+
+All kernel test sources live **directly** in `test/unit_tests/kernels/` — no per-kernel
+subfolders. The single shared `Makefile` there auto-discovers every `*_test.cu` via
+`$(wildcard *_test.cu)` and builds them all.
+
+**Naming:** `<kernel_name>_test.cu` → binary `<kernel_name>_test`, where `<kernel_name>`
+matches the kernel header without `.h` (e.g. `rmm.h` → `rmm_test.cu`).
+
+Adding a new kernel test: drop `<name>_test.cu` in `test/unit_tests/kernels/` — no
+Makefile edits needed anywhere. See `g2g/CLAUDE.md` for the include structure.
+
+Shared infrastructure lives in `test/unit_tests/common/`:
+- `test_utils.h` — `CUDA_CHECK(...)` macro and `test_utils::TestRunner`
+- `Makefile.rules` — reusable toolchain variables for other test suites
+
+### LIO integration tests
+
+Each test lives in `test/LIO_test/NN_<name>/` where `NN` is a zero-padded number
+controlling execution order. Required files per test:
+- `<name>.in` / `<name>.xyz` — simulation inputs
+- `run.sh` — runs liosolo, produces output files
+- `check_test.py` — validates outputs against `*.ok` golden references
+- `<metric>.ok` — one per checked output (`output.ok`, `forces.ok`, `mulliken.ok`, …)
+
+### AMBER coupling tests
+
+Each scenario under `test/AMBER_test/<scenario>/` uses a three-script convention:
+- `test_run*.sh` — runs the simulation
+- `test_compare.sh` — diffs output against reference
+- `test_clean.sh` — removes generated files
+
+### Python analysis engine
+
+`test/tests_engine/` holds one module per physical observable (`energy.py`, `forces.py`,
+`mulliken.py`, `dipole.py`, `fukui.py`, `restart.py`). These are imported by
+`test/new_tests.py` and `check_test.py` scripts — they are not standalone executables.
 
 ## Git Hooks
 
