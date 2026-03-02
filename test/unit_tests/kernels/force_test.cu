@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "test_utils.h"
+#include "kernels_reference.h"
 #include "../../../g2g/common.h"               // FORCE_BLOCK_SIZE
 #include "../../../g2g/matrix.h"               // COALESCED_DIMENSION
 #include "../../../g2g/scalar_vector_types.h"  // vec_type<T,N>
@@ -41,30 +42,6 @@ namespace G2G {
 }
 
 using F4 = G2G::vec_type<float, 4>;
-
-// ---------------------------------------------------------------------------
-// CPU reference: forces[atom] = sum_p derivs[COALESCED_DIM(pts)*atom+p]*f[p]
-// derivs must be padded to COALESCED_DIMENSION(pts)*n_atoms elements.
-// ---------------------------------------------------------------------------
-static std::vector<F4> cpu_forces(int n_atoms, int pts,
-                                  const std::vector<float>& factors,
-                                  const std::vector<F4>& derivs) {
-  int cdim = COALESCED_DIMENSION(pts);
-  std::vector<F4> out(n_atoms, F4(0.f, 0.f, 0.f, 0.f));
-  for (int a = 0; a < n_atoms; ++a) {
-    float ax = 0.f, ay = 0.f, az = 0.f, aw = 0.f;
-    for (int p = 0; p < pts; ++p) {
-      float f   = factors[p];
-      F4    d   = derivs[cdim * a + p];
-      ax += d.x * f;
-      ay += d.y * f;
-      az += d.z * f;
-      aw += d.w * f;
-    }
-    out[a] = F4(ax, ay, az, aw);
-  }
-  return out;
-}
 
 // ---------------------------------------------------------------------------
 // Run closed-shell force kernel; returns host forces.
@@ -207,7 +184,7 @@ int main() {
                                float(a + p) * 0.1f, 0.f);
     auto derivs = make_derivs(na, pts, vals);
     auto got = run_forces(na, pts, factors, derivs);
-    auto ref = cpu_forces(na, pts, factors, derivs);
+    auto ref = ref_cpu_forces<F4>(na, pts, factors, derivs);
     runner.check(all_near(got, ref), "n_atoms=3 pts=5 vs CPU");
   }
 
@@ -223,7 +200,7 @@ int main() {
                                float(p) * 0.01f, 0.f);
     auto derivs = make_derivs(na, pts, vals);
     auto got = run_forces(na, pts, factors, derivs);
-    auto ref = cpu_forces(na, pts, factors, derivs);
+    auto ref = ref_cpu_forces<F4>(na, pts, factors, derivs);
     runner.check(all_near(got, ref, 3e-4f), "pts=300 multi-chunk vs CPU");
   }
 
@@ -238,7 +215,7 @@ int main() {
         vals[a * pts + p] = F4(float(p % 11) + a, float(a + 1), 0.f, 0.f);
     auto derivs = make_derivs(na, pts, vals);
     auto got = run_forces(na, pts, factors, derivs);
-    auto ref = cpu_forces(na, pts, factors, derivs);
+    auto ref = ref_cpu_forces<F4>(na, pts, factors, derivs);
     runner.check(all_near(got, ref, 3e-4f), "pts=513 partial last chunk vs CPU");
   }
 
@@ -276,8 +253,8 @@ int main() {
     auto da = make_derivs(na, pts, vals_a);
     auto db = make_derivs(na, pts, vals_b);
     auto pf7 = run_forces_open(na, pts, fa, fb, da, db);
-    auto ref_a = cpu_forces(na, pts, fa, da);
-    auto ref_b = cpu_forces(na, pts, fb, db);
+    auto ref_a = ref_cpu_forces<F4>(na, pts, fa, da);
+    auto ref_b = ref_cpu_forces<F4>(na, pts, fb, db);
     runner.check(all_near(pf7.first, ref_a, 3e-4f) && all_near(pf7.second, ref_b, 3e-4f),
                  "open-shell asymmetric → vs CPU");
   }

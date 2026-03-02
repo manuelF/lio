@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "test_utils.h"
+#include "kernels_reference.h"
 #include "../../../g2g/common.h"               // DENSITY_DERIV_BLOCK_SIZE, COALESCED_DIMENSION
 #include "../../../g2g/matrix.h"               // COALESCED_DIMENSION macro
 #include "../../../g2g/scalar_vector_types.h"  // vec_type<T,N>
@@ -66,40 +67,6 @@ static cudaTextureObject_t make_rmm_texture(const std::vector<float>& rmm,
   cudaTextureObject_t texObj = 0;
   CUDA_CHECK(cudaCreateTextureObject(&texObj, &resDesc, &texDesc, nullptr));
   return texObj;
-}
-
-// ---------------------------------------------------------------------------
-// CPU reference
-// fv layout: fv[COALESCED_DIM(pts)*func + point]
-// gv layout: gv[COALESCED_DIM(pts)*func + point]
-// nuc:       nuc[func] = nucleus index
-// Output: deriv[COALESCED_DIM(pts)*nuc + point], initialized to 0
-// Kernel: w_i = sum_k R[k][i]*fk*(k==i?2:1), deriv -= Fgi*w_i
-// ---------------------------------------------------------------------------
-static std::vector<F4> cpu_density_derivs(
-    const std::vector<float>& rmm, int m,
-    const std::vector<float>& fv, const std::vector<F4>& gv,
-    const std::vector<unsigned>& nuc, int nuc_count, int pts) {
-  int cdim = COALESCED_DIMENSION(pts);
-  std::vector<F4> deriv(cdim * nuc_count, F4(0.f, 0.f, 0.f, 0.f));
-  for (int p = 0; p < pts; p++) {
-    for (int i = 0; i < m; i++) {
-      float w = 0.f;
-      for (int k = 0; k < m; k++) {
-        float fk = fv[cdim * k + p];
-        float Rki = rmm[k * m + i];       // R[k][i] = tex2D(col=i, row=k)
-        float factor = (i == k) ? 2.f : 1.f;
-        w += Rki * fk * factor;
-      }
-      F4 Fgi = gv[cdim * i + p];
-      int ni = (int)nuc[i];
-      deriv[cdim * ni + p].x -= Fgi.x * w;
-      deriv[cdim * ni + p].y -= Fgi.y * w;
-      deriv[cdim * ni + p].z -= Fgi.z * w;
-      deriv[cdim * ni + p].w -= Fgi.w * w;
-    }
-  }
-  return deriv;
 }
 
 // ---------------------------------------------------------------------------
@@ -297,7 +264,7 @@ int main() {
     auto fv  = make_fv(m, pts, fv_raw);
     auto gv  = make_gv(m, pts, gv_raw);
     auto got = run_density_derivs(rmm, m, fv, gv, nuc, nuc_count, pts);
-    auto ref = cpu_density_derivs(rmm, m, fv, gv, nuc, nuc_count, pts);
+    auto ref = ref_cpu_density_derivs<F4>(rmm, m, fv, gv, nuc, nuc_count, pts);
     runner.check(all_near_derivs(got, ref, nuc_count, pts, tol),
                  "m=4 pts=3 vs CPU");
   }
@@ -321,7 +288,7 @@ int main() {
     auto fv  = make_fv(m, pts, fv_raw);
     auto gv  = make_gv(m, pts, gv_raw);
     auto got = run_density_derivs(rmm, m, fv, gv, nuc, nuc_count, pts);
-    auto ref = cpu_density_derivs(rmm, m, fv, gv, nuc, nuc_count, pts);
+    auto ref = ref_cpu_density_derivs<F4>(rmm, m, fv, gv, nuc, nuc_count, pts);
     runner.check(all_near_derivs(got, ref, nuc_count, pts, 5e-4f),
                  "pts=200 multi-block vs CPU");
   }
@@ -373,8 +340,8 @@ int main() {
     auto gv   = make_gv(m, pts, gv_raw);
     auto pair2 = run_density_derivs_open(rmm_a, rmm_b, m, fv, gv,
                                           nuc, nuc_count, pts);
-    auto ref_a = cpu_density_derivs(rmm_a, m, fv, gv, nuc, nuc_count, pts);
-    auto ref_b = cpu_density_derivs(rmm_b, m, fv, gv, nuc, nuc_count, pts);
+    auto ref_a = ref_cpu_density_derivs<F4>(rmm_a, m, fv, gv, nuc, nuc_count, pts);
+    auto ref_b = ref_cpu_density_derivs<F4>(rmm_b, m, fv, gv, nuc, nuc_count, pts);
     bool ok = all_near_derivs(pair2.first,  ref_a, nuc_count, pts, tol) &&
               all_near_derivs(pair2.second, ref_b, nuc_count, pts, tol);
     runner.check(ok, "open-shell asymmetric → vs CPU");

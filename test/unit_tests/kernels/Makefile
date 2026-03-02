@@ -53,10 +53,10 @@ all: build run
 
 build: $(BINS)
 
-%_test: %_test.cu $(COMMON_DIR)/test_utils.h
+%_test: %_test.cu $(COMMON_DIR)/test_utils.h $(COMMON_DIR)/kernels_reference.h
 	$(NVCC) $(NVCCFLAGS) -o $@ $< $(LDFLAGS)
 
-%_cpu_test: %_cpu_test.cpp $(COMMON_DIR)/cpu_test_utils.h
+%_cpu_test: %_cpu_test.cpp $(COMMON_DIR)/cpu_test_utils.h $(COMMON_DIR)/kernels_reference.h
 	$(CXX) $(CXXFLAGS) -o $@ $< -lm
 
 run: build

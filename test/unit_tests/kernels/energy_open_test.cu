@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "test_utils.h"
+#include "kernels_reference.h"
 #include "../../../g2g/common.h"               // DENSITY_BLOCK_SIZE
 #include "../../../g2g/matrix.h"               // COALESCED_DIMENSION
 #include "../../../g2g/scalar_vector_types.h"  // vec_type<T,N>
@@ -69,21 +70,6 @@ static cudaTextureObject_t make_rmm_texture(const std::vector<float>& rmm,
   cudaTextureObject_t texObj = 0;
   CUDA_CHECK(cudaCreateTextureObject(&texObj, &resDesc, &texDesc, nullptr));
   return texObj;
-}
-
-// ---------------------------------------------------------------------------
-// CPU reference: closed-shell density (used for both alpha and beta slices).
-// rho(p) = sum_i fv[m*p+i] * sum_{j<=i} rmm[i*m+j] * fv[m*p+j]
-// ---------------------------------------------------------------------------
-static float cpu_density(const std::vector<float>& rmm, int m,
-                         const std::vector<float>& fv,  int p) {
-  float rho = 0.f;
-  for (int i = 0; i < m; ++i) {
-    float wi = 0.f;
-    for (int j = 0; j <= i; ++j) wi += rmm[i * m + j] * fv[m * p + j];
-    rho += fv[m * p + i] * wi;
-  }
-  return rho;
 }
 
 // ---------------------------------------------------------------------------
@@ -194,8 +180,8 @@ int main() {
     auto p3 = run_density_open(ra, rb, m, fv, pts);
     bool ok = true;
     for (int p = 0; p < pts; ++p) {
-      ok &= fabsf(p3.first[p]  - cpu_density(ra, m, fv, p)) < tol;
-      ok &= fabsf(p3.second[p] - cpu_density(rb, m, fv, p)) < tol;
+      ok &= fabsf(p3.first[p]  - ref_cpu_density(ra, m, fv, p)) < tol;
+      ok &= fabsf(p3.second[p] - ref_cpu_density(rb, m, fv, p)) < tol;
     }
     runner.check(ok, "m=4 pts=3 vs CPU");
   }
@@ -231,8 +217,8 @@ int main() {
     auto p5 = run_density_open(ra, rb, m, fv, pts);
     bool ok = true;
     for (int p = 0; p < pts; ++p) {
-      ok &= fabsf(p5.first[p]  - cpu_density(ra, m, fv, p)) < 5e-2f;
-      ok &= fabsf(p5.second[p] - cpu_density(rb, m, fv, p)) < 5e-2f;
+      ok &= fabsf(p5.first[p]  - ref_cpu_density(ra, m, fv, p)) < 5e-2f;
+      ok &= fabsf(p5.second[p] - ref_cpu_density(rb, m, fv, p)) < 5e-2f;
     }
     runner.check(ok, "m=130 pts=2 two block rows vs CPU");
   }
