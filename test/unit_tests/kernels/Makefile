@@ -2,6 +2,7 @@ COMMON_DIR := $(abspath ../common)
 G2G_DIR    := $(abspath ../../../g2g)
 
 NVCC      ?= nvcc
+CXX       ?= g++
 CUDA_HOME ?= /usr/local/cuda
 
 # ---------------------------------------------------------------------------
@@ -32,13 +33,19 @@ endif
 
 NVCCFLAGS := -std=c++14 -I$(COMMON_DIR) -I$(G2G_DIR) $(GENCODE_FLAGS) \
              -g -G -O0 --ptxas-options=-v $(EXTRA_FLAGS)
+CXXFLAGS  := -std=c++14 -I$(COMMON_DIR) -I$(G2G_DIR) -O2 $(EXTRA_FLAGS)
 LDFLAGS   := -lcudart
 
 # ---------------------------------------------------------------------------
-# Auto-discover all *_test.cu sources and derive binary names.
+# Auto-discover GPU (*_test.cu) and CPU (*_cpu_test.cpp) test sources.
 # ---------------------------------------------------------------------------
-SRCS := $(wildcard *_test.cu)
-BINS := $(SRCS:.cu=)
+SRCS_CU  := $(wildcard *_test.cu)
+BINS_CU  := $(SRCS_CU:.cu=)
+
+SRCS_CPP := $(wildcard *_cpu_test.cpp)
+BINS_CPP := $(SRCS_CPP:.cpp=)
+
+BINS := $(BINS_CU) $(BINS_CPP)
 
 .PHONY: all build run clean
 
@@ -48,6 +55,9 @@ build: $(BINS)
 
 %_test: %_test.cu $(COMMON_DIR)/test_utils.h
 	$(NVCC) $(NVCCFLAGS) -o $@ $< $(LDFLAGS)
+
+%_cpu_test: %_cpu_test.cpp $(COMMON_DIR)/cpu_test_utils.h
+	$(CXX) $(CXXFLAGS) -o $@ $< -lm
 
 run: build
 	@for t in $(BINS); do \
