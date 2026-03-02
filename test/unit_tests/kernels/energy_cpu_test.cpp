@@ -1,19 +1,23 @@
 // CPU conformance tests for the electron density computation algorithm.
 //
-// Tests ref_cpu_density from kernels_reference.h against hand-computed values
-// and an independent naive full-matrix expansion.  This is the same algorithm
-// that gpu_compute_density (energy.h) validates against; testing it here in
-// isolation ensures the reference is itself mathematically correct.
+// Two independent implementations are tested side-by-side:
+//   ref_cpu_density()                — simple reference in kernels_reference.h
+//   G2G::cpu_compute_density_lda()  — extracted kernel from g2g/cpu/iteration.cpp
 //
-// Formula: rho(p) = sum_i fv[m*p+i] * sum_{j<=i} rmm[i*m+j] * fv[m*p+j]
-// rmm stores the lower-triangular density matrix.
+// The two implementations use complementary triangle conventions:
+//   ref: lower-triangle  rmm[i*m+j] for j <= i (upper triangle = 0)
+//   cpu: upper-triangle  rmm[i*m+j] for j >= i (uses fully symmetric matrix)
+// Given a symmetrized RMM both produce identical densities.
+//
+// Formula: rho(p) = sum_i fv[p*m+i] * sum_{j<=i} rmm[i*m+j] * fv[p*m+j]
+// rmm stores the lower-triangular density matrix (ref convention).
 //
 // Test coverage
 // -------------
-//   1. m=1, pts=1: trivial rho = R[0][0]*F[0]^2
-//   2. m=2, pts=1: hand-verifiable
+//   1. m=1, pts=1: trivial rho = R[0][0]*F[0]^2 = 18
+//   2. m=2, pts=1: hand-verifiable rho = 17
 //   3. Zero function values → zero density
-//   4. m=4, pts=3: lower-triangular formula ≡ naive symmetric expansion
+//   4. m=4, pts=3: ref ≡ cpu_compute_density_lda (both implementations)
 //   5. Scale linearity: F → 2*F implies rho → 4*rho
 //   6. Additive decomposition: rho(Ra+Rb) = rho(Ra) + rho(Rb)
 
@@ -23,79 +27,91 @@
 
 #include "cpu_test_utils.h"
 #include "kernels_reference.h"
+#include "cpu/cpu_kernels.h"   // G2G::cpu_compute_density_lda (via -I$(G2G_DIR))
 
-// Alternative implementation of the same LIO lower-triangular formula,
-// written as a plain double loop instead of an accumulated inner sum.
-// LIO uses only the lower triangle: upper entries are 0 by convention.
-// rho = sum_{i>=j} rmm[i*m+j] * fv[m*p+i] * fv[m*p+j]
-static float density_flat_loop(const std::vector<float>& rmm, int m,
-                                const std::vector<float>& fv, int p) {
-  float rho = 0.f;
+// Symmetrize a lower-triangular RMM for use with cpu_compute_density_lda.
+// Lower-tri convention: rmm_lower[i*m+j] is non-zero only for j <= i.
+// Symmetric result: rmm_sym[i*m+j] = rmm_sym[j*m+i] = rmm_lower[max(i,j)*m+min(i,j)]
+static std::vector<float> symmetrize(const std::vector<float>& lower, int m) {
+  std::vector<float> sym(m * m, 0.f);
   for (int i = 0; i < m; ++i)
     for (int j = 0; j <= i; ++j)
-      rho += rmm[i*m+j] * fv[m*p+i] * fv[m*p+j];
-  return rho;
+      sym[i*m+j] = sym[j*m+i] = lower[i*m+j];
+  return sym;
 }
 
 // ============================================================================
 int main() {
-  test_utils::TestRunner runner("ref_cpu_density algorithm");
+  test_utils::TestRunner runner("ref_cpu_density vs cpu_compute_density_lda");
   const float tol = 1e-5f;
 
   // --- 1. m=1 trivial: rho = R[0][0]*F[0]^2 = 2*3^2 = 18 ---
   {
-    float rho = ref_cpu_density({2.f}, 1, {3.f}, 0);
-    runner.check(fabsf(rho - 18.f) < tol, "m=1 trivial: rho=18");
+    std::vector<float> rmm_lower = {2.f};
+    std::vector<float> fv = {3.f};
+    float ref = ref_cpu_density(rmm_lower, 1, fv, 0);
+    auto  sym = symmetrize(rmm_lower, 1);
+    float cpu = G2G::cpu_compute_density_lda(fv.data(), sym.data(), 1);
+    bool ok = fabsf(ref - 18.f) < tol && fabsf(cpu - ref) < tol;
+    runner.check(ok, "m=1 trivial: rho=18, ref ≡ cpu");
   }
 
-  // --- 2. m=2 hand-verify ---
-  // R (lower-tri): R[0][0]=1, R[1][0]=2, R[1][1]=3   F=[1,2]
-  // rho = F[0]*(R[0][0]*F[0]) + F[1]*(R[1][0]*F[0]+R[1][1]*F[1])
-  //     = 1*1 + 2*(2+6) = 17
+  // --- 2. m=2 hand-verify: rho = 17 ---
+  // R: R[0][0]=1, R[1][0]=2, R[1][1]=3   F=[1,2]
+  // rho = F[0]*(R[0][0]*F[0]) + F[1]*(R[1][0]*F[0]+R[1][1]*F[1]) = 1 + 2*(2+6) = 17
   {
-    std::vector<float> rmm = {1.f, 0.f,  // row 0
-                               2.f, 3.f}; // row 1
-    float rho = ref_cpu_density(rmm, 2, {1.f, 2.f}, 0);
-    runner.check(fabsf(rho - 17.f) < tol, "m=2 hand-verify: rho=17");
+    std::vector<float> rmm_lower = {1.f, 0.f, 2.f, 3.f};
+    std::vector<float> fv = {1.f, 2.f};
+    float ref = ref_cpu_density(rmm_lower, 2, fv, 0);
+    auto  sym = symmetrize(rmm_lower, 2);
+    float cpu = G2G::cpu_compute_density_lda(fv.data(), sym.data(), 2);
+    bool ok = fabsf(ref - 17.f) < tol && fabsf(cpu - ref) < tol;
+    runner.check(ok, "m=2 hand-verify: rho=17, ref ≡ cpu");
   }
 
   // --- 3. Zero function values → zero density ---
   {
-    std::vector<float> rmm = {1.f, 0.f, 2.f, 3.f};
+    std::vector<float> rmm_lower = {1.f, 0.f, 2.f, 3.f};
     std::vector<float> fv(2, 0.f);
-    runner.check(fabsf(ref_cpu_density(rmm, 2, fv, 0)) < tol,
-                 "zero F → zero density");
+    float ref = ref_cpu_density(rmm_lower, 2, fv, 0);
+    auto  sym = symmetrize(rmm_lower, 2);
+    float cpu = G2G::cpu_compute_density_lda(fv.data(), sym.data(), 2);
+    bool ok = fabsf(ref) < tol && fabsf(cpu) < tol;
+    runner.check(ok, "zero F → zero density, ref ≡ cpu");
   }
 
-  // --- 4. m=4, pts=3: lower-tri formula ≡ naive symmetric expansion ---
+  // --- 4. m=4, pts=3: ref ≡ cpu_compute_density_lda for all points ---
   {
     int m = 4, pts = 3;
-    std::vector<float> rmm(m*m, 0.f), fv(m*pts);
+    std::vector<float> rmm_lower(m*m, 0.f), fv(m*pts);
     for (int i = 0; i < m; ++i)
       for (int j = 0; j <= i; ++j)
-        rmm[i*m+j] = float(i*m+j+1) * 0.1f;
+        rmm_lower[i*m+j] = float(i*m+j+1) * 0.1f;
     for (int p = 0; p < pts; ++p)
       for (int i = 0; i < m; ++i)
         fv[m*p+i] = float(p*m+i+1) * 0.3f;
+    auto sym = symmetrize(rmm_lower, m);
     bool ok = true;
-    for (int p = 0; p < pts; ++p)
-      ok &= fabsf(ref_cpu_density(rmm, m, fv, p)
-                  - density_flat_loop(rmm, m, fv, p)) < tol;
-    runner.check(ok, "m=4 pts=3: lower-tri ≡ flat-loop alternative");
+    for (int p = 0; p < pts; ++p) {
+      float ref = ref_cpu_density(rmm_lower, m, fv, p);
+      float cpu = G2G::cpu_compute_density_lda(&fv[m*p], sym.data(), m);
+      ok &= fabsf(cpu - ref) < tol;
+    }
+    runner.check(ok, "m=4 pts=3: ref ≡ cpu_compute_density_lda");
   }
 
   // --- 5. Scale linearity: F → 2*F implies rho → 4*rho ---
   {
     int m = 3;
-    std::vector<float> rmm(m*m, 0.f), fv(m), fv2(m);
+    std::vector<float> rmm_lower(m*m, 0.f), fv(m), fv2(m);
     for (int i = 0; i < m; ++i)
       for (int j = 0; j <= i; ++j)
-        rmm[i*m+j] = float(i+j+1) * 0.5f;
+        rmm_lower[i*m+j] = float(i+j+1) * 0.5f;
     for (int i = 0; i < m; ++i) { fv[i] = float(i+1); fv2[i] = 2.f*fv[i]; }
-    float rho1 = ref_cpu_density(rmm, m, fv,  0);
-    float rho2 = ref_cpu_density(rmm, m, fv2, 0);
-    runner.check(fabsf(rho2 - 4.f * rho1) < tol,
-                 "scale F×2 → rho×4 (bilinear)");
+    float rho1 = ref_cpu_density(rmm_lower, m, fv,  0);
+    float rho2 = ref_cpu_density(rmm_lower, m, fv2, 0);
+    bool ok = fabsf(rho2 - 4.f * rho1) < tol;
+    runner.check(ok, "scale F×2 → rho×4 (bilinear)");
   }
 
   // --- 6. Additive decomposition: rho(Ra+Rb) = rho(Ra) + rho(Rb) ---
