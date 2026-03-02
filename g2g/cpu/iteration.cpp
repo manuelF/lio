@@ -14,6 +14,7 @@
 #include "../partition.h"
 
 #include <stdlib.h>
+#include "cpu_kernels.h"
 #include "../pointxc/calc_ggaCS.h"
 #include "../pointxc/calc_ggaOS.h"
 #include "../pointxc/calc_ldaCS.h"
@@ -95,17 +96,13 @@ void PointGroupCPU<scalar_type>::solve_closed(
 
   /** density **/
   if (lda) {
-    for (int point = 0; point < this->points.size(); point++) {
-      scalar_type partial_density = 0;
-      for (int i = 0; i < group_m; i++) {
-        scalar_type w = 0.0;
-        scalar_type Fi = function_values(i, point);
-        for (int j = i; j < group_m; j++) {
-          scalar_type Fj = function_values(j, point);
-          w += rmm_input(j, i) * Fj;
-        }
-        partial_density += Fi * w;
-      }
+    for (int point = 0; point < (int)this->points.size(); point++) {
+      // cpu_compute_density_lda() matches the original upper-triangle loop:
+      //   sum_i Fi * sum_{j>=i} rmm_input(j,i) * Fj
+      // rmm_input is symmetric (both triangles filled by get_rmm_input).
+      scalar_type partial_density = cpu_compute_density_lda(
+          function_values.row(point), rmm_input.asArray(), group_m);
+
       scalar_type exc = 0.0, corr = 0.0, y2a = 0.0;
 
       calc_ldaCS_in(partial_density, exc, corr, y2a, iexch);
