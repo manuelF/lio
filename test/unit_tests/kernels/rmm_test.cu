@@ -1,0 +1,292 @@
+// Unit tests for g2g/cuda/kernels/rmm.h
+//
+// gpu_update_rmm computes the lower-triangle of a symmetric matrix:
+//
+//   RMM[j * COALESCED_DIMENSION(m) + i] = sum_p  factor[p] * F_i[p] * F_j[p]
+//   for all i <= j < m
+//
+// function_values is laid out as F[func_idx * COALESCED_DIMENSION(points) + p].
+//
+// Two instantiations are tested:
+//   check_pos=false  — standard rectangular grid, one thread per (i,j) pair.
+//   check_pos=true   — triangular block indexing to skip the upper triangle.
+//
+// Test coverage
+// -------------
+//   1. Trivial: m=1, points=1
+//   2. Hand-verifiable: m=2, points=3
+//   3. Non-trivial: m=4, points=5 (float and double)
+//   4. Full block: m=16 = RMM_BLOCK_SIZE_XY, points=32
+//   5. Multi-outer-loop: m=4, points=300 (> RMM_BLOCK_SIZE_XY²)
+//   6. Zero factors → zero RMM
+//   7. Orthogonal functions → purely diagonal RMM
+//   8. check_pos=true with m=2 (single triangular block)
+//   9. check_pos=true with m=32 (three triangular blocks)
+
+#define GPU_KERNELS 1
+#define FULL_DOUBLE 0
+#define CPU_KERNELS 0
+#define USE_LIBXC 0
+
+#include <cuda_runtime.h>
+
+#include <cmath>
+#include <cstdio>
+#include <vector>
+
+#include "../../../g2g/common.h"  // RMM_BLOCK_SIZE_XY, DENSITY_*
+#include "../../../g2g/matrix.h"  // COALESCED_DIMENSION, cuda_extra.h (index())
+#include "test_utils.h"
+
+namespace G2G {
+#include "../../../g2g/cuda/kernels/rmm.h"
+}
+
+// ---------------------------------------------------------------------------
+// CPU reference: RMM(i,j) = sum_p factor[p] * F_i[p] * F_j[p],  i <= j
+// Outputs into rmm_ref[COALESCED_DIMENSION(m) * j + i].
+// ---------------------------------------------------------------------------
+template <typename T>
+static void cpu_rmm(const T* factors, int points, const T* fv, int m,
+                    T* rmm_ref) {
+  int cdim_p = COALESCED_DIMENSION(points);
+  int cdim_m = COALESCED_DIMENSION(m);
+  for (int j = 0; j < m; ++j) {
+    for (int i = 0; i <= j; ++i) {
+      T s = 0;
+      for (int p = 0; p < points; ++p)
+        s += factors[p] * fv[i * cdim_p + p] * fv[j * cdim_p + p];
+      rmm_ref[j * cdim_m + i] = s;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Run gpu_update_rmm<T, check_pos> and verify against the CPU reference.
+// Returns true if all lower-triangle elements match within tol.
+// ---------------------------------------------------------------------------
+template <typename T, bool check_pos>
+static bool run_rmm_test(int m, int points, T tol = T(1e-4)) {
+  int cdim_p = COALESCED_DIMENSION(points);
+  int cdim_m = COALESCED_DIMENSION(m);
+
+  // Host buffers
+  std::vector<T> h_factors(points);
+  std::vector<T> h_fv(m * cdim_p, T(0));
+  std::vector<T> h_rmm(cdim_m * m, T(0));
+  std::vector<T> h_ref(cdim_m * m, T(0));
+
+  // Fill factors and function values with non-trivial values
+  for (int p = 0; p < points; ++p) h_factors[p] = T(p + 1);
+  for (int fi = 0; fi < m; ++fi)
+    for (int p = 0; p < points; ++p)
+      h_fv[fi * cdim_p + p] = T((fi + 1) * (p + 1));
+
+  cpu_rmm(h_factors.data(), points, h_fv.data(), m, h_ref.data());
+
+  // Device allocations
+  T *d_factors, *d_fv, *d_rmm;
+  CUDA_CHECK(cudaMalloc(&d_factors, points * sizeof(T)));
+  CUDA_CHECK(cudaMalloc(&d_fv, m * cdim_p * sizeof(T)));
+  CUDA_CHECK(cudaMalloc(&d_rmm, cdim_m * m * sizeof(T)));
+
+  CUDA_CHECK(cudaMemcpy(d_factors, h_factors.data(), points * sizeof(T),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(d_fv, h_fv.data(), m * cdim_p * sizeof(T),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemset(d_rmm, 0, cdim_m * m * sizeof(T)));
+
+  // Launch
+  dim3 block(RMM_BLOCK_SIZE_XY, RMM_BLOCK_SIZE_XY);
+  if (check_pos) {
+    int n_tiles = (m + RMM_BLOCK_SIZE_XY - 1) / RMM_BLOCK_SIZE_XY;
+    int n_blocks = n_tiles * (n_tiles + 1) / 2;
+    dim3 grid(n_blocks, 1);
+    G2G::gpu_update_rmm<T, true>
+        <<<grid, block>>>(d_factors, points, d_rmm, d_fv, m);
+  } else {
+    int tiles = (m + RMM_BLOCK_SIZE_XY - 1) / RMM_BLOCK_SIZE_XY;
+    dim3 grid(tiles, tiles);
+    G2G::gpu_update_rmm<T, false>
+        <<<grid, block>>>(d_factors, points, d_rmm, d_fv, m);
+  }
+  CUDA_CHECK(cudaGetLastError());
+  CUDA_CHECK(cudaDeviceSynchronize());
+
+  CUDA_CHECK(cudaMemcpy(h_rmm.data(), d_rmm, cdim_m * m * sizeof(T),
+                        cudaMemcpyDeviceToHost));
+  cudaFree(d_factors);
+  cudaFree(d_fv);
+  cudaFree(d_rmm);
+
+  // Verify lower triangle
+  for (int j = 0; j < m; ++j) {
+    for (int i = 0; i <= j; ++i) {
+      T got = h_rmm[j * cdim_m + i];
+      T exp = h_ref[j * cdim_m + i];
+      if (std::abs(got - exp) > tol * (T(1) + std::abs(exp))) {
+        printf("    MISMATCH RMM(%d,%d): expected %.6g  got %.6g\n", i, j,
+               (double)exp, (double)got);
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Special test: zero factors → every RMM element must be zero.
+// ---------------------------------------------------------------------------
+template <typename T>
+static bool test_zero_factors(int m, int points) {
+  int cdim_p = COALESCED_DIMENSION(points);
+  int cdim_m = COALESCED_DIMENSION(m);
+
+  std::vector<T> h_factors(points, T(0));
+  std::vector<T> h_fv(m * cdim_p);
+  std::vector<T> h_rmm(cdim_m * m, T(-1));  // pre-fill with sentinel
+
+  for (int fi = 0; fi < m; ++fi)
+    for (int p = 0; p < points; ++p)
+      h_fv[fi * cdim_p + p] = T(fi * points + p + 1);
+
+  T *d_factors, *d_fv, *d_rmm;
+  CUDA_CHECK(cudaMalloc(&d_factors, points * sizeof(T)));
+  CUDA_CHECK(cudaMalloc(&d_fv, m * cdim_p * sizeof(T)));
+  CUDA_CHECK(cudaMalloc(&d_rmm, cdim_m * m * sizeof(T)));
+  CUDA_CHECK(cudaMemcpy(d_factors, h_factors.data(), points * sizeof(T),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(d_fv, h_fv.data(), m * cdim_p * sizeof(T),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemset(d_rmm, 0, cdim_m * m * sizeof(T)));
+
+  int tiles = (m + RMM_BLOCK_SIZE_XY - 1) / RMM_BLOCK_SIZE_XY;
+  dim3 block(RMM_BLOCK_SIZE_XY, RMM_BLOCK_SIZE_XY);
+  dim3 grid(tiles, tiles);
+  G2G::gpu_update_rmm<T, false>
+      <<<grid, block>>>(d_factors, points, d_rmm, d_fv, m);
+  CUDA_CHECK(cudaGetLastError());
+  CUDA_CHECK(cudaDeviceSynchronize());
+  CUDA_CHECK(cudaMemcpy(h_rmm.data(), d_rmm, cdim_m * m * sizeof(T),
+                        cudaMemcpyDeviceToHost));
+  cudaFree(d_factors);
+  cudaFree(d_fv);
+  cudaFree(d_rmm);
+
+  for (int j = 0; j < m; ++j)
+    for (int i = 0; i <= j; ++i)
+      if (h_rmm[j * cdim_m + i] != T(0)) {
+        printf("    Expected 0 at (%d,%d), got %.6g\n", i, j,
+               (double)h_rmm[j * cdim_m + i]);
+        return false;
+      }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Special test: orthogonal functions → purely diagonal RMM.
+// F_i[p] = 1 if p == i, else 0  (requires points >= m).
+// factor[p] = 1 for all p.
+// Expected RMM: diagonal = 1, off-diagonal = 0.
+// ---------------------------------------------------------------------------
+template <typename T>
+static bool test_orthogonal_functions(int m) {
+  int points = m;  // one-to-one: function i is non-zero only at point i
+  int cdim_p = COALESCED_DIMENSION(points);
+  int cdim_m = COALESCED_DIMENSION(m);
+
+  std::vector<T> h_factors(points, T(1));
+  std::vector<T> h_fv(m * cdim_p, T(0));
+  std::vector<T> h_rmm(cdim_m * m, T(0));
+
+  for (int fi = 0; fi < m; ++fi)
+    h_fv[fi * cdim_p + fi] = T(1);  // F_i[i] = 1, all others 0
+
+  T *d_factors, *d_fv, *d_rmm;
+  CUDA_CHECK(cudaMalloc(&d_factors, points * sizeof(T)));
+  CUDA_CHECK(cudaMalloc(&d_fv, m * cdim_p * sizeof(T)));
+  CUDA_CHECK(cudaMalloc(&d_rmm, cdim_m * m * sizeof(T)));
+  CUDA_CHECK(cudaMemcpy(d_factors, h_factors.data(), points * sizeof(T),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(d_fv, h_fv.data(), m * cdim_p * sizeof(T),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemset(d_rmm, 0, cdim_m * m * sizeof(T)));
+
+  int tiles = (m + RMM_BLOCK_SIZE_XY - 1) / RMM_BLOCK_SIZE_XY;
+  dim3 block(RMM_BLOCK_SIZE_XY, RMM_BLOCK_SIZE_XY);
+  dim3 grid(tiles, tiles);
+  G2G::gpu_update_rmm<T, false>
+      <<<grid, block>>>(d_factors, points, d_rmm, d_fv, m);
+  CUDA_CHECK(cudaGetLastError());
+  CUDA_CHECK(cudaDeviceSynchronize());
+  CUDA_CHECK(cudaMemcpy(h_rmm.data(), d_rmm, cdim_m * m * sizeof(T),
+                        cudaMemcpyDeviceToHost));
+  cudaFree(d_factors);
+  cudaFree(d_fv);
+  cudaFree(d_rmm);
+
+  for (int j = 0; j < m; ++j) {
+    for (int i = 0; i <= j; ++i) {
+      T got = h_rmm[j * cdim_m + i];
+      T exp = (i == j) ? T(1) : T(0);
+      if (got != exp) {
+        printf("    Orthogonal: expected RMM(%d,%d)=%.0f, got %.6g\n", i, j,
+               (double)exp, (double)got);
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+int main() {
+  int dev = 0;
+  cudaDeviceProp prop{};
+  CUDA_CHECK(cudaGetDevice(&dev));
+  CUDA_CHECK(cudaGetDeviceProperties(&prop, dev));
+  printf("Device: %s  (SM %d.%d)\n\n", prop.name, prop.major, prop.minor);
+
+  test_utils::TestRunner runner("gpu_update_rmm kernel");
+
+  // --- check_pos=false ---
+  printf("[ check_pos=false ]\n");
+  runner.check(run_rmm_test<float, false>(1, 1), "float  m=1  pts=1   trivial");
+  runner.check(run_rmm_test<float, false>(2, 3),
+               "float  m=2  pts=3   hand-verifiable");
+  runner.check(run_rmm_test<float, false>(4, 5), "float  m=4  pts=5");
+  runner.check(run_rmm_test<float, false>(4, 300),
+               "float  m=4  pts=300 multi-outer-loop");
+  runner.check(run_rmm_test<float, false>(16, 32),
+               "float  m=16 pts=32  full block");
+  runner.check(run_rmm_test<float, false>(16, 300),
+               "float  m=16 pts=300 full block, multi-outer-loop");
+  runner.check(run_rmm_test<double, false>(2, 3), "double m=2  pts=3");
+  runner.check(run_rmm_test<double, false>(4, 5), "double m=4  pts=5");
+  runner.check(run_rmm_test<double, false>(16, 32),
+               "double m=16 pts=32  full block");
+
+  printf("\n[ special cases ]\n");
+  runner.check(test_zero_factors<float>(4, 5),
+               "float  zero factors  → zero RMM");
+  runner.check(test_zero_factors<double>(4, 5),
+               "double zero factors  → zero RMM");
+  runner.check(test_orthogonal_functions<float>(4),
+               "float  orthogonal Fs → diagonal RMM");
+  runner.check(test_orthogonal_functions<float>(16),
+               "float  orthogonal Fs → diagonal RMM (full block)");
+
+  // --- check_pos=true (triangular block indexing) ---
+  printf("\n[ check_pos=true ]\n");
+  runner.check(run_rmm_test<float, true>(2, 3),
+               "float  m=2  pts=3   single tri-block");
+  runner.check(run_rmm_test<float, true>(16, 32),
+               "float  m=16 pts=32  single tri-block (full)");
+  runner.check(run_rmm_test<float, true>(32, 50),
+               "float  m=32 pts=50  three tri-blocks");
+  runner.check(run_rmm_test<double, true>(2, 3),
+               "double m=2  pts=3   single tri-block");
+  runner.check(run_rmm_test<double, true>(32, 50),
+               "double m=32 pts=50  three tri-blocks");
+
+  return runner.summary();
+}
