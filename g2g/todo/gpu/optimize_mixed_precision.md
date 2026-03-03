@@ -1,39 +1,75 @@
-# Optimization: Mixed Precision and Tensor Cores
+# Optimization: Mixed Precision — Corrected for SM 6.1 (Pascal)
 
-## Summary
-Most of the current kernels are implemented in `scalar_type` (float or double) precision. For DFT applications, especially for the far-field density calculation or integration grid points with low weight, full double precision may not be strictly necessary. Modern NVIDIA GPUs (Volta+) have Tensor Cores and dedicated hardware for half-precision (FP16/BF16) and TF32 arithmetic, which offers significantly higher throughput (2x-8x) than FP32/FP64.
+## ⚠ Previous Version Was Wrong for This Hardware
 
-## Proposal
-Implement mixed precision strategies:
-1.  **Reduced Precision Storage**: Store `function_values` and `density_matrix` in `half` or `bfloat16`.
-2.  **Tensor Core Accumulation**: Use `wmma::` (Tensor Core instructions) for the RMM update ($F^T \cdot F$) or Density evaluation ($F \cdot R$) phases if reformulated as GEMM.
-3.  **Use TF32**: Enable TensorFloat-32 (TF32) for FP32 matrix multiplications (cuBLAS). This is a simple flag/mode on Ampere+ GPUs.
+The prior version assumed Tensor Core availability (Volta+ / SM 7.0+).
+**GTX 1080 is SM 6.1 (Pascal): there are no Tensor Cores.**
 
-## Impact
-*   **Throughput**: Massive potential for speedup (2x-4x for compute-bound kernels).
-*   **Memory**: Reduced memory footprint (2x smaller matrices).
-*   **Accuracy**: Careful validation is required. For DFT, the grid accuracy is often limited by discretization error, so reduced precision for small contributions might be acceptable.
+FP16 `__half2` paired-lane MADs exist on Pascal but at ~1/64 of INT8 throughput —
+nowhere near the "2x–8x" claim that applies only to Volta/Ampere Tensor Cores.
+TF32 and BF16 are Ampere-only (SM 8.0+). This document now reflects SM 6.1 reality.
+
+## What SM 6.1 Actually Provides
+
+| Feature | SM 6.1 Support | Throughput vs FP32 |
+|---|---|---|
+| FP32 SIMT | ✓ | 1× baseline |
+| FP64 SIMT | ✓ | 1/32× — avoid |
+| `__half2` MAD | ✓ (CUDA_ARCH≥530) | ~0.02× — nearly useless |
+| `__ldg()` L1 cache | ✓ | Bandwidth, not compute |
+| Tensor Cores (wmma) | ✗ | Volta+ only |
+| TF32 mode | ✗ | Ampere+ only |
+| BF16 | ✗ | Ampere+ only |
+| cuBLAS `CUBLAS_TF32_TENSOR_OP_MATH` | ✗ | Ampere+ only |
+
+## Realistic Proposals for SM 6.1
+
+### 1. FP16 Storage for `function_values` — Bandwidth Reduction (Best ROI)
+Store `gpu_compute_functions` output as `__half` instead of `float`. This halves
+the bandwidth consumed by the largest intermediate array.
+
+- `function_values`: M×P floats. Typical group: M~30, P~512 → ~60 KiB → 30 KiB as `__half`.
+  SM 6.1 L2 is 1.5 MiB, so fitting both float/half copies is feasible.
+- Arithmetic in `gpu_compute_density` and `gpu_update_rmm` still uses FP32 after
+  converting: `float fj = __half2float(fv_half[idx]);`
+- Risk: FP16 underflows below ~6×10⁻⁵. GTO exp(−α·r²) values near the `exp>70` cutoff
+  are already zeroed, so underflow risk is low. Validate against `agua` and `fosfato`.
+
+**Estimated impact: 5–15% end-to-end speedup** (L2 hit rate and bandwidth savings).
+
+### 2. Reduce FP64 Accumulation in iteration.cu (Clean, Easy)
+Some accumulations in `iteration.cu` use `double` (e.g., `local_energy += ...`).
+Reducing these to `float` where precision allows cuts register use and enables
+more warps to be active simultaneously (warp occupancy boost).
+
+This is safe for energies where SCF convergence tolerances are ~10⁻⁶ Hartree.
+For forces (geometry optimization / MD), keep double accumulation.
+
+**Estimated impact: 3–8% for energy-only runs.**
+
+### 3. DP4A INT8 for Far-Field Screening (Low Priority)
+Pascal has DP4A (INT8 dot product) for neural networks. Not directly applicable
+to GTO basis function evaluation. Skip.
+
+## Future Hardware Upgrade Path (Ampere+ / SM 8.0+)
+If the GPU is upgraded, immediately revisit:
+- `cublasSetMathMode(handle, CUBLAS_TF32_TENSOR_OP_MATH)` — free ~2× on SYRK/GEMM
+- `wmma::` Tensor Core tiles for the density GEMM reformulation
+- BF16 storage (wider dynamic range than FP16, safer for GTOs)
+
+## Priority Assessment
+**Low** for current GTX 1080 hardware. Pursue warp-shuffle reductions
+(`optimize_warp_shuffle.md`) and the RMM gather-on-GPU (`optimize_rmm_gather_gpu.md`)
+first — both give larger, hardware-appropriate gains.
 
 ## Difficulty Assessment
-**Medium/High**
+**Low–Medium** for FP16 storage only.
 
-*   **Files to Modify**:
-    *   `g2g/cuda/iteration.cu`: Enable TF32 for cuBLAS (`cublasSetMathMode`).
-    *   `g2g/cuda/kernels/*.h`: Explicit usage of `__half` types and `mma_sync`.
-    *   `g2g/matrix.h`: Template specializations for `half` storage.
-
-*   **Correctness Impact**: **High**. Precision loss. Needs strict validation. Energy might drift.
-*   **Safe Start**: Enable TF32 (TensorFloat-32) on Ampere. It keeps FP32 range but reduces mantissa precision for multiplication. Often "free" speedup.
-
-## Sketch of Changes
-1.  **TF32**:
-    *   `cublasSetMathMode(handle, CUBLAS_TF32_TENSOR_OP_MATH);`
-    *   This is the easiest first step.
-
-2.  **FP16 Storage**:
-    *   Convert `function_values` to `CudaMatrix<__half>`.
-    *   Kernel `compute_functions` outputs `__half` (simple cast).
-    *   GEMM uses `CUDA_R_16F` input, `CUDA_R_32F` accumulation.
+Files: `g2g/cuda/kernels/functions.h` (write `__half`), `g2g/cuda/kernels/energy.h`
+and `rmm.h` (read `__half`, accumulate `float`), `g2g/matrix.h` (optional
+`CudaMatrix<__half>` specialization or just cast raw `uint16_t*` pointer).
 
 ## Estimations
-*   Speedup: 1.5x-3x for compute-bound parts on supported hardware.
+- FP16 function_values storage: **5–15% overall speedup** (bandwidth, L2 hit rate).
+- FP32 accumulator reduction: **3–8%** for energy-heavy runs.
+- Tensor Core path: **N/A on GTX 1080; 2–5× on A100/H100 with cuBLAS GEMM**.
