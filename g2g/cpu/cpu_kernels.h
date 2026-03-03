@@ -349,4 +349,154 @@ scalar_type cpu_compute_density_lda(const scalar_type* fv,
   return rho;
 }
 
+// ============================================================================
+// GGA electron density and gradient sums for one integration point
+// Extracted from PointGroupCPU::solve_closed() GGA branch in iteration.cpp.
+// ============================================================================
+//
+// For each i, accumulates contributions from j <= i (LOWER TRIANGLE of rmm):
+//   w     = sum_{j<=i} rmm[i*m+j] * fv[j]        (density weight)
+//   w3x/y/z = sum_{j<=i} rmm[i*m+j] * gx/y/z[j]  (gradient weights)
+//   ww1x/y/z = sum_{j<=i} rmm[i*m+j] * hpx/y/z[j] (diagonal Hessian weights)
+//   ww2x/y/z = sum_{j<=i} rmm[i*m+j] * hix/y/z[j] (cross Hessian weights)
+//
+// Then accumulates into the output struct:
+//   pd   += fv[i] * w
+//   tdx  += gx[i]*w + w3x*fv[i]          (d(rho)/dx)
+//   tdd1x += 2*gx[i]*w3x + hpx[i]*w + ww1x*fv[i]  (d2(rho)/dx2)
+//   tdd2x += gx[i]*w3y + gy[i]*w3x + hix[i]*w + ww2x*fv[i]  (d2(rho)/dxdy)
+//   (similarly for y, z components)
+//
+// Parameters:
+//   fv[m]                    : basis function values at this point
+//   gxv/gyv/gzv[m]           : gradient components of basis functions
+//   hpxv/hpyv/hpzv[m]        : diagonal Hessian d2phi/dx2, dy2, dz2
+//   hixv/hiyv/hizv[m]        : cross Hessian d2phi/dxdy, dxdz, dydz
+//   rmm[m*m]                 : density matrix, row-major; lower triangle used
+//                              (rmm[i*m+j] for j <= i; upper triangle ignored)
+//   m                        : number of basis functions in this group
+//
+// Matches iteration.cpp solve_closed() GGA branch (the j <= i loop) exactly.
+template <class scalar_type>
+struct GGADensity {
+  scalar_type pd;
+  scalar_type tdx, tdy, tdz;
+  scalar_type tdd1x, tdd1y, tdd1z;
+  scalar_type tdd2x, tdd2y, tdd2z;
+};
+
+template <class scalar_type>
+GGADensity<scalar_type> cpu_compute_density_gga(
+    const scalar_type* fv,
+    const scalar_type* gxv,  const scalar_type* gyv,  const scalar_type* gzv,
+    const scalar_type* hpxv, const scalar_type* hpyv, const scalar_type* hpzv,
+    const scalar_type* hixv, const scalar_type* hiyv, const scalar_type* hizv,
+    const scalar_type* rmm, int m) {
+  GGADensity<scalar_type> res{};
+  for (int i = 0; i < m; ++i) {
+    scalar_type w = 0, w3xc = 0, w3yc = 0, w3zc = 0;
+    scalar_type ww1xc = 0, ww1yc = 0, ww1zc = 0;
+    scalar_type ww2xc = 0, ww2yc = 0, ww2zc = 0;
+
+    // Lower triangle (j <= i) — matches iteration.cpp GGA branch exactly.
+    // rmm[i*m+j] == rmm_input.row(i)[j] == rmm_input(j, i) when j <= i.
+    for (int j = 0; j <= i; ++j) {
+      scalar_type rmj = rmm[i * m + j];
+      w     += fv[j]    * rmj;
+      w3xc  += gxv[j]   * rmj;
+      w3yc  += gyv[j]   * rmj;
+      w3zc  += gzv[j]   * rmj;
+      ww1xc += hpxv[j]  * rmj;
+      ww1yc += hpyv[j]  * rmj;
+      ww1zc += hpzv[j]  * rmj;
+      ww2xc += hixv[j]  * rmj;
+      ww2yc += hiyv[j]  * rmj;
+      ww2zc += hizv[j]  * rmj;
+    }
+
+    scalar_type Fi  = fv[i];
+    scalar_type gx  = gxv[i],  gy  = gyv[i],  gz  = gzv[i];
+    scalar_type hpx = hpxv[i], hpy = hpyv[i], hpz = hpzv[i];
+    scalar_type hix = hixv[i], hiy = hiyv[i], hiz = hizv[i];
+
+    res.pd    += Fi * w;
+    res.tdx   += gx * w  + w3xc * Fi;
+    res.tdy   += gy * w  + w3yc * Fi;
+    res.tdz   += gz * w  + w3zc * Fi;
+    res.tdd1x += gx * w3xc * 2 + hpx * w + ww1xc * Fi;
+    res.tdd1y += gy * w3yc * 2 + hpy * w + ww1yc * Fi;
+    res.tdd1z += gz * w3zc * 2 + hpz * w + ww1zc * Fi;
+    res.tdd2x += gx * w3yc + gy * w3xc + hix * w + ww2xc * Fi;
+    res.tdd2y += gx * w3zc + gz * w3xc + hiy * w + ww2yc * Fi;
+    res.tdd2z += gy * w3zc + gz * w3yc + hiz * w + ww2zc * Fi;
+  }
+  return res;
+}
+
+// ============================================================================
+// Force density derivatives for one integration point (closed-shell)
+// Extracted from PointGroupCPU::solve_closed() force loop in iteration.cpp.
+// ============================================================================
+//
+// For each flat basis function ii:
+//   w_ii = sum_j rmm[ii*m+j] * fv[j] * (ii==j ? 2 : 1)
+//   ddx[func2nuc[ii]] -= w_ii * gxv[ii]    (additive into output arrays)
+//
+// Parameters:
+//   fv[m]          : function values at this point
+//   gxv/gyv/gzv[m] : gradient components at this point
+//   rmm[m*m]       : FULL SYMMETRIC density matrix, row-major rmm[ii*m+j]
+//                    (as produced by get_rmm_input — both triangles filled)
+//   m              : number of basis functions
+//   func2nuc[m]    : local atom index for each flat basis function
+//   n_atoms        : number of local atoms (size of ddx/ddy/ddz arrays)
+//   ddx/ddy/ddz    : [n_atoms] force contribution arrays (ADDITIVE — caller zeroes)
+//
+// Matches the inner per-function loop of solve_closed() and solve_opened()
+// force sections exactly.
+template <class scalar_type>
+void cpu_compute_density_derivs(
+    const scalar_type* fv,
+    const scalar_type* gxv, const scalar_type* gyv, const scalar_type* gzv,
+    const scalar_type* rmm, uint m,
+    const unsigned* func2nuc, uint n_atoms,
+    scalar_type* ddx, scalar_type* ddy, scalar_type* ddz) {
+  for (int ii = 0; ii < (int)m; ++ii) {
+    scalar_type w = 0;
+    for (int j = 0; j < (int)m; ++j)
+      w += rmm[ii * m + j] * fv[j] * (ii == j ? 2 : 1);
+    int nuc = (int)func2nuc[ii];
+    ddx[nuc] -= w * gxv[ii];
+    ddy[nuc] -= w * gyv[ii];
+    ddz[nuc] -= w * gzv[ii];
+  }
+}
+
+// ============================================================================
+// RMM element update: weighted dot product of two transposed function rows
+// Extracted from PointGroupCPU::solve_closed() RMM section in iteration.cpp.
+// ============================================================================
+//
+// Computes:  sum_{p=0}^{npoints-1} fv_row[p] * fv_col[p] * factors[p]
+//
+// Parameters:
+//   fv_row[npoints]  : transposed function values for the row basis function
+//   fv_col[npoints]  : transposed function values for the col basis function
+//   factors[npoints] : per-point weight factors (= point_weight * y2a)
+//   npoints          : number of integration points
+//
+// Returns: the dot product (scalar_type).  Caller casts to double before
+// accumulating into rmm_global_output (which is always double-precision).
+//
+// Matches the inner point loop of the RMM section in solve_closed/solve_opened
+// exactly, except that precision of the accumulation follows scalar_type.
+template <class scalar_type>
+scalar_type cpu_update_rmm(const scalar_type* fv_row, const scalar_type* fv_col,
+                            const scalar_type* factors, int npoints) {
+  scalar_type res = 0;
+  for (int p = 0; p < npoints; ++p)
+    res += fv_row[p] * fv_col[p] * factors[p];
+  return res;
+}
+
 }  // namespace G2G
