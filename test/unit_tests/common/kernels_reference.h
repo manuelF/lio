@@ -329,6 +329,108 @@ std::vector<F4T> ref_cpu_forces(int n_atoms, int pts,
 }
 
 // ============================================================================
+// GGA electron density for one integration point (CPU lower-triangle convention)
+// Matches g2g/cpu/cpu_kernels.h cpu_compute_density_gga()
+// ============================================================================
+
+struct RefGGADensity {
+  float pd;
+  float tdx, tdy, tdz;
+  float tdd1x, tdd1y, tdd1z;
+  float tdd2x, tdd2y, tdd2z;
+};
+
+// Uses the LOWER TRIANGLE of rmm (j <= i).
+// rmm[m*m] row-major; fv/gxv/.../hizv each have m elements.
+inline RefGGADensity ref_cpu_density_gga(
+    const std::vector<float>& fv,
+    const std::vector<float>& gxv, const std::vector<float>& gyv,
+    const std::vector<float>& gzv,
+    const std::vector<float>& hpxv, const std::vector<float>& hpyv,
+    const std::vector<float>& hpzv,
+    const std::vector<float>& hixv, const std::vector<float>& hiyv,
+    const std::vector<float>& hizv,
+    const std::vector<float>& rmm, int m) {
+  RefGGADensity res{};
+  for (int i = 0; i < m; ++i) {
+    float w = 0, w3x = 0, w3y = 0, w3z = 0;
+    float ww1x = 0, ww1y = 0, ww1z = 0;
+    float ww2x = 0, ww2y = 0, ww2z = 0;
+    for (int j = 0; j <= i; ++j) {
+      float r = rmm[i * m + j];
+      w    += fv[j]   * r;
+      w3x  += gxv[j]  * r;
+      w3y  += gyv[j]  * r;
+      w3z  += gzv[j]  * r;
+      ww1x += hpxv[j] * r;
+      ww1y += hpyv[j] * r;
+      ww1z += hpzv[j] * r;
+      ww2x += hixv[j] * r;
+      ww2y += hiyv[j] * r;
+      ww2z += hizv[j] * r;
+    }
+    float Fi  = fv[i],   gx  = gxv[i],  gy  = gyv[i],  gz  = gzv[i];
+    float hpx = hpxv[i], hpy = hpyv[i], hpz = hpzv[i];
+    float hix = hixv[i], hiy = hiyv[i], hiz = hizv[i];
+    res.pd    += Fi * w;
+    res.tdx   += gx * w  + w3x * Fi;
+    res.tdy   += gy * w  + w3y * Fi;
+    res.tdz   += gz * w  + w3z * Fi;
+    res.tdd1x += gx * w3x * 2 + hpx * w + ww1x * Fi;
+    res.tdd1y += gy * w3y * 2 + hpy * w + ww1y * Fi;
+    res.tdd1z += gz * w3z * 2 + hpz * w + ww1z * Fi;
+    res.tdd2x += gx * w3y + gy * w3x + hix * w + ww2x * Fi;
+    res.tdd2y += gx * w3z + gz * w3x + hiy * w + ww2y * Fi;
+    res.tdd2z += gy * w3z + gz * w3y + hiz * w + ww2z * Fi;
+  }
+  return res;
+}
+
+// ============================================================================
+// Force density derivatives — full-symmetric RMM convention
+// Matches g2g/cpu/cpu_kernels.h cpu_compute_density_derivs()
+// ============================================================================
+//
+// rmm[m*m]: FULL SYMMETRIC matrix (both triangles filled with same values).
+// For each flat function ii:
+//   w_ii = sum_j rmm[ii*m+j] * fv[j] * (ii==j ? 2 : 1)
+//   ddx[func2nuc[ii]] -= w_ii * gxv[ii]   (additive — caller zeroes)
+inline void ref_cpu_density_derivs_sym(
+    const std::vector<float>& fv,
+    const std::vector<float>& gxv, const std::vector<float>& gyv,
+    const std::vector<float>& gzv,
+    const std::vector<float>& rmm, int m,
+    const std::vector<unsigned>& func2nuc, int n_atoms,
+    std::vector<float>& ddx, std::vector<float>& ddy,
+    std::vector<float>& ddz) {
+  for (int ii = 0; ii < m; ++ii) {
+    float w = 0;
+    for (int j = 0; j < m; ++j)
+      w += rmm[ii * m + j] * fv[j] * (ii == j ? 2 : 1);
+    int nuc = (int)func2nuc[ii];
+    ddx[nuc] -= w * gxv[ii];
+    ddy[nuc] -= w * gyv[ii];
+    ddz[nuc] -= w * gzv[ii];
+  }
+}
+
+// ============================================================================
+// RMM element update: weighted dot product
+// Matches g2g/cpu/cpu_kernels.h cpu_update_rmm()
+// ============================================================================
+//
+// Returns sum_{p=0}^{npoints-1} fv_row[p] * fv_col[p] * factors[p]
+inline float ref_cpu_update_rmm(const std::vector<float>& fv_row,
+                                  const std::vector<float>& fv_col,
+                                  const std::vector<float>& factors,
+                                  int npoints) {
+  float res = 0;
+  for (int p = 0; p < npoints; ++p)
+    res += fv_row[p] * fv_col[p] * factors[p];
+  return res;
+}
+
+// ============================================================================
 // Density derivatives from density matrix and gradient values
 // Matches g2g/cuda/kernels/energy_derivs.h (gpu_compute_density_derivs)
 // ============================================================================
