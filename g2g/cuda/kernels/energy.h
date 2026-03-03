@@ -7,9 +7,12 @@
  *
  * This file implements the evaluation of the electron density rho(r) and its
  * spatial derivatives (gradients and Hessians) on a numerical grid for
- * closed-shell systems. It utilizes texture memory for efficient access to the
- * density matrix (RMM) and shared memory to minimize global memory bandwidth
- * for basis function values.
+ * closed-shell systems. It utilises texture memory for efficient access to the
+ * density matrix (RMM) and shared memory to cache basis function values.
+ *
+ * Warp reductions use __shfl_down_sync (Kepler+, SM 3.5+) rather than the
+ * legacy volatile-shared-memory tree, eliminating store fences and freeing
+ * shared memory for occupancy improvements.
  */
 
 #ifndef G2G_KERNELS_ENERGY_H
@@ -39,47 +42,39 @@ static __inline__ __device__ double fetch_double(cudaTextureObject_t t, float x,
 #endif
 
 /* ==========================================================================================
- * REDUCTION HELPERS
+ * REDUCTION HELPERS  (register-based, __shfl_down_sync)
+ *
+ * These operate on register values within a single warp (32 threads).
+ * No shared memory is touched — all communication happens via warp-level
+ * register exchange instructions, eliminating the volatile-memory store fences
+ * of the pre-Kepler pattern.
  * ==========================================================================================
  */
 
 /**
- * @brief Performs a warp-level reduction for a scalar value.
+ * @brief Warp-level sum reduction of a scalar value.
+ * Returns the total sum to lane 0; other lanes hold partial results.
  */
 template <typename T>
-__device__ __forceinline__ void warpReduceScalar(volatile T* sdata, int tid) {
-  sdata[tid] += sdata[tid + 32];
-  sdata[tid] += sdata[tid + 16];
-  sdata[tid] += sdata[tid + 8];
-  sdata[tid] += sdata[tid + 4];
-  sdata[tid] += sdata[tid + 2];
-  sdata[tid] += sdata[tid + 1];
+__device__ __forceinline__ T warpReduceScalar(T val) {
+  val += __shfl_down_sync(0xffffffffu, val, 16);
+  val += __shfl_down_sync(0xffffffffu, val,  8);
+  val += __shfl_down_sync(0xffffffffu, val,  4);
+  val += __shfl_down_sync(0xffffffffu, val,  2);
+  val += __shfl_down_sync(0xffffffffu, val,  1);
+  return val;
 }
 
 /**
- * @brief Performs a warp-level reduction for a 3D vector.
+ * @brief Warp-level sum reduction of a 3D vector.
+ * Returns the total sum to lane 0 in each component.
  */
 template <typename T>
-__device__ __forceinline__ void warpReduceVector3(
-    volatile vec_type<T, 3>* sdata, int tid) {
-  sdata[tid].x += sdata[tid + 32].x;
-  sdata[tid].y += sdata[tid + 32].y;
-  sdata[tid].z += sdata[tid + 32].z;
-  sdata[tid].x += sdata[tid + 16].x;
-  sdata[tid].y += sdata[tid + 16].y;
-  sdata[tid].z += sdata[tid + 16].z;
-  sdata[tid].x += sdata[tid + 8].x;
-  sdata[tid].y += sdata[tid + 8].y;
-  sdata[tid].z += sdata[tid + 8].z;
-  sdata[tid].x += sdata[tid + 4].x;
-  sdata[tid].y += sdata[tid + 4].y;
-  sdata[tid].z += sdata[tid + 4].z;
-  sdata[tid].x += sdata[tid + 2].x;
-  sdata[tid].y += sdata[tid + 2].y;
-  sdata[tid].z += sdata[tid + 2].z;
-  sdata[tid].x += sdata[tid + 1].x;
-  sdata[tid].y += sdata[tid + 1].y;
-  sdata[tid].z += sdata[tid + 1].z;
+__device__ __forceinline__ vec_type<T, 3> warpReduceVector3(vec_type<T, 3> v) {
+  v.x = warpReduceScalar(v.x);
+  v.y = warpReduceScalar(v.y);
+  v.z = warpReduceScalar(v.z);
+  return v;
 }
 
 /* ==========================================================================================
@@ -93,9 +88,17 @@ __device__ __forceinline__ void warpReduceVector3(
  *
  * rho(p) = sum_{ij} R_ij * phi_i(p) * phi_j(p)
  *
- * @tparam scalar_type    Precision type.
- * @tparam lda           If true, only compute density. If false, compute
- * gradients/Hessians.
+ * Block: dim3(DENSITY_BLOCK_SIZE, 1, 1) = 64 threads = 2 warps.
+ * Grid:  dim3(npoints, block_height, 1) where block_height covers all
+ *        function-index slices.
+ *
+ * Reduction: each warp reduces its 32-thread partial sum via __shfl_down_sync.
+ * Cross-warp accumulation uses 2 shared-memory slots per output scalar (one per
+ * warp), replacing the legacy 64-slot volatile arrays.
+ *
+ * @tparam scalar_type  Precision type (float / double).
+ * @tparam lda          If true, only compute density. If false, also compute
+ *                      gradients and Hessians.
  */
 template <class scalar_type, bool lda>
 __global__ void gpu_compute_density(
@@ -128,6 +131,12 @@ __global__ void gpu_compute_density(
   }
 
   int tid = threadIdx.x;
+
+  // Shared memory: used for two purposes:
+  //   1. Caching function values during the bj-loop (indices 0..DENSITY_BLOCK_SIZE-1).
+  //   2. Cross-warp accumulation after the shuffle reduction (indices 0..1 only).
+  // Purpose (2) reuses the same arrays with only 2 slots, so the declaration
+  // size is unchanged (still needed for purpose 1).
   __shared__ scalar_type fj_sh[DENSITY_BLOCK_SIZE];
   __shared__ vec_type<scalar_type, 3> fgj_sh[DENSITY_BLOCK_SIZE];
   __shared__ vec_type<scalar_type, 3> fh1j_sh[DENSITY_BLOCK_SIZE];
@@ -135,9 +144,9 @@ __global__ void gpu_compute_density(
 
   if (min_i > m) min_i = min_i - DENSITY_BLOCK_SIZE;
 
-  for (int bj = 0; bj <= min_i; bj += DENSITY_BLOCK_SIZE) {
+  for (int bj = 0; bj <= (int)min_i; bj += DENSITY_BLOCK_SIZE) {
     __syncthreads();
-    if (bj + tid < m) {
+    if (bj + tid < (int)m) {
       fj_sh[tid] = function_values[(m)*point + (bj + tid)];
       if (!lda) {
         fgj_sh[tid] =
@@ -151,10 +160,10 @@ __global__ void gpu_compute_density(
     __syncthreads();
 
     if (valid_thread) {
-      bool full_block = (i >= bj + DENSITY_BLOCK_SIZE - 1);
+      bool full_block = (i >= (uint)(bj + DENSITY_BLOCK_SIZE - 1));
 #pragma unroll 4
       for (int j = 0; j < DENSITY_BLOCK_SIZE; j++) {
-        if (full_block || (bj + j) <= i) {
+        if (full_block || (bj + j) <= (int)i) {
           scalar_type rdm = fetch(rmm_input_gpu_tex, (float)(bj + j), (float)i);
           scalar_type fj_val = fj_sh[j];
           w += rdm * fj_val;
@@ -164,7 +173,7 @@ __global__ void gpu_compute_density(
             ww2 += fh2j_sh[j] * rdm;
           }
         }
-        if (valid_thread2 && (full_block || (bj + j) <= i2)) {
+        if (valid_thread2 && (full_block || (bj + j) <= (int)i2)) {
           scalar_type rdm2 =
               fetch(rmm_input_gpu_tex, (float)(bj + j), (float)i2);
           scalar_type fj_val = fj_sh[j];
@@ -179,6 +188,7 @@ __global__ void gpu_compute_density(
     }
   }
 
+  // --- Per-thread local partial results ---
   scalar_type partial_rho(0.0f);
   vec_type<scalar_type, 3> dxyz(0.0f, 0.0f, 0.0f), dd1(0.0f, 0.0f, 0.0f),
       dd2(0.0f, 0.0f, 0.0f);
@@ -220,28 +230,51 @@ __global__ void gpu_compute_density(
     }
   }
 
-  __syncthreads();
-  fj_sh[tid] = partial_rho;
-  fgj_sh[tid] = dxyz;
-  fh1j_sh[tid] = dd1;
-  fh2j_sh[tid] = dd2;
-  __syncthreads();
+  // --- Two-warp reduction ---
+  //
+  // Block = 64 threads = 2 warps (warp 0: tid 0-31, warp 1: tid 32-63).
+  //
+  // Step 1: intra-warp shuffle reduction — register-only, no shared memory,
+  //         no store fences. Each warp independently sums its 32 partial_rho
+  //         values; lane 0 of each warp holds its warp's total.
+  //
+  // Step 2: cross-warp accumulation — lane 0 of each warp writes to
+  //         fj_sh[warp] (reusing the existing shared arrays, 2 slots used).
+  //         One __syncthreads() ensures both warp results are visible.
+  //
+  // Step 3: thread 0 sums the two warp results and writes to global memory.
 
-  if (tid < 32) {
-    warpReduceScalar(fj_sh, tid);
-    if (!lda) {
-      warpReduceVector3(fgj_sh, tid);
-      warpReduceVector3(fh1j_sh, tid);
-      warpReduceVector3(fh2j_sh, tid);
-    }
+  int lane = tid & 31;
+  int warp = tid >> 5;  // 0 or 1
+
+  // Step 1 — intra-warp shuffle
+  partial_rho = warpReduceScalar(partial_rho);
+  if (!lda) {
+    dxyz = warpReduceVector3(dxyz);
+    dd1  = warpReduceVector3(dd1);
+    dd2  = warpReduceVector3(dd2);
   }
 
+  // Step 2 — cross-warp write (lane 0 of each warp)
+  if (lane == 0) {
+    fj_sh[warp] = partial_rho;
+    if (!lda) {
+      fgj_sh[warp]  = dxyz;
+      fh1j_sh[warp] = dd1;
+      fh2j_sh[warp] = dd2;
+    }
+  }
+  __syncthreads();
+
+  // Step 3 — final sum and global write (thread 0 only)
   if (tid == 0) {
     const int myPoint = blockIdx.y * points + blockIdx.x;
-    out_partial_density[myPoint] = fj_sh[0];
-    out_dxyz[myPoint] = vec_type<scalar_type, 4>(fgj_sh[0]);
-    out_dd1[myPoint] = vec_type<scalar_type, 4>(fh1j_sh[0]);
-    out_dd2[myPoint] = vec_type<scalar_type, 4>(fh2j_sh[0]);
+    out_partial_density[myPoint] = fj_sh[0] + fj_sh[1];
+    if (!lda) {
+      out_dxyz[myPoint] = vec_type<scalar_type, 4>(fgj_sh[0]  + fgj_sh[1]);
+      out_dd1[myPoint]  = vec_type<scalar_type, 4>(fh1j_sh[0] + fh1j_sh[1]);
+      out_dd2[myPoint]  = vec_type<scalar_type, 4>(fh2j_sh[0] + fh2j_sh[1]);
+    }
   }
 }
 

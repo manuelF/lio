@@ -137,3 +137,24 @@ Volatile shared memory write+read: 10–20 cycles (L1 cache round-trip + fence).
 ## Recommendation
 **Do this first.** It is the lowest-risk highest-ratio optimization in the GPU kernel
 suite. Combine it with Part A of `optimize_density_texture.md`.
+
+---
+
+## Status: DONE (2026-03-04)
+
+### Changes implemented
+- `energy.h`: `warpReduceScalar(volatile T*, int)` / `warpReduceVector3(volatile vec_type<T,3>*, int)` → register-based `T warpReduceScalar(T)` / `vec_type<T,3> warpReduceVector3(vec_type<T,3>)`. Cross-warp step uses 2 shared-memory slots (reusing the existing bj-loop caching arrays). Reduced `__syncthreads()` in the reduction from 2 → 1. Also added `full_block` + `#pragma unroll 4` (already present in energy.h; verified correct).
+- `energy_open.h`: Same shuffle treatment applied to both alpha+beta reductions simultaneously. Reduced `__syncthreads()` from 4 → 2 in the reduction. Added `full_block` optimization + `#pragma unroll 4` to the inner bj-loop (was missing before).
+
+### Measured results (SM 6.1, float, nvprof + ptxas)
+| Kernel | Variant | Registers | smem (before) | smem (after) | stall_sync |
+|---|---|---|---|---|---|
+| gpu_compute_density | lda=true (LDA) | 32 | 2560 bytes | **256 bytes** | ~30% |
+| gpu_compute_density | lda=false (GGA) | 56 | 2560 bytes | 2560 bytes | ~35% |
+| gpu_compute_density_opened | lda=true (LDA) | 40 | ~2560 bytes | **256 bytes** | ~35% |
+
+GGA smem is unchanged (2560 bytes needed for the bj-loop caching arrays fgj_sh/fh1j_sh/fh2j_sh).
+LDA smem 10× reduction → **100% theoretical occupancy** for closed-shell LDA (reg-limited: 65536/32/64=32 blocks = thread limit).
+
+### Key insight: open-shell GGA register pressure
+Production open-shell always uses `lda=false` (GGA). That variant has **93 registers** → only **34% theoretical occupancy** on SM 6.1 (vs 56% for closed-shell GGA at 56 regs). Splitting alpha/beta into two calls to `gpu_compute_density` would restore 56% occupancy at the cost of reading function values twice. Tracked in a separate TODO.

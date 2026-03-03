@@ -458,8 +458,8 @@ template <class scalar_type>
 void cpu_compute_density_derivs(
     const scalar_type* fv,
     const scalar_type* gxv, const scalar_type* gyv, const scalar_type* gzv,
-    const scalar_type* rmm, int m,
-    const unsigned* func2nuc, int n_atoms,
+    const scalar_type* rmm, uint m,
+    const unsigned* func2nuc, uint n_atoms,
     scalar_type* ddx, scalar_type* ddy, scalar_type* ddz) {
   for (int ii = 0; ii < m; ++ii) {
     scalar_type w = 0;

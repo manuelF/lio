@@ -178,8 +178,8 @@ void PointGroupCPU<scalar_type>::solve_closed(
           function_values.row(point),
           gX.row(point), gY.row(point), gZ.row(point),
           rmm_input.asArray(), group_m,
-          func2nuc_vec.data(), (int)this->total_nucleii(),
-          ddx.asArray(), ddy.asArray(), ddz.asArray());
+          func2nuc_vec.data(), this->total_nucleii(),
+          ddx.data, ddy.data, ddz.data);
       scalar_type factor = factors_rmm(point);
       for (int i = 0; i < (int)this->total_nucleii(); i++) {
         forces_mat[point][i] = vec_type3(ddx(i), ddy(i), ddz(i)) * factor;
@@ -374,14 +374,14 @@ void PointGroupCPU<scalar_type>::solve_opened(
           function_values.row(point),
           gX.row(point), gY.row(point), gZ.row(point),
           rmm_input_a.asArray(), group_m,
-          func2nuc_vec.data(), (int)this->total_nucleii(),
-          ddx_a.asArray(), ddy_a.asArray(), ddz_a.asArray());
+          func2nuc_vec.data(), this->total_nucleii(),
+          ddx_a.data, ddy_a.data, ddz_a.data);
       cpu_compute_density_derivs(
           function_values.row(point),
           gX.row(point), gY.row(point), gZ.row(point),
           rmm_input_b.asArray(), group_m,
-          func2nuc_vec.data(), (int)this->total_nucleii(),
-          ddx_b.asArray(), ddy_b.asArray(), ddz_b.asArray());
+          func2nuc_vec.data(), this->total_nucleii(),
+          ddx_b.data, ddy_b.data, ddz_b.data);
 
       scalar_type factor_a = factors_rmm_a(point);
       scalar_type factor_b = factors_rmm_b(point);
