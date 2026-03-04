@@ -401,6 +401,14 @@ void PointGroupGPU<scalar_type>::deallocate() {
 template <class scalar_type>
 PointGroupGPU<scalar_type>::~PointGroupGPU<scalar_type>() {
   deallocate();
+  if (transpose_stream_1) {
+    cudaStreamDestroy(transpose_stream_1);
+    transpose_stream_1 = 0;
+  }
+  if (transpose_stream_2) {
+    cudaStreamDestroy(transpose_stream_2);
+    transpose_stream_2 = 0;
+  }
 }
 
 void Partition::compute_functions(bool forces, bool gga) {

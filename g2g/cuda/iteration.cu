@@ -1036,16 +1036,23 @@ void PointGroupGPU<scalar_type>::compute_functions(bool forces, bool gga) {
   dim3 transpose_threads(TILE_DIM, BLOCK_ROWS, 1);
   dim3 transpose_grid(divUp(width, TILE_DIM), divUp(height, TILE_DIM), 1);
 
-  cudaStream_t transpose_1, transpose_2;
-  cudaStreamCreate(&transpose_1);
-  cudaStreamCreate(&transpose_2);
+  // Lazy-init persistent transpose streams (blocking by default, so the
+  // default/legacy stream automatically waits for them before its next op).
+  // This eliminates ~3800 cudaStreamCreate/Destroy calls per run and allows
+  // get_rmm_input CPU work to overlap with transpose GPU work:
+  //   - compute_functions() returns without syncing
+  //   - caller does get_rmm_input (CPU-only, no GPU dependency)
+  //   - caller calls cudaMemcpy2DToArrayAsync on default stream, which CUDA
+  //     serialises after all blocking streams (transpose_stream_1/2) complete
+  if (!transpose_stream_1) cudaStreamCreate(&transpose_stream_1);
+  if (!transpose_stream_2) cudaStreamCreate(&transpose_stream_2);
 
-  transpose<<<transpose_grid, transpose_threads, 0, transpose_1>>>(
+  transpose<<<transpose_grid, transpose_threads, 0, transpose_stream_1>>>(
       function_values_transposed.data, function_values.data,
       COALESCED_DIMENSION(this->number_of_points), group_m);
 
   if (fortran_vars.do_forces || fortran_vars.gga) {
-    transpose<<<transpose_grid, transpose_threads, 0, transpose_2>>>(
+    transpose<<<transpose_grid, transpose_threads, 0, transpose_stream_2>>>(
         gradient_values_transposed.data, gradient_values.data,
         COALESCED_DIMENSION(this->number_of_points), group_m);
   }
@@ -1055,13 +1062,11 @@ void PointGroupGPU<scalar_type>::compute_functions(bool forces, bool gga) {
                              divUp(height * 2, TILE_DIM), 1);
     hessian_values_transposed.resize(height * 2, width);
 
-    transpose<<<transpose_grid_hess, transpose_threads, 0, transpose_1>>>(
+    transpose<<<transpose_grid_hess, transpose_threads, 0, transpose_stream_1>>>(
         hessian_values_transposed.data, hessian_values.data, width, height * 2);
   }
-  cudaStreamSynchronize(transpose_1);
-  cudaStreamSynchronize(transpose_2);
-  cudaStreamDestroy(transpose_1);
-  cudaStreamDestroy(transpose_2);
+  // No explicit sync here — the caller's next default-stream operation
+  // (cudaMemcpy2DToArrayAsync) implicitly waits for these blocking streams.
 
   cudaAssertNoError("compute_functions");
 }

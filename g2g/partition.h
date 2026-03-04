@@ -291,7 +291,14 @@ class PointGroupGPU: public PointGroup<scalar_type> {
     G2G::CudaMatrix<vec_type<scalar_type, 4>> dd1_accum_gpu;
     G2G::CudaMatrix<vec_type<scalar_type, 4>> dd2_accum_gpu;
 
-    PointGroupGPU() : rmm_cuArray(nullptr), rmm_tex(0), rmm_cuArray_a(nullptr), rmm_cuArray_b(nullptr), rmm_tex_a(0), rmm_tex_b(0) {}
+    // Persistent streams for transpose kernels in compute_functions.
+    // Reusing streams across calls eliminates per-call cudaStreamCreate/Destroy
+    // overhead (~3800 calls, ~23ms total per run) and allows get_rmm_input CPU
+    // work to overlap with transpose GPU work (see iteration.cu).
+    cudaStream_t transpose_stream_1;
+    cudaStream_t transpose_stream_2;
+
+    PointGroupGPU() : rmm_cuArray(nullptr), rmm_tex(0), rmm_cuArray_a(nullptr), rmm_cuArray_b(nullptr), rmm_tex_a(0), rmm_tex_b(0), transpose_stream_1(0), transpose_stream_2(0) {}
 };
 
 #if FULL_DOUBLE
