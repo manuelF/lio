@@ -198,70 +198,97 @@ __global__ void gpu_compute_density_opened(
     }
   }
 
-  // --- Two-warp reduction via __shfl_down_sync ---
+  // --- Two-warp reduction (numerically equivalent to the original volatile pattern) ---
   //
-  // All shuffle work is pure register — no shared memory, no store fences.
-  // Shared memory (fj_sh[0..1]) is used only for the 2-slot cross-warp
-  // communication after the intra-warp reductions.
+  // Block = 64 threads = 2 warps.  The original volatile code paired each thread
+  // in warp 0 with the corresponding thread in warp 1 (sdata[tid] += sdata[tid+32])
+  // BEFORE the intra-warp binary tree.  To replicate that floating-point order:
   //
-  // Alpha and beta are reduced sequentially, sharing the same shared arrays.
-  // This halves the number of __syncthreads() calls versus the volatile pattern
-  // (2 syncs instead of 4).
+  // Step 1: all 64 threads write their partials to shared memory (arrays are
+  //         already DENSITY_BLOCK_SIZE=64 long for the bj-loop cache).
+  //         One __syncthreads() makes them visible.
+  //
+  // Step 2: warp 0 loads val[lane] = fj_sh[lane] + fj_sh[lane+32]
+  //         (cross-warp pairing — matches old first step), then reduces with
+  //         __shfl_down_sync (register-only from here).
+  //
+  // Alpha and beta are done with two separate shared-memory writes, each
+  // needing one __syncthreads(), for 2 syncs total (same as before).
 
   int lane = position & 31;
   int warp = position >> 5;  // 0 or 1
 
-  // Step 1: shuffle reduce ALL partial sums (register-only, both spins at once)
-  partial_density_a = warpReduceScalar(partial_density_a);
-  partial_density_b = warpReduceScalar(partial_density_b);
+  // Step 1a: store alpha partials, sync, warp-0 cross-warp pair + shuffle.
+  // A second __syncthreads() after the alpha block (below) ensures warp 0
+  // finishes reading fj_sh[32..63] before warp 1 overwrites them with beta.
+  fj_sh[position] = partial_density_a;
   if (!lda) {
-    dxyz_a = warpReduceVector3(dxyz_a);
-    dd1_a  = warpReduceVector3(dd1_a);
-    dd2_a  = warpReduceVector3(dd2_a);
-    dxyz_b = warpReduceVector3(dxyz_b);
-    dd1_b  = warpReduceVector3(dd1_b);
-    dd2_b  = warpReduceVector3(dd2_b);
-  }
-
-  // Step 2: alpha cross-warp accumulation
-  if (lane == 0) {
-    fj_sh[warp] = partial_density_a;
-    if (!lda) {
-      fgj_sh[warp]  = dxyz_a;
-      fh1j_sh[warp] = dd1_a;
-      fh2j_sh[warp] = dd2_a;
-    }
+    fgj_sh[position]  = dxyz_a;
+    fh1j_sh[position] = dd1_a;
+    fh2j_sh[position] = dd2_a;
   }
   __syncthreads();
 
-  if (position == 0) {
-    const int myPoint = blockIdx.y * points + blockIdx.x;
-    out_partial_density_a[myPoint] = fj_sh[0] + fj_sh[1];
+  if (warp == 0) {
+    scalar_type rho_a = fj_sh[lane] + fj_sh[lane + 32];
+    rho_a = warpReduceScalar(rho_a);
     if (!lda) {
-      out_dxyz_a[myPoint] = vec_type<scalar_type, 4>(fgj_sh[0]  + fgj_sh[1]);
-      out_dd1_a[myPoint]  = vec_type<scalar_type, 4>(fh1j_sh[0] + fh1j_sh[1]);
-      out_dd2_a[myPoint]  = vec_type<scalar_type, 4>(fh2j_sh[0] + fh2j_sh[1]);
+      vec_type<scalar_type, 3> dxyz_av = fgj_sh[lane]  + fgj_sh[lane + 32];
+      vec_type<scalar_type, 3> dd1_av  = fh1j_sh[lane] + fh1j_sh[lane + 32];
+      vec_type<scalar_type, 3> dd2_av  = fh2j_sh[lane] + fh2j_sh[lane + 32];
+      dxyz_av = warpReduceVector3(dxyz_av);
+      dd1_av  = warpReduceVector3(dd1_av);
+      dd2_av  = warpReduceVector3(dd2_av);
+      if (lane == 0) {
+        const int myPoint = blockIdx.y * points + blockIdx.x;
+        out_partial_density_a[myPoint] = rho_a;
+        out_dxyz_a[myPoint] = vec_type<scalar_type, 4>(dxyz_av);
+        out_dd1_a[myPoint]  = vec_type<scalar_type, 4>(dd1_av);
+        out_dd2_a[myPoint]  = vec_type<scalar_type, 4>(dd2_av);
+      }
+    } else {
+      if (lane == 0) {
+        const int myPoint = blockIdx.y * points + blockIdx.x;
+        out_partial_density_a[myPoint] = rho_a;
+      }
     }
   }
 
-  // Step 3: beta cross-warp accumulation (reuse same shared arrays)
-  if (lane == 0) {
-    fj_sh[warp] = partial_density_b;
-    if (!lda) {
-      fgj_sh[warp]  = dxyz_b;
-      fh1j_sh[warp] = dd1_b;
-      fh2j_sh[warp] = dd2_b;
-    }
+  // Barrier: prevent warp 1 from writing beta data into fj_sh[32..63] before
+  // warp 0 has finished reading those slots for the alpha reduction above.
+  __syncthreads();
+
+  // Step 1b: store beta partials, sync, warp-0 cross-warp pair + shuffle
+  fj_sh[position] = partial_density_b;
+  if (!lda) {
+    fgj_sh[position]  = dxyz_b;
+    fh1j_sh[position] = dd1_b;
+    fh2j_sh[position] = dd2_b;
   }
   __syncthreads();
 
-  if (position == 0) {
-    const int myPoint = blockIdx.y * points + blockIdx.x;
-    out_partial_density_b[myPoint] = fj_sh[0] + fj_sh[1];
+  if (warp == 0) {
+    scalar_type rho_b = fj_sh[lane] + fj_sh[lane + 32];
+    rho_b = warpReduceScalar(rho_b);
     if (!lda) {
-      out_dxyz_b[myPoint] = vec_type<scalar_type, 4>(fgj_sh[0]  + fgj_sh[1]);
-      out_dd1_b[myPoint]  = vec_type<scalar_type, 4>(fh1j_sh[0] + fh1j_sh[1]);
-      out_dd2_b[myPoint]  = vec_type<scalar_type, 4>(fh2j_sh[0] + fh2j_sh[1]);
+      vec_type<scalar_type, 3> dxyz_bv = fgj_sh[lane]  + fgj_sh[lane + 32];
+      vec_type<scalar_type, 3> dd1_bv  = fh1j_sh[lane] + fh1j_sh[lane + 32];
+      vec_type<scalar_type, 3> dd2_bv  = fh2j_sh[lane] + fh2j_sh[lane + 32];
+      dxyz_bv = warpReduceVector3(dxyz_bv);
+      dd1_bv  = warpReduceVector3(dd1_bv);
+      dd2_bv  = warpReduceVector3(dd2_bv);
+      if (lane == 0) {
+        const int myPoint = blockIdx.y * points + blockIdx.x;
+        out_partial_density_b[myPoint] = rho_b;
+        out_dxyz_b[myPoint] = vec_type<scalar_type, 4>(dxyz_bv);
+        out_dd1_b[myPoint]  = vec_type<scalar_type, 4>(dd1_bv);
+        out_dd2_b[myPoint]  = vec_type<scalar_type, 4>(dd2_bv);
+      }
+    } else {
+      if (lane == 0) {
+        const int myPoint = blockIdx.y * points + blockIdx.x;
+        out_partial_density_b[myPoint] = rho_b;
+      }
     }
   }
 }

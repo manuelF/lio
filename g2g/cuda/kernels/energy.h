@@ -230,50 +230,65 @@ __global__ void gpu_compute_density(
     }
   }
 
-  // --- Two-warp reduction ---
+  // --- Two-warp reduction (numerically equivalent to the original volatile pattern) ---
   //
   // Block = 64 threads = 2 warps (warp 0: tid 0-31, warp 1: tid 32-63).
   //
-  // Step 1: intra-warp shuffle reduction — register-only, no shared memory,
-  //         no store fences. Each warp independently sums its 32 partial_rho
-  //         values; lane 0 of each warp holds its warp's total.
+  // The original volatile code did:
+  //   sdata[tid] += sdata[tid+32]   ← cross-warp pairing first
+  //   sdata[tid] += sdata[tid+16]   ← then binary-tree within warp 0
+  //   ...
   //
-  // Step 2: cross-warp accumulation — lane 0 of each warp writes to
-  //         fj_sh[warp] (reusing the existing shared arrays, 2 slots used).
-  //         One __syncthreads() ensures both warp results are visible.
+  // To replicate this floating-point order we must do the cross-warp pair
+  // step before the intra-warp tree.  Shuffles only work within a single warp,
+  // so we use shared memory for the cross-warp exchange:
   //
-  // Step 3: thread 0 sums the two warp results and writes to global memory.
+  // Step 1: all 64 threads write their partial sums to fj_sh[tid] (the same
+  //         arrays used by the bj-loop cache — already DENSITY_BLOCK_SIZE long,
+  //         so no extra allocation).  One __syncthreads() makes them visible.
+  //
+  // Step 2: warp 0 computes val[lane] = fj_sh[lane] + fj_sh[lane+32]
+  //         (the cross-warp pairing), then reduces with __shfl_down_sync.
+  //         This is register-only from here — no store fences.
+  //
+  // Step 3: lane 0 of warp 0 (== tid 0) writes the block total to global mem.
 
   int lane = tid & 31;
   int warp = tid >> 5;  // 0 or 1
 
-  // Step 1 — intra-warp shuffle
-  partial_rho = warpReduceScalar(partial_rho);
+  // Step 1 — all threads store partials
+  fj_sh[tid] = partial_rho;
   if (!lda) {
-    dxyz = warpReduceVector3(dxyz);
-    dd1  = warpReduceVector3(dd1);
-    dd2  = warpReduceVector3(dd2);
-  }
-
-  // Step 2 — cross-warp write (lane 0 of each warp)
-  if (lane == 0) {
-    fj_sh[warp] = partial_rho;
-    if (!lda) {
-      fgj_sh[warp]  = dxyz;
-      fh1j_sh[warp] = dd1;
-      fh2j_sh[warp] = dd2;
-    }
+    fgj_sh[tid]  = dxyz;
+    fh1j_sh[tid] = dd1;
+    fh2j_sh[tid] = dd2;
   }
   __syncthreads();
 
-  // Step 3 — final sum and global write (thread 0 only)
-  if (tid == 0) {
-    const int myPoint = blockIdx.y * points + blockIdx.x;
-    out_partial_density[myPoint] = fj_sh[0] + fj_sh[1];
+  // Step 2 — warp 0: cross-warp pair then intra-warp shuffle
+  if (warp == 0) {
+    scalar_type rho_val = fj_sh[lane] + fj_sh[lane + 32];
+    rho_val = warpReduceScalar(rho_val);
     if (!lda) {
-      out_dxyz[myPoint] = vec_type<scalar_type, 4>(fgj_sh[0]  + fgj_sh[1]);
-      out_dd1[myPoint]  = vec_type<scalar_type, 4>(fh1j_sh[0] + fh1j_sh[1]);
-      out_dd2[myPoint]  = vec_type<scalar_type, 4>(fh2j_sh[0] + fh2j_sh[1]);
+      vec_type<scalar_type, 3> dxyz_val = fgj_sh[lane]  + fgj_sh[lane + 32];
+      vec_type<scalar_type, 3> dd1_val  = fh1j_sh[lane] + fh1j_sh[lane + 32];
+      vec_type<scalar_type, 3> dd2_val  = fh2j_sh[lane] + fh2j_sh[lane + 32];
+      dxyz_val = warpReduceVector3(dxyz_val);
+      dd1_val  = warpReduceVector3(dd1_val);
+      dd2_val  = warpReduceVector3(dd2_val);
+      // Step 3 — lane 0 writes
+      if (lane == 0) {
+        const int myPoint = blockIdx.y * points + blockIdx.x;
+        out_partial_density[myPoint] = rho_val;
+        out_dxyz[myPoint] = vec_type<scalar_type, 4>(dxyz_val);
+        out_dd1[myPoint]  = vec_type<scalar_type, 4>(dd1_val);
+        out_dd2[myPoint]  = vec_type<scalar_type, 4>(dd2_val);
+      }
+    } else {
+      if (lane == 0) {
+        const int myPoint = blockIdx.y * points + blockIdx.x;
+        out_partial_density[myPoint] = rho_val;
+      }
     }
   }
 }
