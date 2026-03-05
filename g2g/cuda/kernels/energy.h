@@ -22,6 +22,8 @@
 #ifndef G2G_KERNELS_ENERGY_H
 #define G2G_KERNELS_ENERGY_H
 
+#include "kahan.h"
+
 /* ==========================================================================================
  * TEXTURE FETCH HELPERS
  * ==========================================================================================
@@ -55,18 +57,33 @@ static __inline__ __device__ double fetch_double(cudaTextureObject_t t, float x,
  * ==========================================================================================
  */
 
+template <typename T>
+__device__ __forceinline__ T warpKahanReduceScalar(T val) {
+  T sum = val;
+  T c = 0.0f;  // Compensation for lost low-order bits
+
+  for (int offset = 16; offset > 0; offset /= 2) {
+    // 1. Get the sum and compensation from the higher lane
+    T other_sum = __shfl_down_sync(0xffffffff, sum, offset);
+    T other_c = __shfl_down_sync(0xffffffff, c, offset);
+
+    // 2. Standard Kahan addition step
+    // We add the 'other' value and its compensation to our running sum
+    T y = other_sum - (c + other_c);
+    T t = sum + y;
+    c = (t - sum) - y;
+    sum = t;
+  }
+  return sum;  // Result is in lane 0
+}
+
 /**
  * @brief Warp-level sum reduction of a scalar value.
  * Returns the total sum to lane 0; other lanes hold partial results.
  */
 template <typename T>
 __device__ __forceinline__ T warpReduceScalar(T val) {
-  val += __shfl_down_sync(0xffffffffu, val, 16);
-  val += __shfl_down_sync(0xffffffffu, val,  8);
-  val += __shfl_down_sync(0xffffffffu, val,  4);
-  val += __shfl_down_sync(0xffffffffu, val,  2);
-  val += __shfl_down_sync(0xffffffffu, val,  1);
-  return val;
+  return warpKahanReduceScalar(val);
 }
 
 /**
@@ -79,41 +96,6 @@ __device__ __forceinline__ vec_type<T, 3> warpReduceVector3(vec_type<T, 3> v) {
   v.y = warpReduceScalar(v.y);
   v.z = warpReduceScalar(v.z);
   return v;
-}
-
-/* ==========================================================================================
- * KAHAN COMPENSATED SUMMATION HELPERS
- *
- * Reduces FP accumulation error from O(N*eps) to O(eps), making results
- * independent of accumulation order. Each accumulator carries a compensation
- * term that captures the rounding error from each addition.
- * ==========================================================================================
- */
-
-/**
- * @brief Kahan compensated addition for a scalar.
- * @param sum  Running sum (updated in place).
- * @param comp Compensation term (updated in place, init to 0).
- * @param val  Value to add.
- */
-template <typename T>
-__device__ __forceinline__ void kahanAdd(T& sum, T& comp, T val) {
-  T y = val - comp;
-  T t = sum + y;
-  comp = (t - sum) - y;
-  sum = t;
-}
-
-/**
- * @brief Kahan compensated addition for a 3D vector.
- */
-template <typename T>
-__device__ __forceinline__ void kahanAdd3(vec_type<T, 3>& sum,
-                                          vec_type<T, 3>& comp,
-                                          vec_type<T, 3> val) {
-  kahanAdd(sum.x, comp.x, val.x);
-  kahanAdd(sum.y, comp.y, val.y);
-  kahanAdd(sum.z, comp.z, val.z);
 }
 
 /* ==========================================================================================
@@ -221,8 +203,10 @@ __global__ void gpu_compute_density(
           kahanAdd(w2, c_w2, rdm2 * fj_val);
           if (!lda) {
             kahanAdd3(w32, c_w32, vec_type<scalar_type, 3>(fgj_sh[j] * rdm2));
-            kahanAdd3(ww12, c_ww12, vec_type<scalar_type, 3>(fh1j_sh[j] * rdm2));
-            kahanAdd3(ww22, c_ww22, vec_type<scalar_type, 3>(fh2j_sh[j] * rdm2));
+            kahanAdd3(ww12, c_ww12,
+                      vec_type<scalar_type, 3>(fh1j_sh[j] * rdm2));
+            kahanAdd3(ww22, c_ww22,
+                      vec_type<scalar_type, 3>(fh2j_sh[j] * rdm2));
           }
         }
       }
@@ -271,14 +255,15 @@ __global__ void gpu_compute_density(
     }
   }
 
-  // --- Two-warp reduction (numerically equivalent to the original volatile pattern) ---
+  // --- Two-warp reduction (numerically equivalent to the original volatile
+  // pattern) ---
   int lane = tid & 31;
   int warp = tid >> 5;  // 0 or 1
 
   // Step 1 — all threads store partials
   fj_sh[tid] = partial_rho;
   if (!lda) {
-    fgj_sh[tid]  = dxyz;
+    fgj_sh[tid] = dxyz;
     fh1j_sh[tid] = dd1;
     fh2j_sh[tid] = dd2;
   }
@@ -289,19 +274,19 @@ __global__ void gpu_compute_density(
     scalar_type rho_val = fj_sh[lane] + fj_sh[lane + 32];
     rho_val = warpReduceScalar(rho_val);
     if (!lda) {
-      vec_type<scalar_type, 3> dxyz_val = fgj_sh[lane]  + fgj_sh[lane + 32];
-      vec_type<scalar_type, 3> dd1_val  = fh1j_sh[lane] + fh1j_sh[lane + 32];
-      vec_type<scalar_type, 3> dd2_val  = fh2j_sh[lane] + fh2j_sh[lane + 32];
+      vec_type<scalar_type, 3> dxyz_val = fgj_sh[lane] + fgj_sh[lane + 32];
+      vec_type<scalar_type, 3> dd1_val = fh1j_sh[lane] + fh1j_sh[lane + 32];
+      vec_type<scalar_type, 3> dd2_val = fh2j_sh[lane] + fh2j_sh[lane + 32];
       dxyz_val = warpReduceVector3(dxyz_val);
-      dd1_val  = warpReduceVector3(dd1_val);
-      dd2_val  = warpReduceVector3(dd2_val);
+      dd1_val = warpReduceVector3(dd1_val);
+      dd2_val = warpReduceVector3(dd2_val);
       // Step 3 — lane 0 writes
       if (lane == 0) {
         const int myPoint = blockIdx.y * points + blockIdx.x;
         out_partial_density[myPoint] = rho_val;
         out_dxyz[myPoint] = vec_type<scalar_type, 4>(dxyz_val);
-        out_dd1[myPoint]  = vec_type<scalar_type, 4>(dd1_val);
-        out_dd2[myPoint]  = vec_type<scalar_type, 4>(dd2_val);
+        out_dd1[myPoint] = vec_type<scalar_type, 4>(dd1_val);
+        out_dd2[myPoint] = vec_type<scalar_type, 4>(dd2_val);
       }
     } else {
       if (lane == 0) {
