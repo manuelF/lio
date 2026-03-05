@@ -930,9 +930,10 @@ void PointGroupGPU<scalar_type>::solve_opened(
 
 template <class scalar_type>
 void PointGroupGPU<scalar_type>::compute_functions(bool forces, bool gga) {
-  if (this->inGlobal)  // Ya las tengo en memoria? entonces salgo porque ya
-                       // estan las 3 calculadas
+  if (this->inGlobal) {  // Ya las tengo en memoria? entonces salgo porque ya
+                         // estan las 3 calculadas
     return;
+  }
 
   if (0 == GlobalMemoryPool::tryAlloc(
                this->size_in_gpu()))  // 1 si hubo error, 0 si pude reservar la
@@ -1110,6 +1111,7 @@ void PointGroupGPU<scalar_type>::compute_weights(void) {
   cudaAssertNoError("compute_weights");
 
   point_weights_cpu = weights_gpu;
+  weights_gpu.deallocate();  // force solve_closed() to upload full weights (quadrature*Becke)
   uint i = 0;
   for (vector<Point>::iterator p = this->points.begin();
        p != this->points.end(); ++p, ++i) {
