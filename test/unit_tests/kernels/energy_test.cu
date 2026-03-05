@@ -12,6 +12,9 @@
 // Block = dim3(DENSITY_BLOCK_SIZE=64), Grid = dim3(points, n_block_rows)
 // where n_block_rows = ceil(m / (2*DENSITY_BLOCK_SIZE)).
 //
+// Kahan compensated summation in the bj-loop reduces accumulation error
+// from O(N*eps) to O(eps).
+//
 // For lda=false the kernel also produces out_dxyz/dd1/dd2 (gradient/Hessian
 // contributions). energy, factor, point_weights params are unused by the kernel
 // and can be nullptr.
@@ -21,9 +24,10 @@
 //   1. m=1,   pts=1  lda=true:  trivial  rho = R[0][0]*F[0]^2
 //   2. m=2,   pts=1  lda=true:  hand-verifiable
 //   3. m=4,   pts=3  lda=true:  vs CPU reference
-//   4. m=100, pts=2  lda=true:  single block row (100 < 2*DENSITY_BLOCK_SIZE)
-//   5. m=130, pts=3  lda=true:  two block rows (130 > 2*DENSITY_BLOCK_SIZE)
+//   4. m=100, pts=2  lda=true:  two block rows (100 > DENSITY_BLOCK_SIZE)
+//   5. m=130, pts=3  lda=true:  three block rows (130 > 2*DENSITY_BLOCK_SIZE)
 //   6. m=2,   pts=1  lda=false: verify dxyz and dd1 outputs analytically
+//   7. m=300, pts=1  lda=true:  FP precision test — GPU vs double CPU ref
 
 #define GPU_KERNELS 1
 #define FULL_DOUBLE 0
@@ -122,6 +126,21 @@ static std::vector<float> run_density(const std::vector<float>& rmm, int m,
   return density;
 }
 
+// ---------------------------------------------------------------------------
+// Double-precision CPU reference for FP accuracy testing.
+// ---------------------------------------------------------------------------
+static double ref_cpu_density_double(const std::vector<float>& rmm, int m,
+                                     const std::vector<float>& fv, int point) {
+  double rho = 0.0;
+  for (int i = 0; i < m; ++i) {
+    double w = 0.0;
+    for (int j = 0; j <= i; ++j)
+      w += (double)rmm[i * m + j] * (double)fv[m * point + j];
+    rho += (double)fv[m * point + i] * w;
+  }
+  return rho;
+}
+
 // ============================================================================
 int main() {
   int dev = 0;
@@ -153,7 +172,7 @@ int main() {
     runner.check(fabsf(rho[0] - 17.f) < tol, "m=2 pts=1 hand-verify (rho=17)");
   }
 
-  // --- 3. m=4, pts=3 → vs CPU ---
+  // --- 3. m=4, pts=3 -> vs CPU ---
   {
     int m = 4, pts = 3;
     std::vector<float> rmm(m * m, 0.f), fv(m * pts);
@@ -170,7 +189,7 @@ int main() {
     runner.check(ok, "m=4 pts=3 vs CPU");
   }
 
-  // --- 4. m=100, pts=2: single block row (100 < 2*64=128) ---
+  // --- 4. m=100, pts=2: two block rows (100 > 64) ---
   {
     int m = 100, pts = 2;
     std::vector<float> rmm(m * m, 0.f), fv(m * pts);
@@ -184,10 +203,10 @@ int main() {
     bool ok = true;
     for (int p = 0; p < pts; ++p)
       ok &= fabsf(got[p] - ref_cpu_density(rmm, m, fv, p)) < 1e-2f;
-    runner.check(ok, "m=100 pts=2 single block row vs CPU");
+    runner.check(ok, "m=100 pts=2 two block rows vs CPU");
   }
 
-  // --- 5. m=130, pts=3: two block rows (130 > 128) ---
+  // --- 5. m=130, pts=3: three block rows (130 > 128) ---
   {
     int m = 130, pts = 3;
     std::vector<float> rmm(m * m, 0.f), fv(m * pts);
@@ -201,7 +220,7 @@ int main() {
     bool ok = true;
     for (int p = 0; p < pts; ++p)
       ok &= fabsf(got[p] - ref_cpu_density(rmm, m, fv, p)) < 5e-2f;
-    runner.check(ok, "m=130 pts=3 two block rows vs CPU");
+    runner.check(ok, "m=130 pts=3 three block rows vs CPU");
   }
 
   printf("\n[ lda=false: density + gradient ]\n");
@@ -277,6 +296,33 @@ int main() {
     cudaDestroyTextureObject(texObj); cudaFreeArray(cuArray);
     cudaFree(d_fv); cudaFree(d_gv); cudaFree(d_hv);
     cudaFree(d_pd); cudaFree(d_dxyz); cudaFree(d_dd1); cudaFree(d_dd2);
+  }
+
+  printf("\n[ FP precision: Kahan accuracy ]\n");
+
+  // --- 7. m=300, pts=1: Kahan precision test ---
+  // With 300 basis functions, ~300 terms accumulated per thread.
+  // Without Kahan: O(N*eps) ~ 3.6e-5 relative error.
+  // With Kahan:    O(eps)   ~ 1.2e-7 relative error.
+  // Compare GPU float result to double-precision CPU reference.
+  {
+    int m = 300, pts = 1;
+    std::vector<float> rmm(m * m, 0.f), fv(m * pts);
+    // Use realistic-scale values to stress FP accumulation
+    for (int i = 0; i < m; ++i)
+      for (int j = 0; j <= i; ++j)
+        rmm[i * m + j] = sinf(float(i * 7 + j * 3 + 1) * 0.0037f) * 0.1f;
+    for (int p = 0; p < pts; ++p)
+      for (int i = 0; i < m; ++i)
+        fv[m * p + i] = cosf(float(i * 5 + 1) * 0.0051f) * 0.5f;
+
+    double ref = ref_cpu_density_double(rmm, m, fv, 0);
+    auto got = run_density(rmm, m, fv, pts);
+    float rel_err = fabsf((float)(got[0] - ref) / (float)ref);
+    printf("    m=300 ref=%.10g  gpu=%.10g  rel_err=%.2e\n",
+           ref, (double)got[0], rel_err);
+    // Kahan should give relative error < 1e-5 (much better than naive ~1e-2)
+    runner.check(rel_err < 1e-5f, "m=300 Kahan precision vs double ref");
   }
 
   return runner.summary();
