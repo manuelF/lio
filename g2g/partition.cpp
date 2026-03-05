@@ -50,27 +50,15 @@ template <class scalar_type>
 void PointGroupGPU<scalar_type>::get_rmm_input(
     HostMatrix<scalar_type>& rmm_input, FortranMatrix<double>& source) const {
   rmm_input.zero();
-  for (uint i = 0, ii = 0; i < this->total_functions_simple(); i++) {
-    uint inc_i = this->small_function_type(i);
-
-    for (uint k = 0; k < inc_i; k++, ii++) {
-      uint big_i = this->local2global_func[i] + k;
-      for (uint j = 0, jj = 0; j < this->total_functions_simple(); j++) {
-        uint inc_j = this->small_function_type(j);
-
-        for (uint l = 0; l < inc_j; l++, jj++) {
-          uint big_j = this->local2global_func[j] + l;
-          if (big_i > big_j) continue;
-          uint big_index =
-              (big_i * fortran_vars.m - (big_i * (big_i - 1)) / 2) +
-              (big_j - big_i);
-
-          rmm_input(ii, jj) = (scalar_type)source.data[big_index];
-
-          rmm_input(jj, ii) = rmm_input(ii, jj);
-        }
-      }
-    }
+  // Use pre-computed index arrays (rmm_bigs/rmm_rows/rmm_cols from
+  // compute_indexes). rmm_rows[k] <= rmm_cols[k] always (swap in
+  // compute_indexes). Fill only the lower triangle for the density kernel:
+  // HostMatrix operator()(i,j) = data[j*width+i], so first arg = column,
+  // second = row. rmm_input(rows[k], cols[k]) gives col=rows[k] <= row=cols[k].
+  const int indexes = this->rmm_bigs.size();
+  for (int k = 0; k < indexes; k++) {
+    scalar_type val = (scalar_type)source.data[this->rmm_bigs[k]];
+    rmm_input(this->rmm_rows[k], this->rmm_cols[k]) = val;
   }
 }
 

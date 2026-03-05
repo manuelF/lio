@@ -201,14 +201,8 @@ void PointGroupGPU<scalar_type>::solve_closed(
 
   get_rmm_input(rmm_input_cpu);  // Achica la matriz densidad a la version
                                  // reducida del grupo
-
-  for (uint i = 0; i < (group_m + DENSITY_BLOCK_SIZE); i++) {
-    for (uint j = 0; j < COALESCED_DIMENSION(group_m); j++) {
-      if ((i >= group_m) || (j >= group_m) || (j > i)) {
-        rmm_input_cpu.data[COALESCED_DIMENSION(group_m) * i + j] = 0.0f;
-      }
-    }
-  }
+  // No zeroing loop needed: get_rmm_input fills only the lower triangle
+  // (col <= row); rmm_input.zero() already zeroed padding and upper triangle.
 
   /*
    **********************************************************************
@@ -258,7 +252,7 @@ void PointGroupGPU<scalar_type>::solve_closed(
 #endif
 
   if (compute_energy) {
-    CudaMatrix<scalar_type> energy_gpu(this->number_of_points);
+    energy_gpu.resize(this->number_of_points);
 
 #define compute_parameters                                                 \
   rmm_input_gpu_tex, energy_gpu.data, factors_gpu.data,                    \
@@ -649,15 +643,8 @@ void PointGroupGPU<scalar_type>::solve_opened(
 
   // Reduces density matrixes (Up,Down) to the reduced group version
   get_rmm_input(rmm_input_a_cpu, rmm_input_b_cpu);
-
-  for (uint i = 0; i < (group_m + DENSITY_BLOCK_SIZE); i++) {
-    for (uint j = 0; j < COALESCED_DIMENSION(group_m); j++) {
-      if ((i >= group_m) || (j >= group_m) || (j > i)) {
-        rmm_input_a_cpu.data[COALESCED_DIMENSION(group_m) * i + j] = 0.0f;
-        rmm_input_b_cpu.data[COALESCED_DIMENSION(group_m) * i + j] = 0.0f;
-      }
-    }
-  }
+  // No zeroing loop needed: get_rmm_input fills only the lower triangle
+  // (col <= row); rmm_input.zero() already zeroed padding and upper triangle.
 
   /*
   **********************************************************************
@@ -709,11 +696,11 @@ void PointGroupGPU<scalar_type>::solve_opened(
   cudaTextureObject_t rmm_input_gpu_tex2 = rmm_tex_b;
 
   if (compute_energy) {
-    CudaMatrix<scalar_type> energy_gpu(this->number_of_points);
-    CudaMatrix<scalar_type> energy_i_gpu(this->number_of_points);
-    CudaMatrix<scalar_type> energy_c_gpu(this->number_of_points);
-    CudaMatrix<scalar_type> energy_c1_gpu(this->number_of_points);
-    CudaMatrix<scalar_type> energy_c2_gpu(this->number_of_points);
+    energy_gpu.resize(this->number_of_points);
+    energy_i_gpu.resize(this->number_of_points);
+    energy_c_gpu.resize(this->number_of_points);
+    energy_c1_gpu.resize(this->number_of_points);
+    energy_c2_gpu.resize(this->number_of_points);
 
     if (compute_forces || compute_rmm) {
       gpu_compute_density_opened<scalar_type, true, true, false>

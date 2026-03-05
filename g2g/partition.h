@@ -275,6 +275,13 @@ class PointGroupGPU: public PointGroup<scalar_type> {
     G2G::CudaMatrix<vec_type<scalar_type, 4>> forces_gpu_a;
     G2G::CudaMatrix<vec_type<scalar_type, 4>> forces_gpu_b;
 
+    // Cached GPU energy buffers (avoids per-call cudaMalloc/cudaFree)
+    G2G::CudaMatrix<scalar_type> energy_gpu;
+    G2G::CudaMatrix<scalar_type> energy_i_gpu;
+    G2G::CudaMatrix<scalar_type> energy_c_gpu;
+    G2G::CudaMatrix<scalar_type> energy_c1_gpu;
+    G2G::CudaMatrix<scalar_type> energy_c2_gpu;
+
     // Cached host matrices for results (Pinned)
     G2G::HostMatrix<scalar_type> energy_host;
     G2G::HostMatrix<vec_type<scalar_type, 4>> forces_host;
