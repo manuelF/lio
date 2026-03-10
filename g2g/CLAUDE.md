@@ -154,6 +154,82 @@ of GPU idle per SCF iteration (measured on fosfatoQMMM, 25 iters, wall time 12 s
 
 ---
 
+## SCF Convergence and Numerical Precision — Lessons Learned
+
+**DO NOT add Kahan compensated summation (or any FP-order-changing optimization)
+to GPU kernels whose output feeds into the DIIS convergence loop.** This was
+extensively tested in March 2026 and consistently caused convergence regressions.
+
+### Background
+
+LIO uses hybrid float32/float64 precision: GPU kernels compute in float32,
+results are cast to double on the CPU side. The SCF loop converges when
+`rho_diff < 1e-6`. The DIIS accelerator (Pulay) extrapolates from stored Fock
+matrices to predict the next iterate.
+
+### What was tried and failed
+
+| Change | Effect | Why it fails |
+|---|---|---|
+| Kahan summation in `gpu_compute_density` (energy.h) bj-loop | 25 → 31 SCF iterations (fosfatoQMMM) | Changes float32 values → different DIIS trajectory → oscillation near threshold |
+| Kahan in energy.h + `__launch_bounds__(64, 16)` | 25 → 31 iters, amplified | `__launch_bounds__` forces different register allocation → different FP instruction scheduling → compounds the effect |
+| Kahan in `gpu_update_rmm` (rmm.h) inner loop | Fe3H2O6 open-shell energy error 0.004 Ha (threshold 1.5e-4) | Same mechanism: changed float32 Fock matrix → different DIIS path |
+| Reducing `ndiis` from 30 to 8 | Convergence stalls at ~2e-6, never reaches 1e-6 | With float32 noise floor ~2e-6, DIIS needs MORE history vectors to occasionally find an extrapolation that pushes below threshold |
+
+### Root cause: DIIS sensitivity to float32 noise
+
+The density kernel (`gpu_compute_density`) sums only ~43–86 terms per thread.
+Kahan improves precision from ~5e-7 to ~6e-8 relative error — but the values
+are **numerically different** from the non-Kahan baseline. These different XC
+contributions feed into DIIS, which builds a least-squares extrapolation from
+stored Fock matrices. Near convergence (rho_diff ~1e-6), the DIIS trajectory is
+exquisitely sensitive to the exact float32 noise pattern. A "more precise" noise
+pattern is NOT necessarily a better one for convergence — it's just different,
+and the baseline's noise pattern happened to produce a favorable DIIS trajectory.
+
+### Key findings
+
+1. **Float32 noise floor is ~2e-6 in rho_diff.** This is inherent to the hybrid
+   precision architecture. Any change that shifts float32 values (even toward
+   more precise ones) can move the effective noise floor enough to disrupt DIIS.
+
+2. **`__launch_bounds__` changes FP results.** By forcing different register
+   allocation, nvcc may reorder FMA/multiply/add instructions, producing
+   bit-different float32 results. This alone moved convergence from 31→28 iters.
+
+3. **ndiis=30 is necessary** (unlike literature's typical 6–12). With float32
+   noise near 1e-6, DIIS needs a large vector history to find linear
+   combinations that push rho_diff below threshold. Reducing to 8 vectors was
+   catastrophic.
+
+4. **Warp shuffle reductions are safe** IF the FP summation order matches the
+   original volatile shared-memory pattern (cross-warp pair first, then
+   intra-warp tree). See commit `ac87eef0` for the correct implementation.
+
+### Guidelines for future precision work
+
+- **Safe optimizations**: Structural changes that preserve FP order (warp
+  shuffles matching old volatile order, shared memory layout, loop unrolling
+  without reordering). These don't change numerical results.
+
+- **Unsafe optimizations**: Kahan summation, double-precision accumulators in
+  GPU kernels, `__launch_bounds__`, any change to the order of FP operations
+  in kernels feeding DIIS. These change float32 bit patterns and will likely
+  shift SCF convergence.
+
+- **The real fix for precision**: Move the full density/Fock pipeline to
+  float64 on GPU (requires `precision=1` build flag, `FULL_DOUBLE` macro).
+  This eliminates the float32 noise floor entirely. Half-measures (Kahan in
+  one kernel but not others) create precision mismatches that are worse than
+  consistent float32.
+
+- **Always run the full E2E test suite** (`cd test && ./new_tests.py`) after
+  any kernel change, even "precision-only" ones. The fosfatoQMMM test
+  (closed-shell, 25 iters) and Fe3H2O6 test (open-shell, restart) are both
+  sensitive to float32 changes.
+
+---
+
 ## Kernel Notes
 
 ### transpose.h (`cuda/kernels/transpose.h`)
