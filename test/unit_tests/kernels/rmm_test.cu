@@ -239,6 +239,83 @@ static bool test_orthogonal_functions(int m) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Precision test: compare GPU float against CPU double reference.
+// Uses positive monotonic data (like production: all-positive function values
+// and factors) to avoid cancellation that inflates relative error.
+// Prints measured max relative error for diagnostics.
+// ---------------------------------------------------------------------------
+template <bool check_pos>
+static bool test_precision(int m, int points, float tol, const char* label) {
+  int cdim_p = COALESCED_DIMENSION(points);
+  int cdim_m = COALESCED_DIMENSION(m);
+
+  // Host buffers — positive, varied, O(1) magnitude (realistic for DFT)
+  std::vector<float> h_factors(points);
+  std::vector<float> h_fv(m * cdim_p, 0.0f);
+  std::vector<float> h_rmm(cdim_m * m, 0.0f);
+
+  for (int p = 0; p < points; ++p)
+    h_factors[p] = 0.01f + 0.1f * (p % 7);  // O(0.01–0.7), always positive
+  for (int fi = 0; fi < m; ++fi)
+    for (int p = 0; p < points; ++p)
+      h_fv[fi * cdim_p + p] = 0.1f + 0.05f * ((fi + p) % 11);  // O(0.1–0.6)
+
+  // Double-precision CPU reference (using exact same float inputs)
+  std::vector<double> d_factors(points);
+  std::vector<double> d_fv(m * cdim_p, 0.0);
+  std::vector<double> d_ref(cdim_m * m, 0.0);
+  for (int p = 0; p < points; ++p) d_factors[p] = (double)h_factors[p];
+  for (int fi = 0; fi < m; ++fi)
+    for (int p = 0; p < points; ++p)
+      d_fv[fi * cdim_p + p] = (double)h_fv[fi * cdim_p + p];
+  cpu_rmm(d_factors.data(), points, d_fv.data(), m, d_ref.data());
+
+  // GPU computation in float
+  float *df, *dfv, *drmm;
+  CUDA_CHECK(cudaMalloc(&df, points * sizeof(float)));
+  CUDA_CHECK(cudaMalloc(&dfv, m * cdim_p * sizeof(float)));
+  CUDA_CHECK(cudaMalloc(&drmm, cdim_m * m * sizeof(float)));
+  CUDA_CHECK(cudaMemcpy(df, h_factors.data(), points * sizeof(float),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(dfv, h_fv.data(), m * cdim_p * sizeof(float),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemset(drmm, 0, cdim_m * m * sizeof(float)));
+
+  dim3 block(RMM_BLOCK_SIZE_XY, RMM_BLOCK_SIZE_XY);
+  if (check_pos) {
+    int n_tiles = (m + RMM_BLOCK_SIZE_XY - 1) / RMM_BLOCK_SIZE_XY;
+    int n_blocks = n_tiles * (n_tiles + 1) / 2;
+    G2G::gpu_update_rmm<float, true>
+        <<<dim3(n_blocks, 1), block>>>(df, points, drmm, dfv, m);
+  } else {
+    int tiles = (m + RMM_BLOCK_SIZE_XY - 1) / RMM_BLOCK_SIZE_XY;
+    G2G::gpu_update_rmm<float, false>
+        <<<dim3(tiles, tiles), block>>>(df, points, drmm, dfv, m);
+  }
+  CUDA_CHECK(cudaGetLastError());
+  CUDA_CHECK(cudaDeviceSynchronize());
+  CUDA_CHECK(cudaMemcpy(h_rmm.data(), drmm, cdim_m * m * sizeof(float),
+                        cudaMemcpyDeviceToHost));
+  cudaFree(df);
+  cudaFree(dfv);
+  cudaFree(drmm);
+
+  // Measure max relative error
+  double max_rel_err = 0.0;
+  for (int j = 0; j < m; ++j) {
+    for (int i = 0; i <= j; ++i) {
+      double got = (double)h_rmm[j * cdim_m + i];
+      double ref = d_ref[j * cdim_m + i];
+      double denom = fabs(ref) > 1e-12 ? fabs(ref) : 1e-12;
+      double rel = fabs(got - ref) / denom;
+      if (rel > max_rel_err) max_rel_err = rel;
+    }
+  }
+  printf("    %s: max_rel_err = %.2e (tol %.1e)\n", label, max_rel_err, (double)tol);
+  return max_rel_err < tol;
+}
+
 int main() {
   int dev = 0;
   cudaDeviceProp prop{};
@@ -287,6 +364,13 @@ int main() {
                "double m=2  pts=3   single tri-block");
   runner.check(run_rmm_test<double, true>(32, 50),
                "double m=32 pts=50  three tri-blocks");
+
+  // --- precision tests (float GPU vs double CPU) ---
+  printf("\n[ precision: float GPU vs double CPU ]\n");
+  runner.check(test_precision<false>(16, 500, 1e-5f, "m=16 pts=500"),
+               "float precision m=16 pts=500 (rel_err < 1e-5)");
+  runner.check(test_precision<true>(16, 500, 1e-5f, "m=16 pts=500 check_pos"),
+               "float precision m=16 pts=500 check_pos (rel_err < 1e-5)");
 
   return runner.summary();
 }
