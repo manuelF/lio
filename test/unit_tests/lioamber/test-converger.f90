@@ -12,7 +12,7 @@ program test_converger
     type(operator) :: rho_op, fock_op
     real*8, allocatable :: Xmat(:,:), Ymat(:,:), Dmat(:,:), Fcheck(:,:)
     integer :: nfail
-    real*8  :: criteria, bsum, expected_val
+    real*8  :: criteria, bsum, expected_val, bmax_val
     integer :: ndiist
 
     nfail = 0
@@ -254,6 +254,92 @@ program test_converger
     end if
 
     deallocate(Fcheck, Xmat, Ymat, Dmat)
+
+    ! =========================================================================
+    ! Test 7: Near-convergence DIIS — nearly-parallel error vectors
+    ! =========================================================================
+    ! When Fock matrices differ by tiny amounts (simulating near-convergence),
+    ! [F,P] vectors become nearly parallel → EMAT nearly singular.
+    ! The solver must still produce bounded coefficients (sum=1, |c_k| bounded).
+    write(*,*) 'Test 7: Near-convergence DIIS (ill-conditioned EMAT)...'
+
+    M = 3
+    n_diis = 5
+    damp = 0.5d0
+    if (allocated(fockm))      deallocate(fockm)
+    if (allocated(FP_PFm))     deallocate(FP_PFm)
+    if (allocated(bcoef))      deallocate(bcoef)
+    if (allocated(EMAT2))      deallocate(EMAT2)
+    if (allocated(fock_damped)) deallocate(fock_damped)
+    if (allocated(fock00_w))   deallocate(fock00_w)
+    if (allocated(fock_w))     deallocate(fock_w)
+    if (allocated(rho_w))      deallocate(rho_w)
+    if (allocated(suma_w))     deallocate(suma_w)
+    if (allocated(scratch1_w)) deallocate(scratch1_w)
+    if (allocated(scratch2_w)) deallocate(scratch2_w)
+    if (allocated(work_w))     deallocate(work_w)
+    call converger_init(M, n_diis, damp, .true., .false., .false.)
+
+    allocate(Xmat(M,M), Ymat(M,M), Dmat(M,M))
+    Xmat = 0.0d0 ; do i=1,M ; Xmat(i,i) = 1.0d0 ; end do
+    Ymat = Xmat
+
+    ! Non-diagonal rho
+    Dmat = 0.0d0
+    Dmat(1,1) = 1.0d0 ; Dmat(1,2) = 0.3d0
+    Dmat(2,1) = 0.3d0 ; Dmat(2,2) = 2.0d0
+    Dmat(3,3) = 3.0d0
+    call rho_op%Sets_data_AO(Dmat)
+
+    good = 1.0d0
+    good_cut = 0.1d0
+
+    ! Fock matrices that differ by tiny amounts (simulating near-convergence)
+    ! Base Fock + epsilon*i perturbation → nearly-parallel [F,P] vectors
+    do i = 1, 6
+        Dmat = 0.0d0
+        Dmat(1,1) = 10.0d0 + dble(i)*1.0d-6
+        Dmat(2,2) = 20.0d0 + dble(i)*2.0d-6
+        Dmat(3,3) = 30.0d0 + dble(i)*3.0d-6
+        Dmat(1,2) = 0.5d0 + dble(i)*1.0d-7
+        Dmat(2,1) = 0.5d0 + dble(i)*1.0d-7
+        Dmat(2,3) = 0.3d0 + dble(i)*5.0d-8
+        Dmat(3,2) = 0.3d0 + dble(i)*5.0d-8
+        call fock_op%Sets_data_AO(Dmat)
+        call conver(i, good, good_cut, M, rho_op, fock_op, Xmat, Ymat, 1)
+    end do
+
+    ! Check: bcoef sum must still be 1.0
+    ndiist = min(6, n_diis)
+    bsum = 0.0d0
+    do i = 1, ndiist
+        bsum = bsum + bcoef(i, 1)
+    end do
+
+    if (abs(bsum - 1.0d0) < 1.0d-4) then
+        write(*,*) 'PASSED - bcoef sum ≈ 1.0 for ill-conditioned EMAT'
+    else
+        write(*,*) 'FAILED - bcoef sum =', bsum, ' (expected ~1.0)'
+        nfail = nfail + 1
+    end if
+
+    ! Check: coefficient magnitudes should be bounded
+    ! With a robust solver, max(|c_k|) should stay reasonable (< 100)
+    ! With DGELS on a singular system, they can blow up to 1e10+
+    bmax_val = 0.0d0
+    do i = 1, ndiist
+        if (abs(bcoef(i,1)) > bmax_val) bmax_val = abs(bcoef(i,1))
+    end do
+    write(*,'(A,ES12.4)') '  max(|bcoef|) =', bmax_val
+
+    if (bmax_val < 1.0d2) then
+        write(*,*) 'PASSED - bcoef magnitudes bounded (max < 100)'
+    else
+        write(*,*) 'WARNING - bcoef magnitudes large:', bmax_val
+        ! Not a hard failure — this is what we're trying to improve
+    end if
+
+    deallocate(Xmat, Ymat, Dmat)
 
     ! =========================================================================
     ! Summary

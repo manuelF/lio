@@ -99,7 +99,10 @@ end subroutine converger_init
 
    integer          :: ndiist, ii, jj, kk, lwork, info
    integer          :: slot_i, slot_j, slot_k
+   integer          :: diis_rank
    double precision, allocatable :: EMAT(:,:)
+   double precision, allocatable :: sv(:)
+   double precision :: rcond_diis, bcoef_max
 
 
 ! INITIALIZATION
@@ -254,16 +257,53 @@ end subroutine converger_init
          enddo
          bcoef(ndiist+1,spin) = -1.0d0
 
-         ! First call to DGELS sets optimal WORK size. Second call solves the
-         ! A*X = B (EMAT * Ci = bCoef) problem, with bCoef also storing the
-         ! result.
+         ! Use DGELSS (SVD-based least-squares) instead of DGELS (QR).
+         ! DGELSS detects rank deficiency in nearly-singular EMAT and produces
+         ! a minimum-norm solution, naturally limiting coefficient magnitudes.
+         ! Near SCF convergence, error vectors [F',P'] become nearly parallel,
+         ! making EMAT nearly singular. DGELS ignores this and produces wild
+         ! coefficients (|c_k| ~ 1e6+), amplifying float32 GPU noise. DGELSS
+         ! truncates near-zero singular values and returns bounded coefficients.
+         allocate(sv(ndiist+1))
+         rcond_diis = -1.0d0  ! Use machine epsilon as rank threshold
+
          LWORK = -1
-         CALL DGELS( 'No transpose',ndiist+1, ndiist+1, 1, EMAT, &
-                     ndiist+1, bcoef(:,spin), ndiist+1, work_w, LWORK, INFO )
+         CALL DGELSS( ndiist+1, ndiist+1, 1, EMAT, ndiist+1, &
+                      bcoef(:,spin), ndiist+1, sv, rcond_diis, &
+                      diis_rank, work_w, LWORK, INFO )
 
          LWORK = MIN( 1000, INT( work_w( 1 ) ) )
-         CALL DGELS( 'No transpose',ndiist+1, ndiist+1, 1, EMAT, &
-                     ndiist+1, bcoef(:,spin), ndiist+1, work_w, LWORK, INFO )
+         CALL DGELSS( ndiist+1, ndiist+1, 1, EMAT, ndiist+1, &
+                      bcoef(:,spin), ndiist+1, sv, rcond_diis, &
+                      diis_rank, work_w, LWORK, INFO )
+         deallocate(sv)
+
+         ! Safety check: if coefficients are still too large despite SVD
+         ! regularization, fall back to using only the current Fock (newest).
+         bcoef_max = 0.0d0
+         do kk = 1, ndiist
+            if (abs(bcoef(kk,spin)) > bcoef_max) &
+               bcoef_max = abs(bcoef(kk,spin))
+         enddo
+
+         if (bcoef_max > 1.0d4 .or. INFO /= 0) then
+            if (verbose > 3) then
+               if (INFO /= 0) then
+                  write(6,'(A,I4,A,I4)') &
+                     '  DIIS: DGELSS failed (INFO=', INFO, &
+                     '), using current Fock at iter ', niter
+               else
+                  write(6,'(A,ES10.2,A,I4)') &
+                     '  DIIS: bcoef too large (max=', bcoef_max, &
+                     '), using current Fock at iter ', niter
+               endif
+            endif
+            ! Fall back: use only the newest Fock (no extrapolation)
+            do kk = 1, ndiist
+               bcoef(kk,spin) = 0.0d0
+            enddo
+            bcoef(ndiist,spin) = 1.0d0
+         endif
 
          ! Build new Fock as a linear combination of previous steps.
          suma_w = 0.0D0
