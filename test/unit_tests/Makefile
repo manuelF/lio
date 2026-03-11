@@ -1,4 +1,4 @@
-# Entry point for all CUDA kernel unit tests.
+# Entry point for all unit tests (CUDA kernels + Fortran lioamber).
 #
 # Usage (from this directory):
 #   make            - build and run all tests
@@ -10,7 +10,7 @@
 #   CUDA_HOME=/path/to/cuda
 #   CUDA_ARCH="-gencode arch=compute_80,code=sm_80"
 
-SUITES := kernels
+SUITES := kernels lioamber
 
 .PHONY: all build run clean $(SUITES)
 
