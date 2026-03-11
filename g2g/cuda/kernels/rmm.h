@@ -1,6 +1,4 @@
 
-#include "kahan.h"
-
 // This function is called for each (i,j) in RMM, using a thread for each point.
 // TODO: This wastes half the threads, may be we can build a grid without
 // ignored blocks.
@@ -42,7 +40,6 @@ __global__ void gpu_update_rmm(const scalar_type* __restrict__ factors,
 
   // This stores the RMM section to be calculated.
   scalar_type rmm_local = 0.0f;
-  scalar_type c_rmm = 0.0f;  // Kahan compensation
 
   __shared__ scalar_type // Fi[point][i]
       functions_i_local[RMM_BLOCK_SIZE_XY][RMM_BLOCK_SIZE_XY + 1];
@@ -102,9 +99,9 @@ __global__ void gpu_update_rmm(const scalar_type* __restrict__ factors,
 
         __syncthreads();
         for (int point_sub = 0; point_sub < RMM_BLOCK_SIZE_XY; point_sub++) {
-          kahanAdd(rmm_local, c_rmm,
+          rmm_local +=
                    functions_i_local[point_sub][threadIdx.x] *
-                   functions_j_local[point_sub][threadIdx.y]);
+                   functions_j_local[point_sub][threadIdx.y];
         }
       }
     }

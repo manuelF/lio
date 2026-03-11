@@ -199,11 +199,13 @@ class vec_type<double, 4> : public double4 {
     this->x = other.x;
     this->y = other.y;
     this->z = other.z;
+    this->w = 0.0;
   }
   explicit vec_type(const double4& other) {
     this->x = other.x;
     this->y = other.y;
     this->z = other.z;
+    this->w = other.w;
   }
   vec_type(double _x, double _y, double _z, double _w) {
     this->x = _x;
@@ -261,11 +263,13 @@ class vec_type<double, 4> : public double4 {
     this->x = other.x;
     this->y = other.y;
     this->z = other.z;
+    this->w = 0.0;
   }
   __device__ __host__ explicit vec_type(const double4& other) {
     this->x = other.x;
     this->y = other.y;
     this->z = other.z;
+    this->w = other.w;
   }
   __device__ __host__ vec_type(double _x, double _y, double _z, double _w) {
     this->x = _x;

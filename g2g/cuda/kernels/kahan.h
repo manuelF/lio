@@ -35,4 +35,17 @@ __device__ __forceinline__ void kahanAdd3(vec_type<T, 3>& sum,
   kahanAdd(sum.z, comp.z, val.z);
 }
 
+/**
+ * @brief Kahan compensated addition for a 4D vector.
+ */
+template <typename T, unsigned int N>
+__device__ __forceinline__ void kahanAdd4(vec_type<T, N>& sum,
+                                          vec_type<T, N>& comp,
+                                          vec_type<T, N> val) {
+  kahanAdd(sum.x, comp.x, val.x);
+  kahanAdd(sum.y, comp.y, val.y);
+  kahanAdd(sum.z, comp.z, val.z);
+  kahanAdd(sum.w, comp.w, val.w);
+}
+
 #endif  // _KAHAN_H_

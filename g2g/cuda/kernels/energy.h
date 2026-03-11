@@ -10,10 +10,6 @@
  * closed-shell systems. It utilises texture memory for efficient access to the
  * density matrix (RMM) and shared memory to cache basis function values.
  *
- * Kahan compensated summation is used in the bj-loop to reduce FP accumulation
- * error from O(N*eps) to O(eps), making the result independent of instruction
- * ordering or structural changes.
- *
  * Warp reductions use __shfl_down_sync (Kepler+, SM 3.5+) rather than the
  * legacy volatile-shared-memory tree, eliminating store fences and freeing
  * shared memory for occupancy improvements.
@@ -21,8 +17,6 @@
 
 #ifndef G2G_KERNELS_ENERGY_H
 #define G2G_KERNELS_ENERGY_H
-
-#include "kahan.h"
 
 /* ==========================================================================================
  * TEXTURE FETCH HELPERS
@@ -57,33 +51,18 @@ static __inline__ __device__ double fetch_double(cudaTextureObject_t t, float x,
  * ==========================================================================================
  */
 
-template <typename T>
-__device__ __forceinline__ T warpKahanReduceScalar(T val) {
-  T sum = val;
-  T c = 0.0f;  // Compensation for lost low-order bits
-
-  for (int offset = 16; offset > 0; offset /= 2) {
-    // 1. Get the sum and compensation from the higher lane
-    T other_sum = __shfl_down_sync(0xffffffff, sum, offset);
-    T other_c = __shfl_down_sync(0xffffffff, c, offset);
-
-    // 2. Standard Kahan addition step
-    // We add the 'other' value and its compensation to our running sum
-    T y = other_sum - (c + other_c);
-    T t = sum + y;
-    c = (t - sum) - y;
-    sum = t;
-  }
-  return sum;  // Result is in lane 0
-}
-
 /**
  * @brief Warp-level sum reduction of a scalar value.
  * Returns the total sum to lane 0; other lanes hold partial results.
  */
 template <typename T>
 __device__ __forceinline__ T warpReduceScalar(T val) {
-  return warpKahanReduceScalar(val);
+  val += __shfl_down_sync(0xffffffffu, val, 16);
+  val += __shfl_down_sync(0xffffffffu, val,  8);
+  val += __shfl_down_sync(0xffffffffu, val,  4);
+  val += __shfl_down_sync(0xffffffffu, val,  2);
+  val += __shfl_down_sync(0xffffffffu, val,  1);
+  return val;
 }
 
 /**
@@ -113,8 +92,6 @@ __device__ __forceinline__ vec_type<T, 3> warpReduceVector3(vec_type<T, 3> v) {
  * Grid:  dim3(npoints, block_height, 1) where block_height covers all
  *        function-index slices.
  *
- * Kahan compensated summation in the bj-loop ensures FP-order independence.
- *
  * Reduction: each warp reduces its 32-thread partial sum via __shfl_down_sync.
  * Cross-warp accumulation uses shared memory for the cross-warp exchange.
  *
@@ -123,7 +100,8 @@ __device__ __forceinline__ vec_type<T, 3> warpReduceVector3(vec_type<T, 3> v) {
  *                      gradients and Hessians.
  */
 template <class scalar_type, bool lda>
-__global__ void gpu_compute_density(
+__global__
+void gpu_compute_density(
     cudaTextureObject_t rmm_input_gpu_tex,
     scalar_type* __restrict__ const energy,
     scalar_type* __restrict__ const factor,
@@ -143,19 +121,13 @@ __global__ void gpu_compute_density(
   bool valid_thread = (i < m);
   bool valid_thread2 = (i2 < m);
 
-  // Accumulators with Kahan compensation
   scalar_type w = 0.0f, w2 = 0.0f;
-  scalar_type c_w = 0.0f, c_w2 = 0.0f;
   vec_type<scalar_type, 3> w3, ww1, ww2;
   vec_type<scalar_type, 3> w32, ww12, ww22;
-  vec_type<scalar_type, 3> c_w3, c_ww1, c_ww2;
-  vec_type<scalar_type, 3> c_w32, c_ww12, c_ww22;
 
   if (!lda) {
     w3 = ww1 = ww2 = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
     w32 = ww12 = ww22 = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
-    c_w3 = c_ww1 = c_ww2 = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
-    c_w32 = c_ww12 = c_ww22 = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
   }
 
   int tid = threadIdx.x;
@@ -189,24 +161,22 @@ __global__ void gpu_compute_density(
         if (full_block || (bj + j) <= (int)i) {
           scalar_type rdm = fetch(rmm_input_gpu_tex, (float)(bj + j), (float)i);
           scalar_type fj_val = fj_sh[j];
-          kahanAdd(w, c_w, rdm * fj_val);
+          w += rdm * fj_val;
           if (!lda) {
-            kahanAdd3(w3, c_w3, vec_type<scalar_type, 3>(fgj_sh[j] * rdm));
-            kahanAdd3(ww1, c_ww1, vec_type<scalar_type, 3>(fh1j_sh[j] * rdm));
-            kahanAdd3(ww2, c_ww2, vec_type<scalar_type, 3>(fh2j_sh[j] * rdm));
+            w3 += vec_type<scalar_type, 3>(fgj_sh[j] * rdm);
+            ww1 += vec_type<scalar_type, 3>(fh1j_sh[j] * rdm);
+            ww2 += vec_type<scalar_type, 3>(fh2j_sh[j] * rdm);
           }
         }
         if (valid_thread2 && (full_block || (bj + j) <= (int)i2)) {
           scalar_type rdm2 =
               fetch(rmm_input_gpu_tex, (float)(bj + j), (float)i2);
           scalar_type fj_val = fj_sh[j];
-          kahanAdd(w2, c_w2, rdm2 * fj_val);
+          w2 += rdm2 * fj_val;
           if (!lda) {
-            kahanAdd3(w32, c_w32, vec_type<scalar_type, 3>(fgj_sh[j] * rdm2));
-            kahanAdd3(ww12, c_ww12,
-                      vec_type<scalar_type, 3>(fh1j_sh[j] * rdm2));
-            kahanAdd3(ww22, c_ww22,
-                      vec_type<scalar_type, 3>(fh2j_sh[j] * rdm2));
+            w32 += vec_type<scalar_type, 3>(fgj_sh[j] * rdm2);
+            ww12 += vec_type<scalar_type, 3>(fh1j_sh[j] * rdm2);
+            ww22 += vec_type<scalar_type, 3>(fh2j_sh[j] * rdm2);
           }
         }
       }
