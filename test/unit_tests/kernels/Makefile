@@ -46,6 +46,7 @@ SRCS_CPP := $(wildcard *_cpu_test.cpp)
 BINS_CPP := $(SRCS_CPP:.cpp=)
 
 BINS := $(BINS_CU) $(BINS_CPP)
+CHECKS:= racecheck memcheck initcheck synccheck
 
 .PHONY: all build run clean
 
@@ -62,10 +63,12 @@ build: $(BINS)
 
 run: build
 	@for t in $(BINS); do \
+	  for c in $(CHECKS); do \
 	  echo "----------------------------------------"; \
 	  echo "Running $$t ..."; \
 	  echo "----------------------------------------"; \
-	  ./$$t; \
+	  /usr/local/cuda-13.1/bin/compute-sanitizer --tool $$c ./$$t; \
+	done; \
 	done
 
 clean:

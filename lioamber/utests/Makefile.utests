@@ -1,0 +1,76 @@
+# Makefile for lioamber unit tests
+# Reuses objects from lioamber/obj
+
+FC = gfortran
+OBJDIR = ../obj
+G2GDIR = ../../g2g
+
+# Basic flags from lioamber/Makefile.options (assuming intel=0, precision=0)
+FFLAGS = -cpp -I$(OBJDIR) -J$(OBJDIR) -fPIC -Dpack -DG2G -DTD_SIMPLE -O3
+LFLAGS = -L$(G2GDIR) -Wl,-rpath=$(G2GDIR)
+LIBS = -lg2g -lblas -llapack
+
+# Test targets
+TESTS = test-converger.x test-properties.x test-mathsubs.x test-propagators.x
+
+# Dependency objects for test-converger
+CONVERGER_OBJS = $(OBJDIR)/converger_subs.o \
+                 $(OBJDIR)/converger_data.o \
+                 $(OBJDIR)/typedef_operator.o \
+                 $(OBJDIR)/fileio.o \
+                 $(OBJDIR)/linear_algebra.o \
+                 $(OBJDIR)/mathsubs.o
+
+# Dependency objects for test-mathsubs
+MATHSUBS_OBJS = $(OBJDIR)/mathsubs.o
+
+# Dependency objects for test-propagators
+PROPAGATORS_OBJS = $(OBJDIR)/propagators.o \
+                   $(OBJDIR)/garcha_mod.o \
+                   $(OBJDIR)/basis_data.o \
+                   $(OBJDIR)/constants_mod.o \
+                   $(OBJDIR)/mathsubs.o \
+                   $(OBJDIR)/fileio.o \
+                   $(OBJDIR)/linear_algebra.o \
+                   $(OBJDIR)/fockbias_subs.o \
+                   $(OBJDIR)/fockbias_data.o \
+                   $(OBJDIR)/subm_int3lu.o \
+                   $(OBJDIR)/field_subs.o \
+                   $(OBJDIR)/faint_cpu.o \
+                   $(OBJDIR)/liosubs.o \
+                   $(OBJDIR)/liosubs_math.o \
+                   $(OBJDIR)/typedef_operator.o \
+                   $(OBJDIR)/mask_ecp.o \
+                   $(OBJDIR)/mask_cublas.o \
+                   $(OBJDIR)/shape_data.o \
+                   $(OBJDIR)/packed_storage.o \
+                   $(OBJDIR)/dip.o \
+                   $(OBJDIR)/subm_intfld.o \
+                   $(OBJDIR)/ECP_mod.o \
+                   $(OBJDIR)/intECP.o \
+                   $(OBJDIR)/esp_funct.o \
+                   $(OBJDIR)/readECP.o
+
+all: $(TESTS)
+
+test-converger.x: test-converger.f90
+	$(FC) $(FFLAGS) $(LFLAGS) $< $(CONVERGER_OBJS) $(LIBS) -o $@
+
+test-properties.x: test-properties.f90
+	$(FC) $(FFLAGS) $(LFLAGS) $< $(LIBS) -o $@
+
+test-mathsubs.x: test-mathsubs.f90
+	$(FC) $(FFLAGS) $(LFLAGS) $< $(MATHSUBS_OBJS) $(LIBS) -o $@
+
+test-propagators.x: test-propagators.f90
+	$(FC) $(FFLAGS) $(LFLAGS) $< $(PROPAGATORS_OBJS) $(LIBS) -o $@
+
+.PHONY: clean run
+clean:
+	rm -f *.x *.mod
+
+run: all
+	@for t in $(TESTS); do \
+	  echo "Running $$t..."; \
+	  ./$$t; \
+	done

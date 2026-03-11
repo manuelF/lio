@@ -171,11 +171,7 @@ subroutine test_lowdin()
 
     return 
 end subroutine test_lowdin
-!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 
-!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
-!%% Orbital Energy related Functions.                                  [OEF] %%!
-!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 subroutine test_degeneration()
     implicit none
     integer              :: M, nDeg, nOrb
@@ -256,12 +252,6 @@ subroutine test_softness()
     if (testCond) testResult = "PASSED"
     write(*,*) testResult, ' - Softness properly calculated.'
 end subroutine test_softness
-!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
-
-
-!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
-!%% Fukui function tests.                                              [FUK] %%!
-!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 
 subroutine test_fukui()
 ! TO-DO: Proper Fukui function test.
@@ -270,5 +260,3 @@ end subroutine test_fukui
 subroutine test_fukuiOS()
 ! TO-DO: Proper open-shell Fukui function test.
 end subroutine test_fukuiOS
-
-!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!

@@ -1,5 +1,6 @@
 program test_mathsubs
     use mathsubs, only: basechange_d_gemm, basechange_z_gemm
+    use linear_algebra, only: matmuldiag
     implicit none
 
     integer, parameter :: M = 2
@@ -7,9 +8,10 @@ program test_mathsubs
     complex*16 :: Mati_z(M,M)
     real*8, allocatable :: Mato_d(:,:)
     complex*16, allocatable :: Mato_z(:,:)
-    integer :: i
+    integer :: i, k
     real*8 :: criteria
     integer :: nfail
+    real*8 :: A2(M,M), B2(M,M), C2(M,M), trace_val, trace_ref
 
     criteria = 1.0d-12
     nfail = 0
@@ -60,6 +62,38 @@ program test_mathsubs
         write(*,*) 'PASSED - basechange_d_gemm with swap matrix.'
     else
         write(*,*) 'FAILED - basechange_d_gemm with swap. Got:', Mato_d
+        nfail = nfail + 1
+    end if
+
+    ! 4. Test matmuldiag / trace equivalence
+    ! A = [[1, 2], [3, 4]], B = [[5, 6], [7, 8]]
+    ! A*B = [[19, 22], [43, 50]]
+    ! Tr(A*B) = 19 + 50 = 69
+    ! matmuldiag computes C where C(i,i) = sum_k A(i,k)*B(k,i) (diagonal of A*B)
+    A2(1,1) = 1.0d0 ; A2(1,2) = 2.0d0
+    A2(2,1) = 3.0d0 ; A2(2,2) = 4.0d0
+    B2(1,1) = 5.0d0 ; B2(1,2) = 6.0d0
+    B2(2,1) = 7.0d0 ; B2(2,2) = 8.0d0
+
+    call matmuldiag(A2, B2, C2, M)
+    trace_val = 0.0d0
+    do i = 1, M
+        trace_val = trace_val + C2(i,i)
+    end do
+    trace_ref = 69.0d0
+
+    if (abs(trace_val - trace_ref) < criteria) then
+        write(*,*) 'PASSED - matmuldiag trace = Tr(A*B).'
+    else
+        write(*,*) 'FAILED - matmuldiag trace =', trace_val, ' expected', trace_ref
+        nfail = nfail + 1
+    end if
+
+    ! Verify individual diagonal entries: C(1,1) = 19, C(2,2) = 50
+    if (abs(C2(1,1) - 19.0d0) < criteria .and. abs(C2(2,2) - 50.0d0) < criteria) then
+        write(*,*) 'PASSED - matmuldiag diagonal entries correct.'
+    else
+        write(*,*) 'FAILED - matmuldiag diag: C(1,1)=', C2(1,1), ' C(2,2)=', C2(2,2)
         nfail = nfail + 1
     end if
 

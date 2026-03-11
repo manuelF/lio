@@ -25,8 +25,9 @@ LIBS      = -lg2g -lblas -llapack
 # test-properties: standalone (includes properties.f90 directly)
 PROPERTIES_OBJS =
 
-# test-mathsubs: only needs mathsubs.o
-MATHSUBS_OBJS = $(OBJDIR)/mathsubs.o
+# test-mathsubs: needs mathsubs.o + linear_algebra.o (for matmuldiag)
+MATHSUBS_OBJS = $(OBJDIR)/mathsubs.o \
+                $(OBJDIR)/linear_algebra.o
 
 # test-converger: needs operator type + converger + linear_algebra
 CONVERGER_OBJS = $(OBJDIR)/converger_subs.o \
