@@ -1,7 +1,5 @@
 #define WIDTH 4
 
-#include "kahan.h"
-
 // OPEN SHELL CASE
 template <class scalar_type, bool compute_energy, bool compute_factor, bool lda>
 __global__ void gpu_accumulate_point_open(
