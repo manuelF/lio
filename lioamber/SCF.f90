@@ -723,7 +723,7 @@ subroutine SCF(E)
         do jj=1,M
         do kk=jj,M
           del=xnano(jj,kk)-(Pmat_vec(kk+(M2-jj)*(jj-1)/2))
-          del=del*sq2
+          if (kk.gt.jj) del=del*sq2
           good=good+del**2
           Pmat_vec(kk+(M2-jj)*(jj-1)/2)=xnano(jj,kk)
         enddo

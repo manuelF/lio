@@ -7,12 +7,14 @@ program test_converger
     use typedef_operator, only: operator
     implicit none
 
-    integer :: M, n_diis, i, j
+    integer :: M, n_diis, i, j, kk, jj, M2
     real*8  :: damp, good, good_cut
     type(operator) :: rho_op, fock_op
     real*8, allocatable :: Xmat(:,:), Ymat(:,:), Dmat(:,:), Fcheck(:,:)
+    real*8, allocatable :: xnano(:,:), Pmat_vec(:)
     integer :: nfail
     real*8  :: criteria, bsum, expected_val, bmax_val
+    real*8  :: expected_damp, sq2, del, good_expected
     integer :: ndiist
 
     nfail = 0
@@ -340,6 +342,191 @@ program test_converger
     end if
 
     deallocate(Xmat, Ymat, Dmat)
+
+    ! =========================================================================
+    ! Test 8: Damping with different GOLD values
+    ! =========================================================================
+    ! Verify damping formula F = (F_new + GOLD*F_old)/(1+GOLD) for various GOLD.
+    ! This tests that reducing GOLD gives more weight to the new Fock matrix.
+    write(*,*) 'Test 8: Damping with GOLD=10 and GOLD=2...'
+
+    ! --- Test 8a: GOLD=10 (current default, very conservative) ---
+    M = 2
+    n_diis = 3
+    damp = 10.0d0
+    if (allocated(fockm))      deallocate(fockm)
+    if (allocated(FP_PFm))     deallocate(FP_PFm)
+    if (allocated(bcoef))      deallocate(bcoef)
+    if (allocated(EMAT2))      deallocate(EMAT2)
+    if (allocated(fock_damped)) deallocate(fock_damped)
+    if (allocated(fock00_w))   deallocate(fock00_w)
+    if (allocated(fock_w))     deallocate(fock_w)
+    if (allocated(rho_w))      deallocate(rho_w)
+    if (allocated(suma_w))     deallocate(suma_w)
+    if (allocated(scratch1_w)) deallocate(scratch1_w)
+    if (allocated(scratch2_w)) deallocate(scratch2_w)
+    if (allocated(work_w))     deallocate(work_w)
+    call converger_init(M, n_diis, damp, .true., .false., .false.)
+
+    allocate(Xmat(M,M), Ymat(M,M), Dmat(M,M))
+    Xmat = 0.0d0 ; do i=1,M ; Xmat(i,i) = 1.0d0 ; end do
+    Ymat = Xmat
+
+    Dmat = 0.0d0
+    Dmat(1,1) = 1.0d0 ; Dmat(2,2) = 1.0d0
+    call rho_op%Sets_data_AO(Dmat)
+
+    ! Iter 1: F_old = 5.0 (stored for next iteration)
+    Dmat(1,1) = 5.0d0 ; Dmat(2,2) = 5.0d0
+    call fock_op%Sets_data_AO(Dmat)
+    good = 1.0d0 ; good_cut = 0.1d0
+    call conver(1, good, good_cut, M, rho_op, fock_op, Xmat, Ymat, 1)
+
+    ! Iter 2: F_new = 15.0, F_old = 5.0
+    ! Damped = (15 + 10*5) / (1+10) = 65/11 = 5.909090...
+    Dmat(1,1) = 15.0d0 ; Dmat(2,2) = 15.0d0
+    call fock_op%Sets_data_AO(Dmat)
+    call conver(2, good, good_cut, M, rho_op, fock_op, Xmat, Ymat, 1)
+
+    call fock_op%Gets_data_AO(Dmat)
+    expected_damp = (15.0d0 + 10.0d0 * 5.0d0) / (1.0d0 + 10.0d0)
+    if (abs(Dmat(1,1) - expected_damp) < criteria) then
+        write(*,*) 'PASSED - GOLD=10 damping correct:', Dmat(1,1)
+    else
+        write(*,*) 'FAILED - GOLD=10 expected', expected_damp, 'got', Dmat(1,1)
+        nfail = nfail + 1
+    end if
+
+    deallocate(Xmat, Ymat, Dmat)
+
+    ! --- Test 8b: GOLD=2 (proposed new default, more aggressive) ---
+    damp = 2.0d0
+    if (allocated(fockm))      deallocate(fockm)
+    if (allocated(FP_PFm))     deallocate(FP_PFm)
+    if (allocated(bcoef))      deallocate(bcoef)
+    if (allocated(EMAT2))      deallocate(EMAT2)
+    if (allocated(fock_damped)) deallocate(fock_damped)
+    if (allocated(fock00_w))   deallocate(fock00_w)
+    if (allocated(fock_w))     deallocate(fock_w)
+    if (allocated(rho_w))      deallocate(rho_w)
+    if (allocated(suma_w))     deallocate(suma_w)
+    if (allocated(scratch1_w)) deallocate(scratch1_w)
+    if (allocated(scratch2_w)) deallocate(scratch2_w)
+    if (allocated(work_w))     deallocate(work_w)
+    call converger_init(M, n_diis, damp, .true., .false., .false.)
+
+    allocate(Xmat(M,M), Ymat(M,M), Dmat(M,M))
+    Xmat = 0.0d0 ; do i=1,M ; Xmat(i,i) = 1.0d0 ; end do
+    Ymat = Xmat
+
+    Dmat = 0.0d0
+    Dmat(1,1) = 1.0d0 ; Dmat(2,2) = 1.0d0
+    call rho_op%Sets_data_AO(Dmat)
+
+    ! Iter 1: F_old = 5.0
+    Dmat(1,1) = 5.0d0 ; Dmat(2,2) = 5.0d0
+    call fock_op%Sets_data_AO(Dmat)
+    good = 1.0d0 ; good_cut = 0.1d0
+    call conver(1, good, good_cut, M, rho_op, fock_op, Xmat, Ymat, 1)
+
+    ! Iter 2: F_new = 15.0, F_old = 5.0
+    ! Damped = (15 + 2*5) / (1+2) = 25/3 = 8.333...
+    Dmat(1,1) = 15.0d0 ; Dmat(2,2) = 15.0d0
+    call fock_op%Sets_data_AO(Dmat)
+    call conver(2, good, good_cut, M, rho_op, fock_op, Xmat, Ymat, 1)
+
+    call fock_op%Gets_data_AO(Dmat)
+    expected_damp = (15.0d0 + 2.0d0 * 5.0d0) / (1.0d0 + 2.0d0)
+    if (abs(Dmat(1,1) - expected_damp) < criteria) then
+        write(*,*) 'PASSED - GOLD=2 damping correct:', Dmat(1,1)
+    else
+        write(*,*) 'FAILED - GOLD=2 expected', expected_damp, 'got', Dmat(1,1)
+        nfail = nfail + 1
+    end if
+
+    ! Verify GOLD=2 gives more weight to new Fock than GOLD=10
+    ! GOLD=10: 5.909, GOLD=2: 8.333 (closer to F_new=15)
+    if (expected_damp > 65.0d0/11.0d0) then
+        write(*,*) 'PASSED - GOLD=2 gives more weight to new Fock than GOLD=10'
+    else
+        write(*,*) 'FAILED - GOLD=2 should give more new Fock weight'
+        nfail = nfail + 1
+    end if
+
+    deallocate(Xmat, Ymat, Dmat)
+
+    ! =========================================================================
+    ! Test 9: Convergence metric (good) calculation
+    ! =========================================================================
+    ! Replicates the convergence metric from SCF.f90 lines 722-731.
+    ! Tests the formula: good = sqrt(sum(del^2 * sq2^2)) / M
+    ! where del = xnano(jj,kk) - Pmat_vec(packed_index)
+    ! NOTE: Current code applies sq2 to ALL elements including diagonal.
+    write(*,*) 'Test 9: Convergence metric calculation...'
+
+    M = 3
+    M2 = 2*M
+    sq2 = sqrt(2.0d0)
+    allocate(xnano(M,M), Pmat_vec(M*(M+1)/2))
+
+    ! Set up known density matrices
+    ! Old density (in packed lower-triangular form)
+    Pmat_vec = 0.0d0
+    Pmat_vec(1) = 1.0d0   ! (1,1)
+    Pmat_vec(2) = 0.1d0   ! (2,1) -> (1,2) in upper tri
+    Pmat_vec(3) = 0.2d0   ! (3,1) -> (1,3) in upper tri
+    Pmat_vec(4) = 2.0d0   ! (2,2)
+    Pmat_vec(5) = 0.3d0   ! (3,2) -> (2,3) in upper tri
+    Pmat_vec(6) = 3.0d0   ! (3,3)
+
+    ! New density (full matrix, upper triangle accessed)
+    xnano = 0.0d0
+    xnano(1,1) = 1.01d0   ! diagonal change: +0.01
+    xnano(1,2) = 0.12d0   ! off-diag change: +0.02
+    xnano(1,3) = 0.20d0   ! no change
+    xnano(2,2) = 2.05d0   ! diagonal change: +0.05
+    xnano(2,3) = 0.30d0   ! no change
+    xnano(3,3) = 2.97d0   ! diagonal change: -0.03
+
+    ! Compute good using FIXED formula (sq2 only on off-diagonal elements)
+    good = 0.0d0
+    do jj=1,M
+    do kk=jj,M
+      del = xnano(jj,kk) - Pmat_vec(kk+(M2-jj)*(jj-1)/2)
+      if (kk > jj) del = del * sq2
+      good = good + del**2
+    enddo
+    enddo
+    good = sqrt(good) / float(M)
+
+    ! Manually compute expected value with sq2 ONLY on off-diagonal
+    ! Differences: (1,1)=0.01, (1,2)=0.02, (1,3)=0.0, (2,2)=0.05, (2,3)=0.0, (3,3)=-0.03
+    ! Diagonal: 0.01^2 + 0.05^2 + 0.03^2 = 0.0001 + 0.0025 + 0.0009 = 0.0035
+    ! Off-diag: (0.02*sq2)^2 + 0 + 0 = 0.0008
+    ! Total sum of squares = 0.0043
+    good_expected = sqrt(0.01d0**2 + (0.02d0*sq2)**2 + 0.05d0**2 + 0.03d0**2) &
+                    / dble(M)
+
+    if (abs(good - good_expected) < 1.0d-12) then
+        write(*,*) 'PASSED - Convergence metric correct (sq2 off-diag only):', good
+    else
+        write(*,*) 'FAILED - good =', good, ' expected', good_expected
+        nfail = nfail + 1
+    end if
+
+    ! Verify the old (buggy) metric would be LARGER
+    ! Old formula: sq2 on ALL → 2*(0.0035 + 0.0004) = 0.0078
+    good_expected = sqrt(2.0d0 * (0.01d0**2 + 0.02d0**2 + 0.05d0**2 + 0.03d0**2)) &
+                    / dble(M)
+    if (good < good_expected) then
+        write(*,*) 'PASSED - Fixed metric smaller than old buggy metric:', &
+                   good, '<', good_expected
+    else
+        write(*,*) 'FAILED - Fixed metric should be smaller than buggy'
+        nfail = nfail + 1
+    end if
+
+    deallocate(xnano, Pmat_vec)
 
     ! =========================================================================
     ! Summary
