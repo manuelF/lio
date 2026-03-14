@@ -9,9 +9,11 @@ else
 endif
 
 
+FFLAGS = -fno-omit-frame-pointer
+
 tdanalyze:
-	$(FC) -o tdanalyze.x tdanalyze.f90
-	$(FC) -o average_spectra.x average_spectra.f90
+	$(FC) $(FFLAGS) -o tdanalyze.x tdanalyze.f90
+	$(FC) $(FFLAGS) -o average_spectra.x average_spectra.f90
 	cp tdanalyze.x ../../tdanalyze
 	cp average_spectra.x ../../average_spectra
 

@@ -3,12 +3,13 @@
 ######################################################################
 
 FC = gfortran
+FFLAGS = -fno-omit-frame-pointer
 TESTS = test-properties.x test-ftermbias.x
 
 all: $(TESTS)
 
 %.x: %.f90
-	$(FC) $< -o $@
+	$(FC) $(FFLAGS) $< -o $@
 
 .PHONY: clean
 clean:

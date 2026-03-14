@@ -6,7 +6,7 @@ OBJDIR = ../obj
 G2GDIR = ../../g2g
 
 # Basic flags from lioamber/Makefile.options (assuming intel=0, precision=0)
-FFLAGS = -cpp -I$(OBJDIR) -J$(OBJDIR) -fPIC -Dpack -DG2G -DTD_SIMPLE -O3
+FFLAGS = -cpp -I$(OBJDIR) -J$(OBJDIR) -fPIC -fno-omit-frame-pointer -Dpack -DG2G -DTD_SIMPLE -O3
 LFLAGS = -L$(G2GDIR) -Wl,-rpath=$(G2GDIR)
 LIBS = -lg2g -lblas -llapack
 

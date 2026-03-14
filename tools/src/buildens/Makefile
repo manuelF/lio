@@ -9,8 +9,10 @@ else
 endif
 
 
+FFLAGS = -fno-omit-frame-pointer
+
 buildens:
-	$(FC) -o buildens.x buildens.f90
+	$(FC) $(FFLAGS) -o buildens.x buildens.f90
 	cp buildens.x ../../bdens
 
 clean:

@@ -1,7 +1,8 @@
 ######################################################################
 # MAKEFILE FOR TESTS
 ######################################################################
-FC := gfortran
+FC     := gfortran
+FFLAGS := -fno-omit-frame-pointer
 
 tests :=
 tests += matdiag_ut
@@ -18,7 +19,7 @@ and_run : $(tests:%=%.out)
 
 
 %.x : %.f90 Makefile
-	$(FC) $< -o $@
+	$(FC) $(FFLAGS) $< -o $@
 
 %.out : %.x Makefile
 	@./$< > $@

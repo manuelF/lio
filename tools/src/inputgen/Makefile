@@ -5,7 +5,7 @@ PROGRAM := inputgen.x
 
 # COMPILATION SETUP
 FC     = gfortran
-FFLAGS =
+FFLAGS = -fno-omit-frame-pointer
 
 # LINK SETUP
 LC     = gfortran

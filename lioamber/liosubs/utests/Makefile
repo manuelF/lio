@@ -2,7 +2,7 @@
 # MAKEFILE FOR TESTS
 ######################################################################
 FC     := gfortran
-FFLAGS := -cpp
+FFLAGS := -cpp -fno-omit-frame-pointer
 
 tests :=
 tests += nuclear_verlet_t01.x
