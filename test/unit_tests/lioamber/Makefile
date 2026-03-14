@@ -64,7 +64,12 @@ PROPAGATORS_OBJS = $(OBJDIR)/propagators.o \
                    $(OBJDIR)/esp_funct.o \
                    $(OBJDIR)/readECP.o
 
-TESTS = test-properties.x test-mathsubs.x test-converger.x test-propagators.x
+# test-int3lu: needs subm_int3lu.o + basis_data.o + fileio.o
+INT3LU_OBJS = $(OBJDIR)/subm_int3lu.o \
+              $(OBJDIR)/basis_data.o \
+              $(OBJDIR)/fileio.o
+
+TESTS = test-properties.x test-mathsubs.x test-converger.x test-propagators.x test-int3lu.x
 
 # ---------------------------------------------------------------------------
 # Targets
@@ -109,6 +114,9 @@ test-converger.x: test-converger.f90
 
 test-propagators.x: test-propagators.f90
 	$(FC) $(FFLAGS) $(LFLAGS) $< $(PROPAGATORS_OBJS) $(LIBS) -o $@
+
+test-int3lu.x: test-int3lu.f90
+	$(FC) $(FFLAGS) $(LFLAGS) $< $(INT3LU_OBJS) $(LIBS) -o $@
 
 clean:
 	rm -f *.x *.mod
