@@ -1,5 +1,5 @@
 program test_converger
-    use converger_subs, only: converger_init, conver, circ_slot
+    use converger_subs, only: converger_init, conver, circ_slot, trace_product
     use converger_data, only: ndiis, damping_factor, hagodiis, bcoef, fockm, &
                               FP_PFm, EMAT2, fock_damped, head_idx, &
                               fock00_w, fock_w, rho_w, suma_w, &
@@ -65,7 +65,10 @@ program test_converger
     call fock_op%Sets_data_AO(Dmat)
     call conver(2, good, good_cut, M, rho_op, fock_op, Xmat, Ymat, 1)
 
-    call fock_op%Gets_data_AO(Dmat)
+    ! Read ON data: the optimized converger applies damping in ON basis and
+    ! sets data_ON directly (skipping the redundant AO→ON base change).
+    ! With X=I the ON and AO values are identical.
+    call fock_op%Gets_data_ON(Dmat)
     if (abs(Dmat(1,1) - 50.0d0/3.0d0) < criteria) then
         write(*,*) 'PASSED - Damping correctly applied.'
     else
@@ -388,7 +391,7 @@ program test_converger
     call fock_op%Sets_data_AO(Dmat)
     call conver(2, good, good_cut, M, rho_op, fock_op, Xmat, Ymat, 1)
 
-    call fock_op%Gets_data_AO(Dmat)
+    call fock_op%Gets_data_ON(Dmat)
     expected_damp = (15.0d0 + 10.0d0 * 5.0d0) / (1.0d0 + 10.0d0)
     if (abs(Dmat(1,1) - expected_damp) < criteria) then
         write(*,*) 'PASSED - GOLD=10 damping correct:', Dmat(1,1)
@@ -435,7 +438,7 @@ program test_converger
     call fock_op%Sets_data_AO(Dmat)
     call conver(2, good, good_cut, M, rho_op, fock_op, Xmat, Ymat, 1)
 
-    call fock_op%Gets_data_AO(Dmat)
+    call fock_op%Gets_data_ON(Dmat)
     expected_damp = (15.0d0 + 2.0d0 * 5.0d0) / (1.0d0 + 2.0d0)
     if (abs(Dmat(1,1) - expected_damp) < criteria) then
         write(*,*) 'PASSED - GOLD=2 damping correct:', Dmat(1,1)
@@ -527,6 +530,248 @@ program test_converger
     end if
 
     deallocate(xnano, Pmat_vec)
+
+    ! =========================================================================
+    ! Test 10: Symmetric commutator equivalence
+    ! =========================================================================
+    ! For symmetric A, B: [A,B] = AB - BA = AB - (AB)^T
+    ! This validates the 1-DGEMM optimization (instead of 2 MATMULs).
+    write(*,*) 'Test 10: Symmetric commutator [A,B] = AB - (AB)^T...'
+
+    M = 8
+    allocate(Xmat(M,M), Ymat(M,M), Dmat(M,M))
+    block
+        real*8, allocatable :: A(:,:), B(:,:), comm_ref(:,:), comm_opt(:,:)
+        real*8, allocatable :: AB(:,:)
+        integer :: ii2, jj2
+
+        allocate(A(M,M), B(M,M), comm_ref(M,M), comm_opt(M,M), AB(M,M))
+
+        ! Build symmetric A and B
+        do jj2 = 1, M
+        do ii2 = 1, M
+            A(ii2,jj2) = dble(ii2*3 + jj2*7 + ii2*jj2) / dble(M*M)
+            B(ii2,jj2) = dble(ii2*5 - jj2*2 + ii2*jj2*3) / dble(M*M)
+        enddo
+        enddo
+        ! Symmetrize
+        do jj2 = 1, M
+        do ii2 = jj2+1, M
+            A(ii2,jj2) = A(jj2,ii2)
+            B(ii2,jj2) = B(jj2,ii2)
+        enddo
+        enddo
+
+        ! Reference: [A,B] = AB - BA (2 MATMULs)
+        comm_ref = MATMUL(A, B) - MATMUL(B, A)
+
+        ! Optimized: [A,B] = AB - (AB)^T (1 DGEMM + transpose)
+        call DGEMM('N','N',M,M,M,1.0D0,A,M,B,M,0.0D0,AB,M)
+        do jj2 = 1, M
+        do ii2 = 1, M
+            comm_opt(ii2,jj2) = AB(ii2,jj2) - AB(jj2,ii2)
+        enddo
+        enddo
+
+        ! Check equivalence
+        del = 0.0d0
+        do jj2 = 1, M
+        do ii2 = 1, M
+            del = del + abs(comm_ref(ii2,jj2) - comm_opt(ii2,jj2))
+        enddo
+        enddo
+
+        if (del < 1.0d-10) then
+            write(*,*) 'PASSED - Symmetric commutator: 1-DGEMM matches 2-MATMUL'
+        else
+            write(*,*) 'FAILED - Symmetric commutator diff =', del
+            nfail = nfail + 1
+        end if
+
+        ! Verify antisymmetry: comm(i,j) = -comm(j,i)
+        del = 0.0d0
+        do jj2 = 1, M
+        do ii2 = 1, M
+            del = del + abs(comm_opt(ii2,jj2) + comm_opt(jj2,ii2))
+        enddo
+        enddo
+
+        if (del < 1.0d-10) then
+            write(*,*) 'PASSED - Commutator is antisymmetric'
+        else
+            write(*,*) 'FAILED - Commutator antisymmetry error =', del
+            nfail = nfail + 1
+        end if
+
+        deallocate(A, B, comm_ref, comm_opt, AB)
+    end block
+    deallocate(Xmat, Ymat, Dmat)
+
+    ! =========================================================================
+    ! Test 11: trace_product via DDOT for antisymmetric matrices
+    ! =========================================================================
+    ! For antisymmetric A, B: Tr(A·B) = -sum(A(i,j)*B(i,j)) = -DDOT(M², A, B)
+    write(*,*) 'Test 11: trace_product = -DDOT for antisymmetric matrices...'
+
+    M = 10
+    block
+        real*8, allocatable :: E1(:,:), E2(:,:)
+        real*8 :: trace_ref, trace_ddot
+        real*8, external :: DDOT
+        integer :: ii2, jj2
+
+        allocate(E1(M,M), E2(M,M))
+
+        ! Build antisymmetric E1 and E2
+        E1 = 0.0d0 ; E2 = 0.0d0
+        do jj2 = 1, M
+        do ii2 = jj2+1, M
+            E1(ii2,jj2) =  dble(ii2*3 - jj2*7) / dble(M)
+            E1(jj2,ii2) = -E1(ii2,jj2)
+            E2(ii2,jj2) =  dble(ii2*5 + jj2*2) / dble(M)
+            E2(jj2,ii2) = -E2(ii2,jj2)
+        enddo
+        enddo
+
+        ! Reference: trace_product from converger_subs
+        trace_ref = trace_product(E1, E2, M)
+
+        ! Optimized: -DDOT
+        trace_ddot = -DDOT(M*M, E1, 1, E2, 1)
+
+        if (abs(trace_ref - trace_ddot) < 1.0d-10) then
+            write(*,*) 'PASSED - trace_product = -DDOT for antisymmetric matrices'
+        else
+            write(*,'(A,ES20.12,A,ES20.12)') &
+                ' FAILED - trace_product=', trace_ref, ' -DDOT=', trace_ddot
+            nfail = nfail + 1
+        end if
+
+        deallocate(E1, E2)
+    end block
+
+    ! =========================================================================
+    ! Test 12: Inline base change equivalence
+    ! =========================================================================
+    ! Verify X^T · A · X computed inline matches basechange_gemm
+    write(*,*) 'Test 12: Inline base change matches basechange_gemm...'
+
+    M = 6
+    block
+        use mathsubs, only: basechange_gemm
+        real*8, allocatable :: A(:,:), X(:,:), ref(:,:)
+        real*8, allocatable :: tmp(:,:), result_inline(:,:)
+        integer :: ii2, jj2
+
+        allocate(A(M,M), X(M,M), tmp(M,M), result_inline(M,M))
+
+        ! Build symmetric A
+        do jj2 = 1, M
+        do ii2 = 1, M
+            A(ii2,jj2) = dble(ii2 + jj2*3) / dble(M)
+        enddo
+        enddo
+        do jj2 = 1, M
+        do ii2 = jj2+1, M
+            A(ii2,jj2) = A(jj2,ii2)
+        enddo
+        enddo
+
+        ! Build non-trivial X (not identity)
+        X = 0.0d0
+        do ii2 = 1, M
+            X(ii2,ii2) = 1.0d0 / sqrt(dble(ii2))
+        enddo
+        X(1,2) = 0.1d0 ; X(2,1) = -0.1d0
+
+        ! Reference: basechange_gemm
+        ref = basechange_gemm(M, A, X)
+
+        ! Inline: tmp = X^T · A ; result = tmp · X
+        call DGEMM('T','N',M,M,M,1.0D0,X,M,A,M,0.0D0,tmp,M)
+        call DGEMM('N','N',M,M,M,1.0D0,tmp,M,X,M,0.0D0,result_inline,M)
+
+        del = 0.0d0
+        do jj2 = 1, M
+        do ii2 = 1, M
+            del = del + abs(ref(ii2,jj2) - result_inline(ii2,jj2))
+        enddo
+        enddo
+
+        if (del < 1.0d-10) then
+            write(*,*) 'PASSED - Inline base change matches basechange_gemm'
+        else
+            write(*,*) 'FAILED - Inline base change diff =', del
+            nfail = nfail + 1
+        end if
+
+        deallocate(A, X, ref, tmp, result_inline)
+    end block
+
+    ! =========================================================================
+    ! Test 13: ON-basis damping equivalence
+    ! =========================================================================
+    ! Verify: X^T · [(F_new + λ·F_old)/(1+λ)] · X = (F'_new + λ·F'_old)/(1+λ)
+    ! This validates that damping commutes with base change.
+    write(*,*) 'Test 13: ON-basis damping = AO-basis damping + base change...'
+
+    M = 5
+    block
+        use mathsubs, only: basechange_gemm
+        real*8, allocatable :: F_new(:,:), F_old(:,:), X2(:,:)
+        real*8, allocatable :: damped_AO(:,:), ref_ON(:,:), opt_ON(:,:)
+        real*8 :: lambda
+        integer :: ii2, jj2
+
+        lambda = 0.5d0
+        allocate(F_new(M,M), F_old(M,M), X2(M,M))
+        allocate(damped_AO(M,M), ref_ON(M,M), opt_ON(M,M))
+
+        ! Symmetric Fock matrices
+        do jj2 = 1, M
+        do ii2 = 1, M
+            F_new(ii2,jj2) = dble(ii2*10 + jj2) / dble(M)
+            F_old(ii2,jj2) = dble(ii2*5 + jj2*3) / dble(M)
+        enddo
+        enddo
+        do jj2 = 1, M
+        do ii2 = jj2+1, M
+            F_new(ii2,jj2) = F_new(jj2,ii2)
+            F_old(ii2,jj2) = F_old(jj2,ii2)
+        enddo
+        enddo
+
+        ! Non-trivial X
+        X2 = 0.0d0
+        do ii2 = 1, M
+            X2(ii2,ii2) = 1.0d0 / sqrt(dble(ii2))
+        enddo
+        X2(1,2) = 0.1d0 ; X2(2,3) = 0.05d0
+
+        ! Reference: damp in AO, then base change
+        damped_AO = (F_new + lambda * F_old) / (1.0d0 + lambda)
+        ref_ON = basechange_gemm(M, damped_AO, X2)
+
+        ! Optimized: base change each, then damp in ON
+        opt_ON = (basechange_gemm(M, F_new, X2) + &
+                  lambda * basechange_gemm(M, F_old, X2)) / (1.0d0 + lambda)
+
+        del = 0.0d0
+        do jj2 = 1, M
+        do ii2 = 1, M
+            del = del + abs(ref_ON(ii2,jj2) - opt_ON(ii2,jj2))
+        enddo
+        enddo
+
+        if (del < 1.0d-10) then
+            write(*,*) 'PASSED - ON-basis damping equivalent to AO damping + BC'
+        else
+            write(*,*) 'FAILED - ON-basis damping diff =', del
+            nfail = nfail + 1
+        end if
+
+        deallocate(F_new, F_old, X2, damped_AO, ref_ON, opt_ON)
+    end block
 
     ! =========================================================================
     ! Summary

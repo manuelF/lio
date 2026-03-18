@@ -103,51 +103,65 @@ end subroutine converger_init
    double precision, allocatable :: EMAT(:,:)
    double precision, allocatable :: sv(:)
    double precision :: rcond_diis, bcoef_max
+   double precision, external :: DDOT
 
 
 ! INITIALIZATION
 ! If DIIS is turned on, update fockm with the current transformed F' (into ON
 ! basis) and update FP_PFm with the current transformed [F',P']
-!
-! (1)     Calculate F' and [F',P']
-!       update fockm with F'
-! now, scratch1 = A = F' * P'; scratch2 = A^T
-! [F',P'] = A - A^T
-! BASE CHANGE HAPPENS INSIDE OF FOCK_COMMUTS
 
-   fock00_w = 0.0D0
-   fock_w   = 0.0D0
-   rho_w    = 0.0D0
-
-   ! Saving rho and the first fock AO
+   ! Load AO-basis Fock and density from operators
    call rho_op%Gets_data_AO(rho_w)
    call fock_op%Gets_data_AO(fock00_w)
 
    ndiist = min( niter, ndiis )
    if (conver_criter /= 1) then
-      suma_w = 0.0D0
-      scratch1_w = 0.0D0
-      scratch2_w = 0.0D0
-
-
-! If DIIS is turned on, update fockm with the current transformed F' (into ON
-! basis) and update FP_PFm with the current transformed [F',P']
 
       ! P2: Circular buffer — O(1) advance instead of O(ndiis*M^2) shift
       head_idx(spin) = mod(head_idx(spin), ndiis) + 1
 
 #ifdef CUBLAS
+      ! GPU path: use existing operator methods for base change and commutator
       call rho_op%BChange_AOtoON(devPtrY, M_in, 'r')
       call fock_op%BChange_AOtoON(devPtrX, M_in, 'r')
-#else
-      call rho_op%BChange_AOtoON(Ymat, M_in, 'r')
-      call fock_op%BChange_AOtoON(Xmat,M_in, 'r')
-#endif
       call rho_op%Gets_data_ON(rho_w)
       call fock_op%Commut_data_r(rho_w, scratch1_w, M_in)
 
       FP_PFm(:,:,head_idx(spin),spin) = scratch1_w(:,:)
       call fock_op%Gets_data_ON( fockm(:,:,head_idx(spin),spin) )
+#else
+      ! CPU path: inline base changes + 1-DGEMM commutator.
+      ! Eliminates all per-call heap allocations (was 12 M×M arrays per call)
+      ! and replaces 2 MATMUL calls with 1 DGEMM using symmetric commutator
+      ! identity: [F',P'] = F'P' - (F'P')^T (since F' and P' are symmetric).
+
+      ! Step 1: F' = X^T · F · X  (Fock base change, 2 DGEMMs)
+      call DGEMM('T','N',M_in,M_in,M_in,1.0D0,Xmat,M_in,fock00_w,M_in, &
+                 0.0D0,scratch1_w,M_in)
+      call DGEMM('N','N',M_in,M_in,M_in,1.0D0,scratch1_w,M_in,Xmat,M_in, &
+                 0.0D0,fock_w,M_in)
+      fockm(:,:,head_idx(spin),spin) = fock_w
+
+      ! Step 2: P' = Y^T · P · Y  (density base change, 2 DGEMMs)
+      call DGEMM('T','N',M_in,M_in,M_in,1.0D0,Ymat,M_in,rho_w,M_in, &
+                 0.0D0,scratch1_w,M_in)
+      call DGEMM('N','N',M_in,M_in,M_in,1.0D0,scratch1_w,M_in,Ymat,M_in, &
+                 0.0D0,scratch2_w,M_in)
+      ! P' is now in scratch2_w
+
+      ! Step 3: [F',P'] = F'P' - (F'P')^T  (1 DGEMM + O(M²) antisymmetric fill)
+      ! Since F' and P' are symmetric: (F'P')^T = P'^T F'^T = P'F' = BA
+      ! So AB - BA = AB - (AB)^T — only one matrix multiply needed.
+      call DGEMM('N','N',M_in,M_in,M_in,1.0D0,fock_w,M_in,scratch2_w,M_in, &
+                 0.0D0,scratch1_w,M_in)
+      do jj = 1, M_in
+      do ii = 1, M_in
+         FP_PFm(ii,jj,head_idx(spin),spin) = &
+            scratch1_w(ii,jj) - scratch1_w(jj,ii)
+      enddo
+      enddo
+      ! fock_w retains F' in ON basis for potential ON-basis damping below
+#endif
 
    endif
 
@@ -177,28 +191,41 @@ end subroutine converger_init
          stop
    endselect
 
-   ! THIS IS DAMPING
-   ! If we are not doing diis this iteration, apply damping to F, save this
-   ! F in fock_damped for next iteration's damping and put F' = X^T * F * X in
-   ! fock the newly constructed damped matrix is stored, for next iteration in
-   ! fock_damped
+   ! DAMPING
    if (.not. hagodiis) then
-      fock_w = fock00_w
-
-      if (niter > 1) &
-         fock_w = (fock_w  + damping_factor * fock_damped(:,:,spin)) / &
-                  (1.0D0 + damping_factor)
-      fock_damped(:,:,spin) = fock_w
-      call fock_op%Sets_data_AO(fock_w)
+      if (conver_criter == 1) then
+         ! Pure damping mode (no DIIS): AO-basis damping + base change.
+         ! Scratch arrays are not allocated for this case, so use operator methods.
+         fock_w = fock00_w
+         if (niter > 1) &
+            fock_w = (fock_w  + damping_factor * fock_damped(:,:,spin)) / &
+                     (1.0D0 + damping_factor)
+         fock_damped(:,:,spin) = fock_w
+         call fock_op%Sets_data_AO(fock_w)
 
 #ifdef  CUBLAS
-      call fock_op%BChange_AOtoON(devPtrX, M_in, 'r')
+         call fock_op%BChange_AOtoON(devPtrX, M_in, 'r')
 #else
-      call fock_op%BChange_AOtoON(Xmat   , M_in, 'r')
+         call fock_op%BChange_AOtoON(Xmat   , M_in, 'r')
 #endif
+      else
+         ! DIIS-capable: ON-basis damping using already-computed F'.
+         ! fock_w has F' from the DIIS prep block above (CPU path) or from
+         ! fock_op%data_ON (GPU path). Saves 2 DGEMMs by avoiding a second
+         ! base change of the damped Fock matrix.
+#ifdef CUBLAS
+         call fock_op%Gets_data_ON(fock_w)
+#endif
+         if (niter > 1) then
+            fock_w = (fock_w + damping_factor * fock_damped(:,:,spin)) / &
+                     (1.0D0 + damping_factor)
+         endif
+         fock_damped(:,:,spin) = fock_w
+         call fock_op%Sets_data_ON(fock_w)
+      endif
    endif
 
-   ! DIIS
+   ! DIIS: build B-matrix (EMAT), solve for coefficients, extrapolate Fock.
    if (conver_criter /= 1) then
       allocate(EMAT(ndiist+1,ndiist+1))
 
@@ -216,12 +243,16 @@ end subroutine converger_init
       endif
 
       ! Compute newest row/column of EMAT (the head entry vs all entries).
+      ! Since commutators [F',P'] are antisymmetric, Tr(A·B) for antisymmetric
+      ! A,B equals -sum(A(i,j)*B(i,j)) = -DDOT(M², A, B). This replaces the
+      ! trace_product double loop with a single BLAS call and avoids copying
+      ! error vectors to scratch arrays.
       do kk = 1, ndiist
          slot_k = circ_slot(kk, head_idx(spin), ndiist, ndiis)
-         scratch1_w(:,:) = FP_PFm(:,:,head_idx(spin),spin)
-         scratch2_w(:,:) = FP_PFm(:,:,slot_k,spin)
 
-         EMAT(ndiist,kk) = trace_product(scratch1_w, scratch2_w, M_in)
+         EMAT(ndiist,kk) = -DDOT(M_in*M_in, &
+                                  FP_PFm(1,1,head_idx(spin),spin), 1, &
+                                  FP_PFm(1,1,slot_k,spin), 1)
          if (kk.ne.ndiist) EMAT(kk,ndiist) = EMAT(ndiist,kk)
       enddo
 
@@ -326,6 +357,8 @@ end subroutine conver
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 ! Computes Tr(A * B) directly without forming the full product matrix.
 ! Equivalent to: call matmuldiag(A, B, C, M); trace = sum(C(i,i), i=1..M)
+! NOTE: For antisymmetric A, B (e.g. commutators [F',P']), use the faster
+! identity Tr(A*B) = -DDOT(M*M, A, 1, B, 1) instead of calling this function.
 double precision function trace_product(A, B, M)
    implicit none
    integer, intent(in) :: M
