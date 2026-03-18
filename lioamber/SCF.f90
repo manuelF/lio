@@ -610,7 +610,8 @@ subroutine SCF(E)
 #       ifdef CUBLAS
            call cumxp_r( morb_coefon, dev_Xmat, morb_coefat, M_f)
 #       else
-           morb_coefat = matmul( Xmat, morb_coefon )
+           call DGEMM('N','N',M_f,M_f,M_f,1.0D0,Xmat,M_f, &
+                      morb_coefon,M_f,0.0D0,morb_coefat,M_f)
 #       endif
         call standard_coefs( morb_coefat )
         call g2g_timer_sum_pause('SCF - MOC base change (sum)')
@@ -655,7 +656,8 @@ subroutine SCF(E)
 #       ifdef CUBLAS
            call cumxp_r( morb_coefon, dev_Xmat, morb_coefat, M_f)
 #       else
-           morb_coefat = matmul( Xmat, morb_coefon )
+           call DGEMM('N','N',M_f,M_f,M_f,1.0D0,Xmat,M_f, &
+                      morb_coefon,M_f,0.0D0,morb_coefat,M_f)
 #       endif
         call standard_coefs( morb_coefat )
         call g2g_timer_sum_pause('SCF - MOC base change (sum)')

@@ -69,7 +69,10 @@ INT3LU_OBJS = $(OBJDIR)/subm_int3lu.o \
               $(OBJDIR)/basis_data.o \
               $(OBJDIR)/fileio.o
 
-TESTS = test-properties.x test-mathsubs.x test-converger.x test-propagators.x test-int3lu.x
+# test-scf-blas: needs fock_commuts.o + BLAS
+SCF_BLAS_OBJS = $(OBJDIR)/fock_commuts.o
+
+TESTS = test-properties.x test-mathsubs.x test-converger.x test-propagators.x test-int3lu.x test-scf-blas.x
 
 # ---------------------------------------------------------------------------
 # Targets
@@ -117,6 +120,9 @@ test-propagators.x: test-propagators.f90
 
 test-int3lu.x: test-int3lu.f90
 	$(FC) $(FFLAGS) $(LFLAGS) $< $(INT3LU_OBJS) $(LIBS) -o $@
+
+test-scf-blas.x: test-scf-blas.f90
+	$(FC) $(FFLAGS) $(LFLAGS) $< $(SCF_BLAS_OBJS) $(LIBS) -o $@
 
 clean:
 	rm -f *.x *.mod

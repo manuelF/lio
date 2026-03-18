@@ -14,52 +14,24 @@ subroutine calc_fock_commuts(fock, rho, X, Y, scratch, scratch1, M)
     REAL*8,  intent(in)    :: rho(M,M),X(M,M),Y(M,M)
     REAL*8,  intent(inout) :: fock(M,M)
     REAL*8,  intent(out)   :: scratch(M,M),scratch1(M,M)
-    integer :: i, j, k
+    integer :: i, j
 
-    ! X^T * F = scratch^T
-    scratch = 0.0D0
-    do i = 1, M
-    do j = 1, M
-    do k = 1, M
-        scratch(j,i) = scratch(j,i) + X(k,i)*fock(k,j)
-    enddo
-    enddo
-    enddo
-    
-    ! Do *X for fockm.
-    fock=0.0D0
-    do i = 1, M
-    do j = 1, M
-    do k = 1, M
-        fock(i,j) = fock(i,j) + scratch(k,i)*X(k,j) 
-    enddo
-    enddo
-    enddo
+    ! Step 1: scratch = X^T * F  (reuse scratch as temporary)
+    call DGEMM('T','N',M,M,M,1.0D0,X,M,fock,M,0.0D0,scratch,M)
 
-    ! * P = scratch1^T
-    scratch1=0.0D0
-    do i = 1, M
-    do j = 1, M
-    do k = 1, M
-        scratch1(j,i) = scratch1(j,i) + scratch(k,i)*rho(k,j)
-    enddo
-    enddo
-    enddo
+    ! Step 2: fock = scratch * X = X^T * F * X  (F' = Fock in ON basis)
+    call DGEMM('N','N',M,M,M,1.0D0,scratch,M,X,M,0.0D0,fock,M)
 
-    ! * Y = scratch = scratch1^1
-    scratch=0.0D0
-    do i = 1, M
-    do j = 1, M
-    do k = 1, M
-       scratch(i,j) = scratch(i,j) + scratch1(k,i)*Y(k,j)
-    enddo
-    enddo
-    enddo
+    ! Step 3: scratch1 = scratch * P = (X^T * F) * P
+    call DGEMM('N','N',M,M,M,1.0D0,scratch,M,rho,M,0.0D0,scratch1,M)
 
-    scratch1=0.0D0
-    do i = 1, M
+    ! Step 4: scratch = scratch1 * Y = X^T * F * P * Y = A
+    call DGEMM('N','N',M,M,M,1.0D0,scratch1,M,Y,M,0.0D0,scratch,M)
+
+    ! Step 5: scratch1 = A^T
     do j = 1, M
-       scratch1(j,i) = scratch(i,j)
+    do i = 1, M
+       scratch1(i,j) = scratch(j,i)
     enddo
     enddo
 
