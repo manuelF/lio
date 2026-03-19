@@ -110,47 +110,97 @@ next[i] = total thread time
 ```
 
 **Critical idle gap**: Between groups, the GPU is idle during step 6 (`add_rmm_output`) and
-any remaining setup before step 1 of the next group. With 76 groups × ~5.4 ms idle = ~410 ms
-of GPU idle per SCF iteration (measured on fosfatoQMMM, 25 iters, wall time 12 s).
+any remaining setup before step 1 of the next group. Per-group CPU overhead (get_rmm_input +
+add_rmm_output + cudaMalloc/cudaFree) accounts for ~60% of the GPU thread's wall time.
 
 ### Measured configuration (fosfatoQMMM, 34 QM atoms, 25 SCF iters)
+
+*Last profiled: 2026-03-19, after warp-shuffle + persistent-streams + pinned-memory + BLAS optimizations.*
 
 | Parameter | Value |
 |---|---|
 | cpu_threads | 15 (= OMP_NUM_THREADS − 1 GPU) |
 | gpu_threads | 1 |
 | SPLITPOINTS | 200 (default) |
-| GPU groups per SCF iter | ~76 (= 1890 gpu_compute_density calls / 25) |
-| GPU kernel active time | ~100 ms / iter (~2500 ms total / 25 iters) |
-| Wall time per iter | ~480 ms |
-| GPU utilization | ~21% (kernel time / wall time) |
-| GPU idle between groups | ~5.4 ms per group (= 410 ms / 76 groups) |
+| GPU groups per SCF iter | ~78 (= 1960 gpu_compute_density calls / 25) |
+| **Wall time (total)** | **5.84 s** |
+| Wall time per SCF iter | ~204 ms (5.11 s SCF / 25 iters) |
+| Post-SCF (AINT, one-time) | ~728 ms |
+| GPU kernel time (total) | 2.82 s (48% of wall) |
+| GPU kernel time (SCF only) | 2.04 s (35% of wall) |
+| Memcpy + memset | 47 + 6 = 53 ms (<1% of wall) |
+| cudaMalloc + cudaFree | 2.07 s (35% of wall) — GlobalMemoryPool churn |
+| Memory transfers | 6090 Pinned, 8165 Pageable (AINT still pageable) |
+
+### GPU kernel time breakdown (fosfatoQMMM)
+
+**SCF kernels (called per iteration × 25 iters):**
+
+| Kernel | Total time | % GPU | Calls | Avg/call |
+|---|---|---|---|---|
+| gpu_compute_density (GGA) | 1047 ms | 37.1% | 1960 | 534 µs |
+| gpu_update_rmm | 345 ms | 12.2% | 1820 | 189 µs |
+| transpose\<vec4\> | 310 ms | 11.0% | 3920 | 79 µs |
+| gpu_compute_functions | 153 ms | 5.4% | 1890 | 81 µs |
+| gpu_compute_density_derivs | 110 ms | 3.9% | 70 | 1.58 ms |
+| transpose\<float\> | 40 ms | 1.4% | 1960 | 21 µs |
+| gpu_compute_forces | 18 ms | 0.6% | 70 | 256 µs |
+| gpu_accumulate_point (all) | 8 ms | 0.3% | 1960 | 4 µs |
+| gpu_compute_weights | 4 ms | 0.1% | 70 | 53 µs |
+
+**Post-SCF (AINT, called once after convergence):**
+
+| Kernel | Total time |
+|---|---|
+| gpu_qmmm_forces (all angular momenta) | 469 ms |
+| gpu_qmmm_fock (all angular momenta) | 149 ms |
+| gpu_coulomb_forces (all angular momenta) | 110 ms |
+
+### CUDA API overhead
+
+| API call | Time | Calls | Note |
+|---|---|---|---|
+| cudaFree | 1604 ms | 18780 | GlobalMemoryPool: alloc+free each kernel launch |
+| cudaStreamSynchronize | 1549 ms | 2030 | Waiting for GPU work |
+| cudaMalloc | 465 ms | 18780 | GlobalMemoryPool churn |
+| cudaDeviceSynchronize | 291 ms | 6 | Post-SCF barriers |
+| cudaMemcpy | 174 ms | 10176 | Mostly AINT (pageable) |
+| cudaLaunchKernel | 135 ms | 13830 | — |
 
 ### Thread runtime: who is the bottleneck?
 
-- **GPU thread** takes ~480 ms/iter (processes all 76 big groups sequentially).
-- **CPU threads** (15 threads × many small groups) finish within ~480 ms (not the bottleneck).
-- The GPU thread IS the critical path. GPU kernels only run 21% of GPU thread time; the
-  remaining 79% is CPU overhead between launches (get_rmm_input + add_rmm_output).
+- **GPU thread** takes ~204 ms/iter (processes all ~78 big groups sequentially).
+- **CPU threads** (15 threads × many small groups) finish within ~204 ms (not the bottleneck).
+- The GPU thread IS the critical path. GPU kernels run ~40% of GPU thread time (~81 ms);
+  the remaining ~60% is CPU overhead between launches (get_rmm_input + add_rmm_output)
+  and CUDA API overhead (cudaMalloc/cudaFree from GlobalMemoryPool).
 
 ### Known optimizations applied
 
 | Commit | Change | Effect |
 |---|---|---|
-| `21758bcb` | Persistent `transpose_stream_1/2` per PointGroupGPU | `get_rmm_input` overlaps with transpose kernels; −345 ms streamSynchronize, −22 ms create/destroy overhead; −330 ms wall |
+| `ac87eef0` | Warp shuffle reductions in energy.h / energy_open.h | Smem 2560→256 B (LDA), 100% occupancy; preserves FP order |
+| `21758bcb` | Persistent `transpose_stream_1/2` per PointGroupGPU | −345 ms streamSync, −22 ms create/destroy; −330 ms wall |
+| (pinned) | Pinned host memory for all PointGroupGPU transfer buffers | cudaMemcpyAsync 1636→7.5 ms (218×); −2.2% wall |
+| `e4a43707` | BLAS optimizations in converger_subs (DGEMM, DDOT) | Reduced Fortran CPU time |
+| `5a7d1743` | BLAS in int3lu (DGEMV, DSPMV, DDOT) | Reduced per-iteration Fortran CPU |
+| `104f8dc9` | DGELSS in DIIS solver (replaces DGELS) | Robust to float32 noise; bounded coefficients |
 
-### Open optimization opportunities
+### Open optimization opportunities (ranked by expected impact)
 
-1. **Eliminate add_rmm_output GPU idle gap** — biggest remaining opportunity. Options:
-   - Async scatter: do add_rmm_output in a CPU worker thread while GPU starts next group
-   - Fuse scatter into a CPU-side kernel (SIMD-vectorized gather/scatter)
-2. **Multi-stream GPU pipeline** — launch group N+1 compute_functions *before* group N's
-   add_rmm_output finishes (requires per-group output buffers, not shared rmm_outputs[i])
-3. **Lower SPLITPOINTS** — move borderline groups to GPU (currently default 200 points).
-   More GPU groups → higher GPU utilization, but more CPU overhead per group.
-4. **Dynamic OpenMP tasks for CPU** (see `todo/cpu/optimize_cpu_threading.md`) —
-   replace static bin-packing with `#pragma omp task` for automatic load balancing.
-5. **Open-shell GGA register reduction** — 93 regs → 56 regs target (see TODO file).
+1. **GPU-side RMM gather/scatter** (`todo/gpu/optimize_rmm_gather_gpu.md`) — 20-40% speedup.
+   Move `get_rmm_input()` / `add_rmm_output()` from CPU to GPU kernels. Eliminates the
+   largest CPU overhead in the GPU thread (~60% of per-group time). Prerequisite for
+   multi-stream pipeline.
+2. **Reduce GlobalMemoryPool churn** — 2.07 s (35% of wall) in cudaMalloc+cudaFree (18780
+   calls each). Pool is allocating/freeing per kernel launch instead of reusing. Fix: cache
+   allocations across groups or use a true pool allocator.
+3. **Replace tex2D with `__ldg`** (`todo/gpu/optimize_density_texture.md`) — 5-10%.
+   Synergizes with #1 (eliminates cudaArray + texture setup per group).
+4. **Multi-stream GPU pipeline** — launch group N+1 while N's scatter completes.
+   Requires #1 first (GPU-side scatter removes CPU serialization).
+5. **Open-shell GGA register reduction** — 93 regs → 56 regs (see TODO file).
+6. **Dynamic OpenMP tasks for CPU** (`todo/cpu/optimize_cpu_threading.md`).
 
 ---
 
@@ -227,6 +277,45 @@ and the baseline's noise pattern happened to produce a favorable DIIS trajectory
   any kernel change, even "precision-only" ones. The fosfatoQMMM test
   (closed-shell, 25 iters) and Fe3H2O6 test (open-shell, restart) are both
   sensitive to float32 changes.
+
+---
+#### Convergence check
+
+Always verify the test converged in exactly 25 SCF iterations:
+```bash
+grep "convergence" output   # or check the output for iteration count
+grep -c "SCF" output        # count SCF lines
+```
+
+If convergence changes (e.g., 26+ iters), the optimization may have altered FP behavior.
+See "SCF Convergence and Numerical Precision" section above.
+
+### Quick one-liner for routine before/after comparison
+
+```bash
+# Baseline
+source liohome.sh && cd test/LIO_test/03_fosfatoQMMM && \
+  time ../../../liosolo/liosolo -i fos.in -c fos.xyz -b basis -v > output_baseline.txt 2>&1
+
+# After optimization
+time ../../../liosolo/liosolo -i fos.in -c fos.xyz -b basis -v > output_optim.txt 2>&1
+
+# Compare convergence
+diff <(grep -i "iter\|converge\|energy" output_baseline.txt) \
+     <(grep -i "iter\|converge\|energy" output_optim.txt)
+```
+
+### Saving profiles for reference
+
+Save important profiles with descriptive names in the test directory:
+```bash
+nvprof -o test/LIO_test/03_fosfatoQMMM/profile_<description>.nvvp \
+    ../../../liosolo/liosolo -i fos.in -c fos.xyz -b basis -v > /dev/null 2>&1
+```
+
+Existing saved profiles in `test/LIO_test/03_fosfatoQMMM/`:
+- `my_profe_baseline.nvvp` — before optimizations
+- `my_profe_current.nvvp` — after stream + pinned optimizations
 
 ---
 
