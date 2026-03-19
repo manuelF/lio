@@ -16,6 +16,7 @@ using namespace std;
 namespace G2G {
 
 int MINCOST, THRESHOLD, SPLITPOINTS;
+uint g2g_solve_epoch = 0;
 Partition partition;
 
 ostream& operator<<(ostream& io, const Timers& t) {
@@ -314,7 +315,6 @@ void PointGroupGPU<scalar_type>::deallocate() {
       rmm_cuArray = nullptr;
       rmm_tex = 0;
     }
-    rmm_input_cpu_cache.deallocate();
 
     if (rmm_cuArray_a) {
       cudaDestroyTextureObject(rmm_tex_a);
@@ -322,7 +322,6 @@ void PointGroupGPU<scalar_type>::deallocate() {
       rmm_cuArray_a = nullptr;
       rmm_tex_a = 0;
     }
-    rmm_input_a_cpu_cache.deallocate();
 
     if (rmm_cuArray_b) {
       cudaDestroyTextureObject(rmm_tex_b);
@@ -330,7 +329,11 @@ void PointGroupGPU<scalar_type>::deallocate() {
       rmm_cuArray_b = nullptr;
       rmm_tex_b = 0;
     }
-    rmm_input_b_cpu_cache.deallocate();
+
+    rmm_input_gpu.deallocate();
+    rmm_bigs_gpu.deallocate();
+    rmm_rows_gpu.deallocate();
+    rmm_cols_gpu.deallocate();
 
     // Deallocate cached temporary matrices
     partial_densities_gpu.deallocate();
@@ -509,6 +512,10 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
   double cubes_energy_c2 = 0, spheres_energy_c2 = 0;
 
   Timer smallgroups, biggroups;
+
+  // Signal GPU groups that a new iteration has started, so shared device
+  // buffers (global RMM) are re-uploaded exactly once.
+  g2g_solve_epoch++;
 
 // Verificar si anda reduction (+:energy) FF
 #pragma omp parallel for num_threads(cpu_threads + gpu_threads) schedule( \

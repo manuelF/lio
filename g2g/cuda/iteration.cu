@@ -37,6 +37,7 @@ namespace G2G {
 #include "kernels/functions.h"
 #include "kernels/force.h"
 #include "kernels/transpose.h"
+#include "kernels/rmm_gather.h"
 
 using std::cout;
 using std::endl;
@@ -183,25 +184,62 @@ void PointGroupGPU<scalar_type>::solve_closed(
                       1);
   dim3 transpose_threads(BLOCK_DIM, BLOCK_DIM, 1);
 
-  // fin intercalado al pedo
-
-  HostMatrix<scalar_type>& rmm_input_cpu = rmm_input_cpu_cache;
-  if (!rmm_input_cpu.is_allocated()) {
-    rmm_input_cpu.resize(COALESCED_DIMENSION(group_m),
-                         group_m + DENSITY_BLOCK_SIZE);
-  }
-
-  get_rmm_input(rmm_input_cpu);  // Achica la matriz densidad a la version
-                                 // reducida del grupo
-  // No zeroing loop needed: get_rmm_input fills only the lower triangle
-  // (col <= row); rmm_input.zero() already zeroed padding and upper triangle.
-
   /*
    **********************************************************************
-   * Pasando RDM (rmm) a texturas
+   * GPU gather of group-local RMM from global packed-triangular RMM,
+   * then D2D copy to CUDA array for texture reads.
    **********************************************************************
    */
 
+  uint rmm_width = COALESCED_DIMENSION(group_m);
+  uint rmm_height = group_m + DENSITY_BLOCK_SIZE;
+
+  // Upload index arrays to GPU (once per group lifetime, cached)
+  if (!rmm_bigs_gpu.is_allocated()) {
+    uint n_idx = this->rmm_bigs.size();
+    rmm_bigs_gpu.resize(n_idx, 1);
+    rmm_rows_gpu.resize(n_idx, 1);
+    rmm_cols_gpu.resize(n_idx, 1);
+    cudaMemcpy(rmm_bigs_gpu.data, this->rmm_bigs.data(),
+               n_idx * sizeof(uint), cudaMemcpyHostToDevice);
+    cudaMemcpy(rmm_rows_gpu.data, this->rmm_rows.data(),
+               n_idx * sizeof(uint), cudaMemcpyHostToDevice);
+    cudaMemcpy(rmm_cols_gpu.data, this->rmm_cols.data(),
+               n_idx * sizeof(uint), cudaMemcpyHostToDevice);
+  }
+
+  // Upload global packed RMM to GPU once per SCF iteration (shared across all
+  // groups via static buffer; M*(M+1)/2 doubles ≈ 517 KB for M=364)
+  {
+    static CudaMatrix<double> s_global_rmm_dev;
+    static uint s_last_epoch = 0;
+    uint M = fortran_vars.m;
+    uint rmm_global_size = M * (M + 1) / 2;
+    if (!s_global_rmm_dev.is_allocated() ||
+        s_global_rmm_dev.width != rmm_global_size) {
+      s_global_rmm_dev.resize(rmm_global_size, 1);
+    }
+    if (s_last_epoch != g2g_solve_epoch) {
+      cudaMemcpy(s_global_rmm_dev.data,
+                 fortran_vars.rmm_input_ndens1.data,
+                 rmm_global_size * sizeof(double), cudaMemcpyHostToDevice);
+      s_last_epoch = g2g_solve_epoch;
+    }
+
+    // Allocate flat GPU buffer for gathered local RMM (cached per-group)
+    rmm_input_gpu.resize(rmm_width, rmm_height);
+    rmm_input_gpu.zero();
+
+    // GPU gather: fill both triangles of local RMM
+    uint n_indexes = this->rmm_bigs.size();
+    dim3 gather_block(256);
+    dim3 gather_grid((n_indexes + 255) / 256);
+    gpu_gather_rmm<scalar_type><<<gather_grid, gather_block>>>(
+        s_global_rmm_dev.data, rmm_bigs_gpu.data, rmm_rows_gpu.data,
+        rmm_cols_gpu.data, rmm_input_gpu.data, n_indexes, rmm_width);
+  }
+
+  // Create texture array + object (one-time)
   if (rmm_cuArray == nullptr) {
     cudaChannelFormatDesc channelDesc =
 #if FULL_DOUBLE
@@ -209,8 +247,7 @@ void PointGroupGPU<scalar_type>::solve_closed(
 #else
         cudaCreateChannelDesc<float>();
 #endif
-    cudaMallocArray(&rmm_cuArray, &channelDesc, rmm_input_cpu.width,
-                    rmm_input_cpu.height);
+    cudaMallocArray(&rmm_cuArray, &channelDesc, rmm_width, rmm_height);
 
     cudaResourceDesc resDesc = {};
     resDesc.resType = cudaResourceTypeArray;
@@ -226,10 +263,11 @@ void PointGroupGPU<scalar_type>::solve_closed(
     cudaCreateTextureObject(&rmm_tex, &resDesc, &texDesc, NULL);
   }
 
-  cudaMemcpy2DToArrayAsync(rmm_cuArray, 0, 0, rmm_input_cpu.data,
-                           rmm_input_cpu.width * sizeof(scalar_type),
-                           rmm_input_cpu.width * sizeof(scalar_type),
-                           rmm_input_cpu.height, cudaMemcpyHostToDevice);
+  // D2D copy from flat GPU buffer to CUDA array for texture reads
+  cudaMemcpy2DToArrayAsync(rmm_cuArray, 0, 0, rmm_input_gpu.data,
+                           rmm_width * sizeof(scalar_type),
+                           rmm_width * sizeof(scalar_type),
+                           rmm_height, cudaMemcpyDeviceToDevice);
 
   cudaTextureObject_t rmm_input_gpu_tex = rmm_tex;
 
@@ -441,22 +479,8 @@ void PointGroupGPU<scalar_type>::solve_closed(
   timers.density.pause();
   /* compute forces */
   if (compute_forces) {
-    //************ Repongo los valores que puse a cero antes, para las fuerzas
-    // son necesarios (o por lo mens utiles)
-    for (uint i = 0; i < (group_m); i++) {
-      for (uint j = 0; j < (group_m); j++) {
-        if ((i >= group_m) || (j >= group_m) || (j > i)) {
-          rmm_input_cpu.data[COALESCED_DIMENSION(group_m) * i + j] =
-              rmm_input_cpu.data[COALESCED_DIMENSION(group_m) * j + i];
-        }
-      }
-    }
-
-    timers.density_derivs.start();
-    cudaMemcpy2DToArrayAsync(rmm_cuArray, 0, 0, rmm_input_cpu.data,
-                             rmm_input_cpu.width * sizeof(scalar_type),
-                             rmm_input_cpu.width * sizeof(scalar_type),
-                             rmm_input_cpu.height, cudaMemcpyHostToDevice);
+    // gpu_gather_rmm already filled both triangles of the texture, so no
+    // CPU symmetrize or re-upload needed for density_derivs.
 
     timers.density_derivs.start();
     dim3 threads = dim3(this->number_of_points);
@@ -620,67 +644,115 @@ void PointGroupGPU<scalar_type>::solve_opened(
     factors_b_gpu.zero();
   }
 
-  if (!rmm_input_a_cpu_cache.is_allocated()) {
-    rmm_input_a_cpu_cache.resize(COALESCED_DIMENSION(group_m),
-                                 group_m + DENSITY_BLOCK_SIZE);
-  }
-  if (!rmm_input_b_cpu_cache.is_allocated()) {
-    rmm_input_b_cpu_cache.resize(COALESCED_DIMENSION(group_m),
-                                 group_m + DENSITY_BLOCK_SIZE);
-  }
-  HostMatrix<scalar_type>& rmm_input_a_cpu = rmm_input_a_cpu_cache;
-  HostMatrix<scalar_type>& rmm_input_b_cpu = rmm_input_b_cpu_cache;
-
-  // Reduces density matrixes (Up,Down) to the reduced group version
-  get_rmm_input(rmm_input_a_cpu, rmm_input_b_cpu);
-  // No zeroing loop needed: get_rmm_input fills only the lower triangle
-  // (col <= row); rmm_input.zero() already zeroed padding and upper triangle.
-
   /*
-  **********************************************************************
-  * Pasando RDM (rmm) a texturas/
-  **********************************************************************
-  */
+   **********************************************************************
+   * GPU gather of alpha/beta RMM from global packed RMM,
+   * then D2D copy to CUDA arrays for texture reads.
+   **********************************************************************
+   */
 
-  if (rmm_cuArray_a == nullptr) {
-    cudaChannelFormatDesc channelDesc =
-#if FULL_DOUBLE
-        cudaCreateChannelDesc<int2>();
-#else
-        cudaCreateChannelDesc<float>();
-#endif
-    cudaMallocArray(&rmm_cuArray_a, &channelDesc, rmm_input_a_cpu.width,
-                    rmm_input_a_cpu.height);
-    cudaMallocArray(&rmm_cuArray_b, &channelDesc, rmm_input_b_cpu.width,
-                    rmm_input_b_cpu.height);
+  uint rmm_width = COALESCED_DIMENSION(group_m);
+  uint rmm_height = group_m + DENSITY_BLOCK_SIZE;
 
-    cudaResourceDesc resDesc1 = {};
-    resDesc1.resType = cudaResourceTypeArray;
-    resDesc1.res.array.array = rmm_cuArray_a;
-
-    cudaResourceDesc resDesc2 = {};
-    resDesc2.resType = cudaResourceTypeArray;
-    resDesc2.res.array.array = rmm_cuArray_b;
-
-    cudaTextureDesc texDesc = {};
-    texDesc.addressMode[0] = cudaAddressModeClamp;
-    texDesc.addressMode[1] = cudaAddressModeClamp;
-    texDesc.filterMode = cudaFilterModePoint;
-    texDesc.readMode = cudaReadModeElementType;
-    texDesc.normalizedCoords = 0;
-
-    cudaCreateTextureObject(&rmm_tex_a, &resDesc1, &texDesc, NULL);
-    cudaCreateTextureObject(&rmm_tex_b, &resDesc2, &texDesc, NULL);
+  // Upload index arrays to GPU (once per group lifetime, cached)
+  if (!rmm_bigs_gpu.is_allocated()) {
+    uint n_idx = this->rmm_bigs.size();
+    rmm_bigs_gpu.resize(n_idx, 1);
+    rmm_rows_gpu.resize(n_idx, 1);
+    rmm_cols_gpu.resize(n_idx, 1);
+    cudaMemcpy(rmm_bigs_gpu.data, this->rmm_bigs.data(),
+               n_idx * sizeof(uint), cudaMemcpyHostToDevice);
+    cudaMemcpy(rmm_rows_gpu.data, this->rmm_rows.data(),
+               n_idx * sizeof(uint), cudaMemcpyHostToDevice);
+    cudaMemcpy(rmm_cols_gpu.data, this->rmm_cols.data(),
+               n_idx * sizeof(uint), cudaMemcpyHostToDevice);
   }
 
-  cudaMemcpy2DToArrayAsync(rmm_cuArray_a, 0, 0, rmm_input_a_cpu.data,
-                           rmm_input_a_cpu.width * sizeof(scalar_type),
-                           rmm_input_a_cpu.width * sizeof(scalar_type),
-                           rmm_input_a_cpu.height, cudaMemcpyHostToDevice);
-  cudaMemcpy2DToArrayAsync(rmm_cuArray_b, 0, 0, rmm_input_b_cpu.data,
-                           rmm_input_b_cpu.width * sizeof(scalar_type),
-                           rmm_input_b_cpu.width * sizeof(scalar_type),
-                           rmm_input_b_cpu.height, cudaMemcpyHostToDevice);
+  // GPU gather for alpha and beta density matrices (upload once per iteration)
+  {
+    static CudaMatrix<double> s_global_rmm_a_dev;
+    static CudaMatrix<double> s_global_rmm_b_dev;
+    static uint s_last_epoch_open = 0;
+    uint M = fortran_vars.m;
+    uint rmm_global_size = M * (M + 1) / 2;
+
+    if (!s_global_rmm_a_dev.is_allocated() ||
+        s_global_rmm_a_dev.width != rmm_global_size) {
+      s_global_rmm_a_dev.resize(rmm_global_size, 1);
+      s_global_rmm_b_dev.resize(rmm_global_size, 1);
+    }
+    if (s_last_epoch_open != g2g_solve_epoch) {
+      cudaMemcpy(s_global_rmm_a_dev.data, fortran_vars.rmm_dens_a.data,
+                 rmm_global_size * sizeof(double), cudaMemcpyHostToDevice);
+      cudaMemcpy(s_global_rmm_b_dev.data, fortran_vars.rmm_dens_b.data,
+                 rmm_global_size * sizeof(double), cudaMemcpyHostToDevice);
+      s_last_epoch_open = g2g_solve_epoch;
+    }
+
+    // Allocate flat GPU buffers for gathered local RMM (reuse rmm_input_gpu
+    // for alpha; allocate separate buffer for beta)
+    // resize() is a no-op if dimensions match; must always call because
+    // the static beta buffer is shared across groups with different group_m.
+    rmm_input_gpu.resize(rmm_width, rmm_height);
+    static CudaMatrix<scalar_type> rmm_input_b_gpu_local;
+    rmm_input_b_gpu_local.resize(rmm_width, rmm_height);
+    rmm_input_gpu.zero();
+    rmm_input_b_gpu_local.zero();
+
+    uint n_indexes = this->rmm_bigs.size();
+    dim3 gather_block(256);
+    dim3 gather_grid((n_indexes + 255) / 256);
+
+    // Gather alpha
+    gpu_gather_rmm<scalar_type><<<gather_grid, gather_block>>>(
+        s_global_rmm_a_dev.data, rmm_bigs_gpu.data, rmm_rows_gpu.data,
+        rmm_cols_gpu.data, rmm_input_gpu.data, n_indexes, rmm_width);
+    // Gather beta
+    gpu_gather_rmm<scalar_type><<<gather_grid, gather_block>>>(
+        s_global_rmm_b_dev.data, rmm_bigs_gpu.data, rmm_rows_gpu.data,
+        rmm_cols_gpu.data, rmm_input_b_gpu_local.data, n_indexes, rmm_width);
+
+    // Create texture arrays + objects (one-time)
+    if (rmm_cuArray_a == nullptr) {
+      cudaChannelFormatDesc channelDesc =
+#if FULL_DOUBLE
+          cudaCreateChannelDesc<int2>();
+#else
+          cudaCreateChannelDesc<float>();
+#endif
+      cudaMallocArray(&rmm_cuArray_a, &channelDesc, rmm_width, rmm_height);
+      cudaMallocArray(&rmm_cuArray_b, &channelDesc, rmm_width, rmm_height);
+
+      cudaResourceDesc resDesc1 = {};
+      resDesc1.resType = cudaResourceTypeArray;
+      resDesc1.res.array.array = rmm_cuArray_a;
+
+      cudaResourceDesc resDesc2 = {};
+      resDesc2.resType = cudaResourceTypeArray;
+      resDesc2.res.array.array = rmm_cuArray_b;
+
+      cudaTextureDesc texDesc = {};
+      texDesc.addressMode[0] = cudaAddressModeClamp;
+      texDesc.addressMode[1] = cudaAddressModeClamp;
+      texDesc.filterMode = cudaFilterModePoint;
+      texDesc.readMode = cudaReadModeElementType;
+      texDesc.normalizedCoords = 0;
+
+      cudaCreateTextureObject(&rmm_tex_a, &resDesc1, &texDesc, NULL);
+      cudaCreateTextureObject(&rmm_tex_b, &resDesc2, &texDesc, NULL);
+    }
+
+    // D2D copy from flat GPU buffers to CUDA arrays
+    cudaMemcpy2DToArrayAsync(rmm_cuArray_a, 0, 0, rmm_input_gpu.data,
+                             rmm_width * sizeof(scalar_type),
+                             rmm_width * sizeof(scalar_type),
+                             rmm_height, cudaMemcpyDeviceToDevice);
+    cudaMemcpy2DToArrayAsync(rmm_cuArray_b, 0, 0,
+                             rmm_input_b_gpu_local.data,
+                             rmm_width * sizeof(scalar_type),
+                             rmm_width * sizeof(scalar_type),
+                             rmm_height, cudaMemcpyDeviceToDevice);
+  }
 
   cudaTextureObject_t rmm_input_gpu_tex = rmm_tex_a;
   cudaTextureObject_t rmm_input_gpu_tex2 = rmm_tex_b;
@@ -767,27 +839,8 @@ void PointGroupGPU<scalar_type>::solve_opened(
 
   /* compute forces */
   if (compute_forces) {
-    // Repongo los valores que puse a cero antes, para las fuerzas son
-    // necesarios (o por lo menos utiles)
-    for (uint i = 0; i < (group_m); i++) {
-      for (uint j = 0; j < (group_m); j++) {
-        if ((i >= group_m) || (j >= group_m) || (j > i)) {
-          rmm_input_a_cpu.data[COALESCED_DIMENSION(group_m) * i + j] =
-              rmm_input_a_cpu.data[COALESCED_DIMENSION(group_m) * j + i];
-          rmm_input_b_cpu.data[COALESCED_DIMENSION(group_m) * i + j] =
-              rmm_input_b_cpu.data[COALESCED_DIMENSION(group_m) * j + i];
-        }
-      }
-    }
-
-    cudaMemcpy2DToArrayAsync(rmm_cuArray_a, 0, 0, rmm_input_a_cpu.data,
-                             rmm_input_a_cpu.width * sizeof(scalar_type),
-                             rmm_input_a_cpu.width * sizeof(scalar_type),
-                             rmm_input_a_cpu.height, cudaMemcpyHostToDevice);
-    cudaMemcpy2DToArrayAsync(rmm_cuArray_b, 0, 0, rmm_input_b_cpu.data,
-                             rmm_input_b_cpu.width * sizeof(scalar_type),
-                             rmm_input_b_cpu.width * sizeof(scalar_type),
-                             rmm_input_b_cpu.height, cudaMemcpyHostToDevice);
+    // gpu_gather_rmm already filled both triangles of the textures, so no
+    // CPU symmetrize or re-upload needed for density_derivs_open.
 
     dim3 threads;
     timers.density_derivs.start();

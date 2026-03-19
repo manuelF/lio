@@ -224,18 +224,22 @@ class PointGroupGPU: public PointGroup<scalar_type> {
     G2G::CudaMatrix<vec_type4> gradient_values_transposed;
     int current_device;
 
-    // Cache for solve_closed
-    G2G::HostMatrix<scalar_type> rmm_input_cpu_cache;
+    // Texture objects for density/derivs kernels (tex2D reads)
     cudaArray* rmm_cuArray;
     cudaTextureObject_t rmm_tex;
-
-    // Cache for solve_opened
-    G2G::HostMatrix<scalar_type> rmm_input_a_cpu_cache;
-    G2G::HostMatrix<scalar_type> rmm_input_b_cpu_cache;
     cudaArray* rmm_cuArray_a;
     cudaArray* rmm_cuArray_b;
     cudaTextureObject_t rmm_tex_a;
     cudaTextureObject_t rmm_tex_b;
+
+    // GPU-side flat local RMM buffer (gathered by gpu_gather_rmm, then D2D
+    // copied to cudaArray for texture reads)
+    G2G::CudaMatrix<scalar_type> rmm_input_gpu;
+
+    // Cached GPU copies of index arrays (rmm_bigs/rows/cols from compute_indexes)
+    G2G::CudaMatrix<uint> rmm_bigs_gpu;
+    G2G::CudaMatrix<uint> rmm_rows_gpu;
+    G2G::CudaMatrix<uint> rmm_cols_gpu;
 
     // Cached temporary matrices to avoid malloc/free in loops
     G2G::CudaMatrix<scalar_type> partial_densities_gpu;
@@ -309,9 +313,6 @@ class PointGroupGPU: public PointGroup<scalar_type> {
         : rmm_cuArray(nullptr), rmm_tex(0),
           rmm_cuArray_a(nullptr), rmm_cuArray_b(nullptr),
           rmm_tex_a(0), rmm_tex_b(0),
-          rmm_input_cpu_cache(G2G::HostMatrix<scalar_type>::Pinned),
-          rmm_input_a_cpu_cache(G2G::HostMatrix<scalar_type>::Pinned),
-          rmm_input_b_cpu_cache(G2G::HostMatrix<scalar_type>::Pinned),
           point_weights_cpu(G2G::HostMatrix<scalar_type>::Pinned),
           energy_host(G2G::HostMatrix<scalar_type>::Pinned),
           forces_host(G2G::HostMatrix<vec_type<scalar_type, 4> >::Pinned),
@@ -358,6 +359,11 @@ class Partition {
 
 extern int MINCOST, THRESHOLD, SPLITPOINTS;
 extern int cpu_threads, gpu_threads;
+
+// Epoch counter incremented once per Partition::solve() call (i.e. once per SCF
+// iteration).  GPU groups check this to upload shared data (global RMM) only
+// once per iteration instead of once per group.
+extern uint g2g_solve_epoch;
 }
 
 #endif
