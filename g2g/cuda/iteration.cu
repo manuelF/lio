@@ -189,14 +189,6 @@ void PointGroupGPU<scalar_type>::solve_closed(
   if (!rmm_input_cpu.is_allocated()) {
     rmm_input_cpu.resize(COALESCED_DIMENSION(group_m),
                          group_m + DENSITY_BLOCK_SIZE);
-    // TODO: Ideally HostMatrix should support setting pinned after construction
-    // or resize with pinned But HostMatrix constructor has PinnedFlag. Since we
-    // are reusing the cache member which is default constructed (NonPinned), we
-    // need to replace it. Actually, simply assigning a new HostMatrix with
-    // Pinned flag works.
-    rmm_input_cpu = HostMatrix<scalar_type>(COALESCED_DIMENSION(group_m),
-                                            group_m + DENSITY_BLOCK_SIZE,
-                                            HostMatrix<scalar_type>::Pinned);
   }
 
   get_rmm_input(rmm_input_cpu);  // Achica la matriz densidad a la version
@@ -629,14 +621,12 @@ void PointGroupGPU<scalar_type>::solve_opened(
   }
 
   if (!rmm_input_a_cpu_cache.is_allocated()) {
-    rmm_input_a_cpu_cache = HostMatrix<scalar_type>(
-        COALESCED_DIMENSION(group_m), group_m + DENSITY_BLOCK_SIZE,
-        HostMatrix<scalar_type>::Pinned);
+    rmm_input_a_cpu_cache.resize(COALESCED_DIMENSION(group_m),
+                                 group_m + DENSITY_BLOCK_SIZE);
   }
   if (!rmm_input_b_cpu_cache.is_allocated()) {
-    rmm_input_b_cpu_cache = HostMatrix<scalar_type>(
-        COALESCED_DIMENSION(group_m), group_m + DENSITY_BLOCK_SIZE,
-        HostMatrix<scalar_type>::Pinned);
+    rmm_input_b_cpu_cache.resize(COALESCED_DIMENSION(group_m),
+                                 group_m + DENSITY_BLOCK_SIZE);
   }
   HostMatrix<scalar_type>& rmm_input_a_cpu = rmm_input_a_cpu_cache;
   HostMatrix<scalar_type>& rmm_input_b_cpu = rmm_input_b_cpu_cache;

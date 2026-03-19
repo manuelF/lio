@@ -282,7 +282,7 @@ class PointGroupGPU: public PointGroup<scalar_type> {
     G2G::CudaMatrix<scalar_type> energy_c1_gpu;
     G2G::CudaMatrix<scalar_type> energy_c2_gpu;
 
-    // Cached host matrices for results (Pinned)
+    // Cached host matrices for results (Pinned via constructor init list)
     G2G::HostMatrix<scalar_type> energy_host;
     G2G::HostMatrix<vec_type<scalar_type, 4>> forces_host;
     G2G::HostMatrix<scalar_type> rmm_output_host;
@@ -305,7 +305,22 @@ class PointGroupGPU: public PointGroup<scalar_type> {
     cudaStream_t transpose_stream_1;
     cudaStream_t transpose_stream_2;
 
-    PointGroupGPU() : rmm_cuArray(nullptr), rmm_tex(0), rmm_cuArray_a(nullptr), rmm_cuArray_b(nullptr), rmm_tex_a(0), rmm_tex_b(0), transpose_stream_1(0), transpose_stream_2(0) {}
+    PointGroupGPU()
+        : rmm_cuArray(nullptr), rmm_tex(0),
+          rmm_cuArray_a(nullptr), rmm_cuArray_b(nullptr),
+          rmm_tex_a(0), rmm_tex_b(0),
+          rmm_input_cpu_cache(G2G::HostMatrix<scalar_type>::Pinned),
+          rmm_input_a_cpu_cache(G2G::HostMatrix<scalar_type>::Pinned),
+          rmm_input_b_cpu_cache(G2G::HostMatrix<scalar_type>::Pinned),
+          point_weights_cpu(G2G::HostMatrix<scalar_type>::Pinned),
+          energy_host(G2G::HostMatrix<scalar_type>::Pinned),
+          forces_host(G2G::HostMatrix<vec_type<scalar_type, 4> >::Pinned),
+          rmm_output_host(G2G::HostMatrix<scalar_type>::Pinned),
+          energy_a_host(G2G::HostMatrix<scalar_type>::Pinned),
+          energy_b_host(G2G::HostMatrix<scalar_type>::Pinned),
+          forces_a_host(G2G::HostMatrix<vec_type<scalar_type, 4> >::Pinned),
+          forces_b_host(G2G::HostMatrix<vec_type<scalar_type, 4> >::Pinned),
+          transpose_stream_1(0), transpose_stream_2(0) {}
 };
 
 #if FULL_DOUBLE

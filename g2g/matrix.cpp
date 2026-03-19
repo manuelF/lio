@@ -93,8 +93,12 @@ template<class T> HostMatrix<T>::HostMatrix(const CudaMatrix<T>& c) : Matrix<T>(
 	*this = c;
 }
 
-template<class T> HostMatrix<T>::HostMatrix(const HostMatrix<T>& m) : Matrix<T>(), pinned(false) {
-	*this = m;
+template<class T> HostMatrix<T>::HostMatrix(const HostMatrix<T>& m) : Matrix<T>(), pinned(m.pinned) {
+	if (m.data) {
+		this->width = m.width; this->height = m.height;
+		alloc_data();
+		copy_submatrix(m);
+	}
 }
 
 template<class T> HostMatrix<T>::~HostMatrix(void) {
@@ -136,7 +140,6 @@ template<class T> HostMatrix<T>& HostMatrix<T>::fill(T value) {
 }
 
 template<class T> HostMatrix<T>& HostMatrix<T>::operator=(const HostMatrix<T>& c) {
-	assert(!this->pinned);
 
 	if (!c.data) {
 		if (this->data) { dealloc_data(); this->width = this->height = 0; this->data = NULL; }
