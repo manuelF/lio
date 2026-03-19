@@ -42,16 +42,27 @@ subroutine ehrendyn_prep( Nbasis, Natoms, time, recalc_forces, Xmat, Xtrp,     &
    real*8    , intent(inout) :: dipmom(3)
    real*8    , intent(inout) :: energy
 
-   complex*16, allocatable   :: Rmao(:,:)
-   real*8    , allocatable   :: nucfor_add(:,:)
+   complex*16, allocatable   :: Rmao(:,:), XmatC(:,:), XtrpC(:,:)
+   real*8    , allocatable   :: nucfor_add(:,:), Ftmp(:,:)
    real*8                    :: elec_field(3)
+   complex*16 :: zone, zzero
+   integer :: N
 !
 !
 !------------------------------------------------------------------------------!
-   allocate( Rmao(Nbasis, Nbasis) )
+   N = Nbasis
+   zone = dcmplx(1.0d0, 0.0d0)
+   zzero = dcmplx(0.0d0, 0.0d0)
+   allocate( Rmao(N, N), XmatC(N, N), XtrpC(N, N) )
+   XmatC = dcmplx(Xmat, 0.0d0)
+   XtrpC = dcmplx(Xtrp, 0.0d0)
 
-   Rmao = matmul( Rmon, Xtrp )
-   Rmao = matmul( Xmat, Rmao )
+   ! Rmao = Xmat * (Rmon * Xtrp)
+   ! tmp = Rmon * Xtrp, then Rmao = Xmat * tmp
+   call ZGEMM('N','N',N,N,N,zone,Rmon,N,XtrpC,N,zzero,Rmao,N)
+   ! Use XtrpC as temporary (will overwrite, but no longer needed for this calc)
+   XtrpC = Rmao
+   call ZGEMM('N','N',N,N,N,zone,XmatC,N,XtrpC,N,zzero,Rmao,N)
 
    call ehrenaux_setfld(  time, elec_field )
    call RMMcalc3_FockMao( Rmao, elec_field, Fmat, dipmom, energy)
@@ -66,10 +77,13 @@ subroutine ehrendyn_prep( Nbasis, Natoms, time, recalc_forces, Xmat, Xtrp,     &
       deallocate( nucfor_add )
    endif
 
-   Fmat = matmul( Fmat, Xmat )
-   Fmat = matmul( Xtrp, Fmat )
+   ! Fmat = Xtrp * Fmat * Xmat (base change to ON)
+   allocate( Ftmp(N, N) )
+   call DGEMM('N','N',N,N,N,1.0D0,Fmat,N,Xmat,N,0.0D0,Ftmp,N)
+   call DGEMM('N','N',N,N,N,1.0D0,Xtrp,N,Ftmp,N,0.0D0,Fmat,N)
+   deallocate( Ftmp )
    Tmat = DCMPLX(Fmat) + DCMPLX(0.0d0,1.0d0) * DCMPLX(Dmat)
 
-   deallocate( Rmao )
+   deallocate( Rmao, XmatC, XtrpC )
 end subroutine ehrendyn_prep
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!

@@ -5,70 +5,58 @@ With OpenBLAS installed, these replacements gain AVX2 vectorization + OpenMP thr
 
 ## CRITICAL (in SCF hot path, called every iteration)
 
-### fock_commuts.f90:21-57 — 4 triple-nested loops
-- **Current**: Hand-written i,j,k loops for X^T*F*X (base change) and X^T*F*P*Y (commutator)
-- **Replace**: 4× DGEMM calls
-- **Note**: Currently dead code (converger_subs.f90 inlines its own DGEMM base changes),
-  but should be fixed for any future callers
+### fock_commuts.f90 — 4 triple-nested loops → 4 DGEMM
 - **Status**: DONE
 
-### SCF.f90:613,658 — matmul(Xmat, morb_coefon)
-- **Current**: gfortran MATMUL intrinsic (5-10× slower than DGEMM without -fexternal-blas)
-- **Replace**: DGEMM('N','N', M_f, M_f, M_f, 1.0D0, Xmat, M_f, morb_coefon, M_f, 0.0D0, morb_coefat, M_f)
+### SCF.f90:613,658 — matmul(Xmat, morb_coefon) → DGEMM
 - **Called**: 1× per SCF iter (closed-shell), 2× per SCF iter (open-shell)
 - **Status**: DONE
 
 ## HIGH (in SCF loop or called frequently)
 
+### restart_coef.f90 — Triple-nested density build → DGEMM/SGEMM
+- **Replace**: `dens = factor * C * C^T` via DGEMM('N','T',...)
+- **All 4 variants**: cd (double closed), cs (single closed), od (double open), os (single open)
+- **Status**: DONE
+
+### converger_subs.f90:340-349 — DIIS Fock accumulation → DAXPY
+- **Replace**: Loop over k with DAXPY(M*M, bcoef(k), fockm(1,1,k), 1, suma_w, 1)
+- **Status**: DONE
+
+### mathsubs/commutator.f — 7 MATMUL overloads → xGEMM
+- **Replace**: dd→DGEMM, zz/zd/dz→ZGEMM, cc/cd/dc→CGEMM
+- **Used by**: TD-DFT via Commut_data_c/Commut_data_r in typedef_operator
+- **Status**: DONE
+
 ### SCF.f90:334-337,515-522,808-811 — Manual E1 dot product loops
-- **Current**: `do kk=1,MM; E1 = E1 + Pmat_vec(kk)*Hmat_vec(kk); enddo`
-- **Replace**: `E1 = DDOT(MM, Pmat_vec, 1, Hmat_vec, 1)` (5 sites total)
-- **Note**: Lines 334-337 are outside SCF loop (1× call); 515-522 inside loop (~25× calls);
-  808-811 post-convergence (1× call). O(N) operation, negligible perf impact.
-- **Status**: TODO (low priority — minimal performance benefit)
+- **Replace**: DDOT. O(N) operation, negligible perf impact.
+- **Status**: SKIP (low priority)
 
 ### TD.f90:679-682,864-867 — Manual E1 dot product loops
-- **Current**: Same pattern as SCF.f90
-- **Replace**: DDOT
-- **Status**: TODO
-
-### restart_coef.f90:34-40,61-67,100-105 — Triple-nested density build
-- **Current**: `rho(i,j) += C(i,k)*C(j,k)` triple loop
-- **Replace**: DGEMM('N','T', M, M, NCO, factor, C, M, C, M, 0.0D0, rho, M)
-- **Status**: TODO
-
-### converger_subs.f90:340-349 — DIIS Fock accumulation triple loop
-- **Current**: `fock_w(i,j) += bcoef(k)*fockm(i,j,k)` triple loop
-- **Replace**: Loop over k with DAXPY(M*M, bcoef(k), fockm(1,1,k), 1, fock_w, 1)
-- **Status**: TODO
-
-### mathsubs/commutator.f (all 7 overloads) — MATMUL pairs
-- **Current**: `MP=MATMUL(MA,MB); MN=MATMUL(MB,MA); MC=MP-MN`
-- **Replace**: DGEMM/ZGEMM (or single DGEMM + antisymmetric fill for symmetric inputs)
-- **Note**: May be dead code like fock_commuts; verify callers
-- **Status**: TODO
+- **Replace**: DDOT. Same as SCF.f90.
+- **Status**: SKIP (low priority)
 
 ## MEDIUM (less frequent or smaller matrices)
 
-### properties.f90:114-121 — Triple-nested Lowdin charge calculation
-- **Replace**: DGEMM + diagonal extraction
-- **Status**: TODO
+### properties.f90:114-121 — Triple-nested Lowdin charge → DGEMM
+- **Replace**: DGEMM for S^½ * rho * S^½, then extract diagonal
+- **Status**: DONE
 
 ### properties.f90:184-197 — Triple-nested Fukui function
-- **Replace**: DGEMM
-- **Status**: TODO
+- **Note**: O(M²×nDeg) where nDeg=1-3. Converting to DGEMM would add O(M³) step.
+- **Status**: SKIP (would be slower with DGEMM)
 
 ### propagators.f90:39-40 — MATMUL in Magnus propagator
-- **Replace**: ZGEMM
-- **Status**: TODO
+- **Replace**: CGEMM/ZGEMM (ifdef TD_SIMPLE)
+- **Status**: DONE
 
-### ehrensubs/calc_forceDS.f90:40-53 — Chain of 4 MATMUL
-- **Replace**: ZGEMM chain
-- **Status**: TODO
+### ehrensubs/calc_forceDS.f90:40-53 — Chain of 8 MATMUL
+- **Replace**: ZGEMM chain with complex copies of real matrices
+- **Status**: DONE
 
 ### ehrensubs/ehrendyn_prep.f90:53-54,69-70 — MATMUL for basis transforms
-- **Replace**: ZGEMM
-- **Status**: TODO
+- **Replace**: ZGEMM + DGEMM with temporary buffers for aliasing
+- **Status**: DONE
 
 ## LOW
 

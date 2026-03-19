@@ -36,9 +36,18 @@ subroutine magnus(fock, rhoOld, rhoNew, M, N, dt, factorial)
 
     ! Density matrix propagation
     do icount = 1, N
-        ConmNext = MATMUL(Omega1, ConmPrev)
-        Scratch  = MATMUL(ConmPrev, Omega1)
-        ConmNext = ConmNext - Scratch
+        ! ConmNext = Omega1*ConmPrev - ConmPrev*Omega1 = [Omega1, ConmPrev]
+#ifdef TD_SIMPLE
+        call CGEMM('N','N',M,M,M,cmplx(1.0,0.0),Omega1,M,ConmPrev,M, &
+                    cmplx(0.0,0.0),ConmNext,M)
+        call CGEMM('N','N',M,M,M,cmplx(-1.0,0.0),ConmPrev,M,Omega1,M, &
+                    cmplx(1.0,0.0),ConmNext,M)
+#else
+        call ZGEMM('N','N',M,M,M,dcmplx(1.0d0,0.0d0),Omega1,M, &
+                    ConmPrev,M,dcmplx(0.0d0,0.0d0),ConmNext,M)
+        call ZGEMM('N','N',M,M,M,dcmplx(-1.0d0,0.0d0),ConmPrev,M, &
+                    Omega1,M,dcmplx(1.0d0,0.0d0),ConmNext,M)
+#endif
         RhoNew   = RhoNew + factorial(icount) * ConmNext
         ConmPrev = ConmNext
     enddo

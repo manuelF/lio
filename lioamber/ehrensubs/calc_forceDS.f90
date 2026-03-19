@@ -21,15 +21,25 @@ subroutine calc_forceDS &
   real*8,allocatable     :: Btrp(:,:)
   complex*16,allocatable :: InputMat(:,:),MatTrp(:,:),MatDir(:,:)
   complex*16,allocatable :: fterm1(:,:),fterm2(:,:),fterm3(:,:)
+  complex*16,allocatable :: FockC(:,:), SinvC(:,:), BmatC(:,:), BtrpC(:,:)
+  complex*16 :: zone, zzero
+  integer :: N
 !
 !
 !------------------------------------------------------------------------------!
   call g2g_timer_start('calc_forceDS')
-  allocate(InputMat(Nbasis,Nbasis))
-  allocate(MatTrp(Nbasis,Nbasis),MatDir(Nbasis,Nbasis))
-  allocate(Btrp(Nbasis,Nbasis))
+  N = Nbasis
+  zone = dcmplx(1.0d0, 0.0d0)
+  zzero = dcmplx(0.0d0, 0.0d0)
+  allocate(InputMat(N,N))
+  allocate(MatTrp(N,N),MatDir(N,N))
+  allocate(Btrp(N,N))
+  allocate(FockC(N,N), SinvC(N,N))
   allocate(fterm1(3,Natoms),fterm2(3,Natoms),fterm3(3,Natoms))
 
+  ! Convert real matrices to complex for ZGEMM
+  FockC = dcmplx(FockMao, 0.0d0)
+  SinvC = dcmplx(Sinv, 0.0d0)
 
   fterm1=dcmplx(0.0d0,0.0d0)
   fterm2=dcmplx(0.0d0,0.0d0)
@@ -37,23 +47,34 @@ subroutine calc_forceDS &
 
 ! NOTA: El orden de las multiplicaciones afecta levemente el
 ! resultado obtenido
-  MatTrp=matmul(DensMao,FockMao)
-  MatTrp=matmul(MatTrp,Sinv)
-  MatDir=matmul(FockMao,DensMao)
-  MatDir=matmul(Sinv,MatDir)
+  ! MatTrp = DensMao * FockMao * Sinv
+  call ZGEMM('N','N',N,N,N,zone,DensMao,N,FockC,N,zzero,MatTrp,N)
+  call ZGEMM('N','N',N,N,N,zone,MatTrp,N,SinvC,N,zzero,InputMat,N)
+  MatTrp = InputMat
+  ! MatDir = Sinv * FockMao * DensMao
+  call ZGEMM('N','N',N,N,N,zone,FockC,N,DensMao,N,zzero,MatDir,N)
+  call ZGEMM('N','N',N,N,N,zone,SinvC,N,MatDir,N,zzero,InputMat,N)
+  MatDir = InputMat
   InputMat=transpose(MatTrp)+MatDir
   call calc_forceDS_dss(Natoms,Nbasis,nucpos,nucvel,InputMat,Bmat,fterm1)
   Btrp=transpose(Bmat)
 
+  ! Convert Bmat/Btrp to complex
+  allocate(BmatC(N,N), BtrpC(N,N))
+  BmatC = dcmplx(Bmat, 0.0d0)
+  BtrpC = dcmplx(Btrp, 0.0d0)
 
-  MatTrp=matmul(DensMao,Btrp)
-  MatTrp=matmul(MatTrp,Sinv)
-  MatTrp=MatTrp*dcmplx(0.0d0, 1.0d0)
-  MatDir=matmul(Sinv,Bmat)
-  MatDir=matmul(MatDir,DensMao)
-  MatDir=MatDir*dcmplx(0.0d0,-1.0d0)
+  ! MatTrp = DensMao * Btrp * Sinv * i
+  call ZGEMM('N','N',N,N,N,zone,DensMao,N,BtrpC,N,zzero,MatTrp,N)
+  call ZGEMM('N','N',N,N,N,zone,MatTrp,N,SinvC,N,zzero,InputMat,N)
+  MatTrp = InputMat * dcmplx(0.0d0, 1.0d0)
+  ! MatDir = Sinv * Bmat * DensMao * (-i)
+  call ZGEMM('N','N',N,N,N,zone,SinvC,N,BmatC,N,zzero,MatDir,N)
+  call ZGEMM('N','N',N,N,N,zone,MatDir,N,DensMao,N,zzero,InputMat,N)
+  MatDir = InputMat * dcmplx(0.0d0, -1.0d0)
   InputMat=transpose(MatTrp)+MatDir
   call calc_forceDS_dss(Natoms,Nbasis,nucpos,nucvel,InputMat,Bmat,fterm2)
+  deallocate(BmatC, BtrpC)
 
 
   MatTrp=DensMao*dcmplx(0.0d0,-1.0d0)
@@ -64,7 +85,7 @@ subroutine calc_forceDS &
 
   forceDS=dble(real(fterm1+fterm2+fterm3))
 
-  deallocate(InputMat,MatTrp,MatDir,Btrp)
+  deallocate(InputMat,MatTrp,MatDir,Btrp,FockC,SinvC)
   deallocate(fterm1,fterm2,fterm3)
   call g2g_timer_stop('calc_forceDS')
 end subroutine calc_forceDS

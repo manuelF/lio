@@ -101,26 +101,28 @@ end subroutine mulliken_calc
 ! Performs a Löwdin Population Analysis and outputs atomic charges.            !
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 subroutine lowdin_calc(M, N, rhomat, sqsmat, atomorb, atomicq)
- 
+
     implicit none
     integer,intent(in)   :: M, N, atomorb(M)
     real*8,intent(in)    :: rhomat(M,M), sqsmat(M,M)
     real*8,intent(inout) :: atomicq(N)
 
-    real*8  :: newterm
-    integer :: natom
-    integer :: i, j, k
+    real*8, allocatable :: tmp(:,:), result(:,:)
+    integer :: natom, k
 
-    do k=1, M
-        natom=atomorb(k)
-        newterm = 0
-        do i=1, M
-            do j=1, M
-                newterm = newterm + sqsmat(k, i) * rhomat(i, j) * sqsmat(j, k)
-            enddo
-        enddo
-        atomicq(natom) = atomicq(natom) - newterm
+    allocate(tmp(M,M), result(M,M))
+
+    ! result = sqsmat * rhomat * sqsmat (= S^½ * rho * S^½)
+    call DGEMM('N','N',M,M,M,1.0D0,sqsmat,M,rhomat,M,0.0D0,tmp,M)
+    call DGEMM('N','N',M,M,M,1.0D0,tmp,M,sqsmat,M,0.0D0,result,M)
+
+    ! Extract diagonal and accumulate into atomic charges
+    do k = 1, M
+        natom = atomorb(k)
+        atomicq(natom) = atomicq(natom) - result(k,k)
     enddo
+
+    deallocate(tmp, result)
 
     return
 end subroutine lowdin_calc

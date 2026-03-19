@@ -340,12 +340,8 @@ end subroutine converger_init
          suma_w = 0.0D0
          do kk=1,ndiist
             slot_k = circ_slot(kk, head_idx(spin), ndiist, ndiis)
-            do ii = 1, M_in
-            do jj = 1, M_in
-               suma_w(ii,jj) = suma_w(ii,jj) + bcoef(kk,spin) * &
-                                                fockm(ii,jj,slot_k,spin)
-            enddo
-            enddo
+            call DAXPY(M_in*M_in, bcoef(kk,spin), &
+                       fockm(1,1,slot_k,spin), 1, suma_w, 1)
          enddo
          fock_w = suma_w
          call fock_op%Sets_data_ON(fock_w)
