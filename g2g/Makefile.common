@@ -23,7 +23,7 @@ endif
 
 # Debug/release configuration
 ifneq ($(dbg),1)
-  CXXFLAGS  += $(OPTIMIZECPU)
+  CXXFLAGS  += $(OPTIMIZECPU) -g
 else
   CXXFLAGS += -D_DEBUG -g -ggdb
 endif

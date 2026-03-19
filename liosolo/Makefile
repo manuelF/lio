@@ -14,7 +14,7 @@ LIBS += -L$(CUDA_HOME)/lib64 -lcudart -lcuda
 endif
 
 
-FLAGS = -fopenmp -fno-omit-frame-pointer
+FLAGS = -fopenmp -fno-omit-frame-pointer -g
 
 
 ################################################################################

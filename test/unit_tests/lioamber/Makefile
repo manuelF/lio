@@ -14,7 +14,7 @@ OBJDIR    = ../../../lioamber/obj
 G2GDIR    = ../../../g2g
 LIODIR    = ../../../lioamber
 
-FFLAGS    = -cpp -I$(OBJDIR) -J$(OBJDIR) -fPIC -fno-omit-frame-pointer -Dpack -DG2G -DTD_SIMPLE -O2
+FFLAGS    = -cpp -I$(OBJDIR) -J$(OBJDIR) -fPIC -fno-omit-frame-pointer -g -Dpack -DG2G -DTD_SIMPLE -O2
 LFLAGS    = -L$(G2GDIR) -Wl,-rpath=$(realpath $(G2GDIR))
 LIBS      = -lg2g -lblas -llapack
 

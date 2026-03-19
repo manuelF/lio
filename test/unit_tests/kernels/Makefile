@@ -33,7 +33,7 @@ endif
 
 NVCCFLAGS := -std=c++14 -I$(COMMON_DIR) -I$(G2G_DIR) $(GENCODE_FLAGS) \
              -g -G -O0 --ptxas-options=-v $(EXTRA_FLAGS)
-CXXFLAGS  := -std=c++14 -I$(COMMON_DIR) -I$(G2G_DIR) -O2 $(EXTRA_FLAGS)
+CXXFLAGS  := -std=c++14 -I$(COMMON_DIR) -I$(G2G_DIR) -g -O2 $(EXTRA_FLAGS)
 LDFLAGS   := -lcudart
 
 # ---------------------------------------------------------------------------

@@ -42,7 +42,7 @@
 # for libraries there at runtime
 #
 #
-FFLAGS += -fPIC -fno-omit-frame-pointer $(DEFINE)
+FFLAGS += -fPIC -fno-omit-frame-pointer -g $(DEFINE)
 
 LFLAGS += -fPIC -shared
 LFLAGS += -Wl,--no-undefined
