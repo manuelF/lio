@@ -590,10 +590,18 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
   if (compute_forces) {
     FortranMatrix<double> fort_forces_out(fort_forces_ptr, fortran_vars.atoms,
                                           3, fortran_vars.max_atoms);
+    // Kahan compensated summation reduces FP rounding noise from per-thread
+    // accumulation order changes caused by rebalance().
+    const int force_elems = fortran_vars.atoms * 3;
+    std::vector<double> force_comp(force_elems, 0.0);
     for (uint k = 0; k < fort_forces_ms.size(); k++) {
       for (int i = 0; i < fortran_vars.atoms; i++) {
         for (int j = 0; j < 3; j++) {
-          fort_forces_out(i, j) += fort_forces_ms[k](i, j);
+          int idx = i * 3 + j;
+          double y = fort_forces_ms[k](i, j) - force_comp[idx];
+          double t = fort_forces_out(i, j) + y;
+          force_comp[idx] = (t - fort_forces_out(i, j)) - y;
+          fort_forces_out(i, j) = t;
         }
       }
     }
@@ -618,30 +626,35 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
                      "and B.\n";
       }
 
+      std::vector<double> comp_a(elements, 0.0);
+      std::vector<double> comp_b(elements, 0.0);
       for (uint k = 0; k < rmm_outputs_a.size(); k++) {
         const double* src_a = rmm_outputs_a[k].asArray();
         const double* src_b = rmm_outputs_b[k].asArray();
-#if INTEL_COMP
-#pragma ivdep
-#pragma vector always
-#endif
         for (int i = 0; i < elements; i++) {
-          dst_a[i] += src_a[i];
-          dst_b[i] += src_b[i];
+          double y_a = src_a[i] - comp_a[i];
+          double t_a = dst_a[i] + y_a;
+          comp_a[i] = (t_a - dst_a[i]) - y_a;
+          dst_a[i] = t_a;
+
+          double y_b = src_b[i] - comp_b[i];
+          double t_b = dst_b[i] + y_b;
+          comp_b[i] = (t_b - dst_b[i]) - y_b;
+          dst_b[i] = t_b;
         }
       }
     } else {
       double* dst = fortran_vars.rmm_output.data;
       const int elements =
           fortran_vars.rmm_output.width * fortran_vars.rmm_output.height;
+      std::vector<double> comp(elements, 0.0);
       for (uint k = 0; k < rmm_outputs.size(); k++) {
         const double* src = rmm_outputs[k].asArray();
-#if INTEL_COMP
-#pragma ivdep
-#pragma vector always
-#endif
         for (int i = 0; i < elements; i++) {
-          dst[i] += src[i];
+          double y = src[i] - comp[i];
+          double t = dst[i] + y;
+          comp[i] = (t - dst[i]) - y;
+          dst[i] = t;
         }
       }
     }
