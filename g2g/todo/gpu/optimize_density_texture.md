@@ -1,119 +1,72 @@
-# Optimization: Replace Textures and Volatile Reductions in Density Kernel
+# Optimization: Density Kernel Texture Reads — INVESTIGATED, tex2D WINS
 
-## Summary
+## Status: CLOSED — tex2D must be kept on Pascal SM 6.1
 
-`gpu_compute_density` in `g2g/cuda/kernels/energy.h` uses two costly patterns that
-can be improved for SM 6.1 (Pascal):
+**Date investigated:** 2026-03-20
+**Conclusion:** `__ldg` is **36% slower** than `tex2D` for `gpu_compute_density` on GTX 1080.
+The texture cache's 2D spatial locality is a genuine hardware advantage for this access pattern.
 
-1. **Texture 2D (`tex2D<float>`) for RMM reads** — accessed via the `fetch(t,x,y)`
-   macro defined in `iteration.cu` before including `energy.h`. On SM 6.1, the L1
-   texture cache and the `__ldg()` read-only L1 cache are physically the same hardware.
-   Textures add binding overhead in host code (cudaCreateTextureObject, CUDA array copy)
-   and restrict the memory access pattern.
+## What was tried
 
-2. **Volatile shared memory reductions** — `warpReduceScalar` and `warpReduceVector3`
-   in `energy.h` (lines ~50–75) use `volatile T* sdata` to prevent compiler reordering.
-   This is the pre-Kepler idiom. Since Kepler (SM 3.5) `__shfl_down_sync` provides
-   warp-level communication without shared memory, eliminating bank conflicts and
-   reducing shared memory pressure (enabling higher occupancy).
+Replaced `tex2D<float>(rmm_tex, col, row)` with `__ldg(&rmm_ptr[col * stride + row])`
+in `energy.h`, `energy_open.h`, and `energy_derivs.h`. Removed all texture infrastructure
+(cudaArray, cudaTextureObject, cudaMemcpy2DToArray) from `iteration.cu` and `partition.h/cpp`.
 
-## Code Audit: Current State
+All unit tests passed (98/98). Functional correctness was verified. SCF converged in 24-27
+iterations (varies due to changed float32 bit patterns, but within acceptable range thanks
+to DGELSS solver).
 
-`energy.h:50`: `warpReduceScalar(volatile T* sdata, int tid)` — 6 unrolled writes
-to volatile shared memory, each forcing a store-fence. On SM 6.1 this serializes
-intra-warp communication unnecessarily.
+## Measured performance (fosfatoQMMM, 25 SCF iters)
 
-`iteration.cu:191–205`: Full `cudaArray_t` + `cudaTextureObject_t` setup, including
-`cudaMemcpy2DToArrayAsync` for every group. This staging into CUDA array format is
-extra work that `__ldg` + a standard 2D-strided global pointer avoids.
+| Metric | tex2D | `__ldg` | Delta |
+|--------|-------|---------|-------|
+| Wall time | 5.83s | 6.28s | **+7.7%** |
+| gpu_compute_density total | 1047ms | 1438ms | **+36%** |
+| gpu_compute_density avg/call | 534µs | 760µs | **+42%** |
 
-`energy_derivs.h` also uses texture (`rmm_input_gpu_tex`) for the same RMM data.
-Both kernels need updating together.
+## Profiled root cause: cache hit rate
 
-## Proposal
+nvprof hardware metrics for `gpu_compute_density`:
 
-### Part A — Replace Volatile Warp Reductions with `__shfl_down_sync` (Easy, High Impact)
+| Metric | tex2D | `__ldg` | Delta |
+|--------|-------|---------|-------|
+| **Unified Cache Hit Rate** | **82.85%** | **76.48%** | **-6.4 pp** |
+| L2 Hit Rate (Tex Reads) | 53.80% | 60.64% | +6.8 pp |
+| Global Load Efficiency | 61.08% | 74.54% | +13.5 pp |
+| Achieved Occupancy | 0.508 | 0.506 | ~same |
+| **stall_memory_dependency** | **31.50%** | **40.99%** | **+9.5 pp** |
+| stall_exec_dependency | 20.82% | 17.92% | -2.9 pp |
 
-```cpp
-// Replace warpReduceScalar:
-template<class T>
-__device__ __forceinline__ T warpReduceScalar(T val) {
-  for (int offset = 16; offset > 0; offset >>= 1)
-    val += __shfl_down_sync(0xffffffffu, val, offset);
-  return val;
-}
+## Why tex2D wins on Pascal
 
-// Replace warpReduceVector3:
-template<class T>
-__device__ __forceinline__ vec_type<T,3> warpReduceVector3(vec_type<T,3> v) {
-  for (int offset = 16; offset > 0; offset >>= 1) {
-    v.x += __shfl_down_sync(0xffffffffu, v.x, offset);
-    v.y += __shfl_down_sync(0xffffffffu, v.y, offset);
-    v.z += __shfl_down_sync(0xffffffffu, v.z, offset);
-  }
-  return v;
-}
-```
+The RMM access pattern is `data[col * stride + row]`:
+- Adjacent threads read adjacent rows within the same column → coalesced
+- The inner bj-loop increments `col` each iteration → stride-separated addresses
 
-Call sites in `energy.h:231–235`:
-```cpp
-scalar_type pd_val = warpReduceScalar(partial_pd);
-// then: if (lane == 0) partial_densities_gpu[...] = pd_val;
-```
+**tex2D** maps 2D coordinates through a Morton/Z-order space-filling curve in the texture
+cache. Nearby (row, col) pairs share cache lines even when linear addresses are `stride`
+apart. This yields 82.85% L1 cache hit rate.
 
-This eliminates the shared memory allocations for `fj_sh`, `fgj_sh`, etc. — freeing
-~1–4 KB of shared memory per block, which directly increases occupancy on SM 6.1
-(20 SM units, 96 KB shared per SM).
+**`__ldg`** uses the same physical cache hardware but with linear addressing. Column
+increments jump by `stride` floats → more cache line evictions → 76.48% hit rate. The
+6.4 pp drop means ~6% more cache misses, each costing 200+ cycles. Since the kernel is
+memory-latency-bound (stall_memory_dependency is the dominant stall reason), this
+translates to a 36% wall-time increase.
 
-**Estimated impact: 10–20% speedup for gpu_compute_density.**
-See `optimize_warp_shuffle.md` for the standalone proposal on this pattern.
+## When `__ldg` might work
 
-### Part B — Replace Texture with `__ldg` + Linear Pointer (Medium, Moderate Impact)
+On **Volta+ (SM 7.0+)** the L1 cache is larger (128KB vs 48KB on Pascal) and has different
+caching policies. The `__ldg` approach might be neutral or positive there. But on Pascal
+SM 6.1, the texture cache's 2D tiling is critical for this workload.
 
-On SM 6.1, `__ldg(ptr)` triggers the same L1 read-only cache as textures:
-```cpp
-// Old: float val = tex2D<float>(rmm_tex, col, row);
-// New: float val = __ldg(&rmm_ptr[row * stride + col]);
-```
+## DO NOT re-attempt this optimization on Pascal hardware.
 
-**Changes in iteration.cu:**
-- Remove: `cudaArray_t rmm_cuArray`, `cudaTextureObject_t rmm_tex`,
-  `cudaCreateTextureObject`, `cudaMemcpy2DToArrayAsync(rmm_cuArray, ...)`.
-- Add: `CudaMatrix<float> rmm_input_gpu` (already computed by `get_rmm_input`);
-  just keep the `cudaMemcpy` of `rmm_input_cpu → rmm_input_gpu`.
-- Pass `rmm_input_gpu.data` and `rmm_input_gpu.width` (stride) to the kernel.
+The 17ms saved by eliminating texture setup infrastructure is completely dwarfed by the
+380ms increase in kernel execution time. The texture approach is architecturally correct
+for this access pattern on this hardware generation.
 
-**Changes in energy.h:**
-- Remove: `#define fetch(t,x,y) tex2D<float>(t,x,y)` and all `cudaTextureObject_t` args.
-- Add: `const float* __restrict__ rmm_ptr, int rmm_stride` args.
-- Access: `__ldg(&rmm_ptr[i * rmm_stride + j])`.
+## Part A (Warp Shuffle) — COMPLETED
 
-**Same changes apply to `energy_derivs.h`** — it uses the same texture pattern.
-
-Access pattern analysis: RMM is accessed as `rmm[i * stride + bj + threadIdx.x]`
-inside the batch loop — this IS coalesced (32 consecutive threads access 32 consecutive
-columns). `__ldg` benefits from L1 caching here identically to texture.
-
-**Estimated impact: 5–10% for gpu_compute_density, 5–10% for gpu_compute_density_derivs**
-(removes texture setup overhead; bandwidth equivalent to texture for this access pattern).
-
-## Priority: Part A First
-Part A (warp shuffle) is lower risk and higher reward. Do it in isolation first.
-Part B simplifies host code significantly but requires coordinated changes to both
-`energy.h` and `energy_derivs.h`.
-
-## Difficulty Assessment
-- Part A (warp shuffle): **Low** — 30-line change in `energy.h`, no API changes.
-- Part B (remove textures): **Medium** — touches `iteration.cu` + 2 kernel headers;
-  requires careful stride passing and layout verification.
-
-## Files to Modify
-- `g2g/cuda/kernels/energy.h`: Both parts.
-- `g2g/cuda/kernels/energy_derivs.h`: Part B (same texture replacement).
-- `g2g/cuda/iteration.cu`: Part B (remove texture setup; ~40 lines of host code).
-
-## Estimations
-- Part A alone: **10–20% speedup for density phase**.
-- Part B alone: **5–10% speedup for density + derivs phases**.
-- Combined: **15–25% speedup for the density and force computation phases**.
-- End-to-end: **8–15% overall** depending on the fraction of time in these kernels.
+The warp shuffle optimization from the original proposal was completed separately in
+commit `ac87eef0`. It reduced shared memory from 2560→256 bytes (LDA) and achieved
+100% theoretical occupancy. This was a clear win, unlike Part B (texture removal).

@@ -159,4 +159,74 @@ once total (after convergence). Separate them when analyzing optimization target
 - SCF kernel time / 25 = per-iteration GPU cost
 - Post-SCF is fixed overhead regardless of convergence speed
 
+### Step 6: Comparing two kernel implementations (A/B profiling)
+
+When evaluating a kernel optimization, collect metrics for BOTH the baseline and the
+modified version using the same methodology. This is the only reliable way to determine
+whether a change helps or hurts.
+
+#### Procedure
+
+1. **Build baseline**, collect a metric run:
+   ```bash
+   source liohome.sh && cd test/LIO_test/03_fosfatoQMMM
+   nvprof --kernels "<kernel_name>" \
+       --metrics tex_cache_hit_rate,l2_tex_read_hit_rate,gld_efficiency,achieved_occupancy,stall_memory_dependency,stall_exec_dependency \
+       ../../../liosolo/liosolo -i fos.in -c fos.xyz -b basis -v > /dev/null 2>/tmp/metrics_baseline.txt
+   ```
+
+2. **Build modified version**, collect the same metrics:
+   ```bash
+   nvprof --kernels "<kernel_name>" \
+       --metrics tex_cache_hit_rate,l2_tex_read_hit_rate,gld_efficiency,achieved_occupancy,stall_memory_dependency,stall_exec_dependency \
+       ../../../liosolo/liosolo -i fos.in -c fos.xyz -b basis -v > /dev/null 2>/tmp/metrics_modified.txt
+   ```
+
+3. **Compare side-by-side.** Key metrics to watch:
+
+   | Metric | What it tells you |
+   |--------|-------------------|
+   | `tex_cache_hit_rate` (Unified Cache Hit Rate) | L1/texture cache effectiveness — most impactful for memory-bound kernels |
+   | `l2_tex_read_hit_rate` | L2 hit rate for texture/`__ldg` reads |
+   | `gld_efficiency` | Coalescing quality (100% = perfect) |
+   | `achieved_occupancy` | Fraction of max warps active — changes indicate register pressure |
+   | `stall_memory_dependency` | % cycles stalled waiting for memory — the #1 bottleneck indicator |
+   | `stall_exec_dependency` | % cycles stalled on instruction dependencies |
+
+4. **Also collect wall-time and GPU-summary profiles** (without `--metrics`, which adds
+   replay overhead) to measure actual speedup/regression.
+
+**Important**: `--metrics` queries with `--kernels` filter require re-running the program
+with kernel replay instrumentation. They CANNOT be extracted from saved `.nvvp` files.
+Always collect metrics by running the program directly, not by importing profiles.
+
+#### Interpreting results
+
+- **Cache hit rate drops > 3 pp** usually signal a regression for memory-bound kernels.
+  On Pascal, each L1 miss costs ~200+ cycles.
+- **stall_memory_dependency increase** directly correlates with slower execution.
+- **achieved_occupancy changes** indicate register pressure differences. More registers
+  per thread → fewer concurrent blocks → lower occupancy → worse latency hiding.
+- **gld_efficiency** should stay ≥60%. Below that, the access pattern has coalescing issues.
+
+---
+
+## Architecture-Specific Notes
+
+### tex2D vs `__ldg` on Pascal SM 6.1 — DO NOT replace textures
+
+**Investigated 2026-03-20.** Replacing `tex2D` with `__ldg` in the density kernels caused
+a **36% regression** in `gpu_compute_density` (1047ms → 1438ms, fosfatoQMMM).
+
+The root cause is that `tex2D` uses the texture unit's 2D spatial locality (Morton/Z-order
+tiling), which gives 82.85% L1 cache hit rate for the RMM access pattern
+`data[col * stride + row]`. `__ldg` uses linear addressing on the same physical cache,
+achieving only 76.48% — the 6.4 pp drop causes 9.5 pp more memory stall cycles.
+
+The 17ms saved by eliminating texture setup infrastructure is dwarfed by the 380ms kernel
+regression. **Keep tex2D for all RMM reads on Pascal.**
+
+See `todo/gpu/optimize_density_texture.md` for full metrics and analysis.
+
+This may be revisitable on Volta+ (SM 7.0+) where L1 is 128KB and caching policies differ.
 

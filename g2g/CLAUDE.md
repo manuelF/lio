@@ -195,8 +195,10 @@ add_rmm_output + cudaMalloc/cudaFree) accounts for ~60% of the GPU thread's wall
 2. **Reduce GlobalMemoryPool churn** — 2.07 s (35% of wall) in cudaMalloc+cudaFree (18780
    calls each). Pool is allocating/freeing per kernel launch instead of reusing. Fix: cache
    allocations across groups or use a true pool allocator.
-3. **Replace tex2D with `__ldg`** (`todo/gpu/optimize_density_texture.md`) — 5-10%.
-   Synergizes with #1 (eliminates cudaArray + texture setup per group).
+3. ~~**Replace tex2D with `__ldg`**~~ — **REJECTED** (2026-03-20). Causes 36% regression
+   in `gpu_compute_density` on Pascal SM 6.1 due to loss of 2D spatial locality in texture
+   cache (82.85% → 76.48% L1 hit rate). See `todo/gpu/optimize_density_texture.md` and
+   `cuda/CLAUDE.md` for full analysis. Do NOT re-attempt on Pascal hardware.
 4. **Multi-stream GPU pipeline** — launch group N+1 while N's scatter completes.
    Requires #1 first (GPU-side scatter removes CPU serialization).
 5. **Open-shell GGA register reduction** — 93 regs → 56 regs (see TODO file).
