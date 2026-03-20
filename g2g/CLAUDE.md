@@ -185,6 +185,37 @@ add_rmm_output + cudaMalloc/cudaFree) accounts for ~60% of the GPU thread's wall
 | `e4a43707` | BLAS optimizations in converger_subs (DGEMM, DDOT) | Reduced Fortran CPU time |
 | `5a7d1743` | BLAS in int3lu (DGEMV, DSPMV, DDOT) | Reduced per-iteration Fortran CPU |
 | `104f8dc9` | DGELSS in DIIS solver (replaces DGELS) | Robust to float32 noise; bounded coefficients |
+| (uncommitted) | Auto-detect GPU memory caching (`fgm=-1`) | −89% malloc calls, −93% malloc+free time; **−34% wall** (5.87→3.87s) |
+
+### GPU memory caching (`free_global_memory`)
+
+The `free_global_memory` (fgm) parameter controls caching of basis function values across
+SCF iterations. By default (`fgm=0.0`), no caching occurs — every iteration recomputes and
+reallocates function/gradient/hessian buffers for all GPU groups (19K malloc/free calls,
+2.07s overhead on fosfatoQMMM).
+
+**Usage:**
+- `free_global_memory = -1` — **auto-detect**: computes optimal cache budget from actual
+  GPU memory availability and total cache needs. 20% headroom reserved for temporaries.
+- `free_global_memory = 0.0` — no caching (default, backward-compatible, deterministic)
+- `free_global_memory = 0.8` — use 80% of free GPU memory for caching (legacy manual mode)
+
+**Measured (fosfatoQMMM, auto-detect):**
+
+| Metric | fgm=0.0 | fgm=auto | Improvement |
+|---|---|---|---|
+| Wall time | 5.87 s | 3.87 s | **−34%** |
+| cudaMalloc calls | 18,780 | 2,051 | −89% |
+| cudaFree calls | 18,780 | 2,051 | −89% |
+| malloc+free time | 2.07 s | 142 ms | −93% |
+| gpu_compute_functions | 1,890 calls | 70 calls | −96% (first iter only) |
+| transpose kernels | 3,920 calls | eliminated | −100% (after iter 1) |
+
+**Nondeterminism warning**: Caching introduces run-to-run energy variation (~0.0002 Ha)
+because the timing-dependent `rebalance()` function makes different group-to-thread
+assignment decisions when the GPU finishes faster. This is NOT a caching correctness bug —
+it's inherent to the timing-dependent rebalancer interacting with FP accumulation order.
+See `todo/gpu/optimize_memory_pool.md` for details.
 
 ### Open optimization opportunities (ranked by expected impact)
 
@@ -192,9 +223,10 @@ add_rmm_output + cudaMalloc/cudaFree) accounts for ~60% of the GPU thread's wall
    Move `get_rmm_input()` / `add_rmm_output()` from CPU to GPU kernels. Eliminates the
    largest CPU overhead in the GPU thread (~60% of per-group time). Prerequisite for
    multi-stream pipeline.
-2. **Reduce GlobalMemoryPool churn** — 2.07 s (35% of wall) in cudaMalloc+cudaFree (18780
-   calls each). Pool is allocating/freeing per kernel launch instead of reusing. Fix: cache
-   allocations across groups or use a true pool allocator.
+2. ~~**Reduce GlobalMemoryPool churn**~~ — **SOLVED** (2026-03-20). Auto-detect caching
+   (`fgm=-1`) eliminates 89% of malloc/free calls. See "GPU memory caching" section above.
+   Remaining 2,051 calls are from per-group temporaries and AINT; see Phase 3 in
+   `todo/gpu/optimize_memory_pool.md` for further reduction.
 3. ~~**Replace tex2D with `__ldg`**~~ — **REJECTED** (2026-03-20). Causes 36% regression
    in `gpu_compute_density` on Pascal SM 6.1 due to loss of 2D spatial locality in texture
    cache (82.85% → 76.48% L1 hit rate). See `todo/gpu/optimize_density_texture.md` and
