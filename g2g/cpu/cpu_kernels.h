@@ -385,52 +385,77 @@ struct GGADensity {
   scalar_type tdd2x, tdd2y, tdd2z;
 };
 
-template <class scalar_type>
+template <typename scalar_type>
 GGADensity<scalar_type> cpu_compute_density_gga(
-    const scalar_type* fv,
-    const scalar_type* gxv,  const scalar_type* gyv,  const scalar_type* gzv,
-    const scalar_type* hpxv, const scalar_type* hpyv, const scalar_type* hpzv,
-    const scalar_type* hixv, const scalar_type* hiyv, const scalar_type* hizv,
-    const scalar_type* rmm, int m) {
-  GGADensity<scalar_type> res{};
-  for (int i = 0; i < m; ++i) {
-    scalar_type w = 0, w3xc = 0, w3yc = 0, w3zc = 0;
-    scalar_type ww1xc = 0, ww1yc = 0, ww1zc = 0;
-    scalar_type ww2xc = 0, ww2yc = 0, ww2zc = 0;
+    const scalar_type* __restrict__ fv,
+    const scalar_type* __restrict__ gxv,  const scalar_type* __restrict__ gyv,  const scalar_type* __restrict__ gzv,
+    const scalar_type* __restrict__ hpxv, const scalar_type* __restrict__ hpyv, const scalar_type* __restrict__ hpzv,
+    const scalar_type* __restrict__ hixv, const scalar_type* __restrict__ hiyv, const scalar_type* __restrict__ hizv,
+    const scalar_type* __restrict__ rmm, int m) {
+    
+    GGADensity<scalar_type> res{};
 
-    // Lower triangle (j <= i) — matches iteration.cpp GGA branch exactly.
-    // rmm[i*m+j] == rmm_input.row(i)[j] == rmm_input(j, i) when j <= i.
-    for (int j = 0; j <= i; ++j) {
-      scalar_type rmj = rmm[i * m + j];
-      w     += fv[j]    * rmj;
-      w3xc  += gxv[j]   * rmj;
-      w3yc  += gyv[j]   * rmj;
-      w3zc  += gzv[j]   * rmj;
-      ww1xc += hpxv[j]  * rmj;
-      ww1yc += hpyv[j]  * rmj;
-      ww1zc += hpzv[j]  * rmj;
-      ww2xc += hixv[j]  * rmj;
-      ww2yc += hiyv[j]  * rmj;
-      ww2zc += hizv[j]  * rmj;
+    for (int i = 0; i < m; ++i) {
+        scalar_type w = 0, w3xc = 0, w3yc = 0, w3zc = 0;
+        scalar_type ww1xc = 0, ww1yc = 0, ww1zc = 0;
+        scalar_type ww2xc = 0, ww2yc = 0, ww2zc = 0;
+
+        const scalar_type* __restrict__ rmm_row = &rmm[i * m];
+
+        // Fission 1: Primary density and first-order gradients
+        // #pragma GCC ivdep tells the compiler "ignore vector dependencies", 
+        // allowing it to use its native auto-vectorizer instead of OpenMP's rigid SIMD rules.
+        #pragma GCC ivdep
+        for (int j = 0; j <= i; ++j) {
+            scalar_type rmj = rmm_row[j];
+            w    += fv[j]  * rmj;
+            w3xc += gxv[j] * rmj;
+            w3yc += gyv[j] * rmj;
+            w3zc += gzv[j] * rmj;
+        }
+
+        // Anti-Fusion Barrier: This invisible inline assembly prevents GCC's optimizer 
+        // from re-merging the loops and recreating the Register Pressure issue.
+        asm volatile("" ::: "memory");
+
+        // Fission 2: High-order partials (Set 1)
+        #pragma GCC ivdep
+        for (int j = 0; j <= i; ++j) {
+            scalar_type rmj = rmm_row[j];
+            ww1xc += hpxv[j] * rmj;
+            ww1yc += hpyv[j] * rmj;
+            ww1zc += hpzv[j] * rmj;
+        }
+
+        asm volatile("" ::: "memory");
+
+        // Fission 3: High-order partials (Set 2)
+        #pragma GCC ivdep
+        for (int j = 0; j <= i; ++j) {
+            scalar_type rmj = rmm_row[j];
+            ww2xc += hixv[j] * rmj;
+            ww2yc += hiyv[j] * rmj;
+            ww2zc += hizv[j] * rmj;
+        }
+
+        // Final Scalar Reductions
+        scalar_type Fi  = fv[i];
+        scalar_type gx  = gxv[i],  gy  = gyv[i],  gz  = gzv[i];
+        scalar_type hpx = hpxv[i], hpy = hpyv[i], hpz = hpzv[i];
+        scalar_type hix = hixv[i], hiy = hiyv[i], hiz = hizv[i];
+
+        res.pd     += Fi * w;
+        res.tdx    += gx * w  + w3xc * Fi;
+        res.tdy    += gy * w  + w3yc * Fi;
+        res.tdz    += gz * w  + w3zc * Fi;
+        res.tdd1x  += gx * w3xc * 2 + hpx * w + ww1xc * Fi;
+        res.tdd1y  += gy * w3yc * 2 + hpy * w + ww1yc * Fi;
+        res.tdd1z  += gz * w3zc * 2 + hpz * w + ww1zc * Fi;
+        res.tdd2x  += gx * w3yc + gy * w3xc + hix * w + ww2xc * Fi;
+        res.tdd2y  += gx * w3zc + gz * w3xc + hiy * w + ww2yc * Fi;
+        res.tdd2z  += gy * w3zc + gz * w3yc + hiz * w + ww2zc * Fi;
     }
-
-    scalar_type Fi  = fv[i];
-    scalar_type gx  = gxv[i],  gy  = gyv[i],  gz  = gzv[i];
-    scalar_type hpx = hpxv[i], hpy = hpyv[i], hpz = hpzv[i];
-    scalar_type hix = hixv[i], hiy = hiyv[i], hiz = hizv[i];
-
-    res.pd    += Fi * w;
-    res.tdx   += gx * w  + w3xc * Fi;
-    res.tdy   += gy * w  + w3yc * Fi;
-    res.tdz   += gz * w  + w3zc * Fi;
-    res.tdd1x += gx * w3xc * 2 + hpx * w + ww1xc * Fi;
-    res.tdd1y += gy * w3yc * 2 + hpy * w + ww1yc * Fi;
-    res.tdd1z += gz * w3zc * 2 + hpz * w + ww1zc * Fi;
-    res.tdd2x += gx * w3yc + gy * w3xc + hix * w + ww2xc * Fi;
-    res.tdd2y += gx * w3zc + gz * w3xc + hiy * w + ww2yc * Fi;
-    res.tdd2z += gy * w3zc + gz * w3yc + hiz * w + ww2zc * Fi;
-  }
-  return res;
+    return res;
 }
 
 // ============================================================================
@@ -491,12 +516,14 @@ void cpu_compute_density_derivs(
 // Matches the inner point loop of the RMM section in solve_closed/solve_opened
 // exactly, except that precision of the accumulation follows scalar_type.
 template <class scalar_type>
-scalar_type cpu_update_rmm(const scalar_type* fv_row, const scalar_type* fv_col,
-                            const scalar_type* factors, int npoints) {
+scalar_type cpu_update_rmm(const scalar_type* __restrict__ fv_row, 
+                            const scalar_type* __restrict__ fv_col,
+                            const scalar_type* __restrict__ factors, int npoints) {
   scalar_type res = 0;
-  for (int p = 0; p < npoints; ++p)
+  #pragma omp simd reduction(+:res)
+  for (int p = 0; p < npoints; ++p) {
     res += fv_row[p] * fv_col[p] * factors[p];
+  }
   return res;
 }
-
 }  // namespace G2G
