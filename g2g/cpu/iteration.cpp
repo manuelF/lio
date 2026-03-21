@@ -94,7 +94,8 @@ void PointGroupCPU<scalar_type>::solve_closed(
       //   sum_i Fi * sum_{j>=i} rmm_input(j,i) * Fj
       // rmm_input is symmetric (both triangles filled by get_rmm_input).
       scalar_type partial_density = cpu_compute_density_lda(
-          function_values.row(point), rmm_input.asArray(), group_m);
+          function_values.row(point), rmm_input.asArray(), group_m,
+          rmm_input.stride);
 
       scalar_type exc = 0.0, corr = 0.0, y2a = 0.0;
 
@@ -119,7 +120,7 @@ void PointGroupCPU<scalar_type>::solve_closed(
           gX.row(point), gY.row(point), gZ.row(point),
           hPX.row(point), hPY.row(point), hPZ.row(point),
           hIX.row(point), hIY.row(point), hIZ.row(point),
-          rmm_input.asArray(), group_m);
+          rmm_input.asArray(), group_m, rmm_input.stride);
 
       /** energy / potential **/
       scalar_type exc = 0.0, corr = 0.0, y2a = 0.0;
@@ -179,7 +180,8 @@ void PointGroupCPU<scalar_type>::solve_closed(
           gX.row(point), gY.row(point), gZ.row(point),
           rmm_input.asArray(), group_m,
           func2nuc_vec.data(), this->total_nucleii(),
-          ddx.data, ddy.data, ddz.data);
+          ddx.data, ddy.data, ddz.data,
+          rmm_input.stride);
       scalar_type factor = factors_rmm(point);
       for (int i = 0; i < (int)this->total_nucleii(); i++) {
         forces_mat[point][i] = vec_type3(ddx(i), ddy(i), ddz(i)) * factor;
@@ -311,10 +313,10 @@ void PointGroupCPU<scalar_type>::solve_opened(
 
       GGADensity<scalar_type> da = cpu_compute_density_gga(
           fv, gxv, gyv, gzv, hpxv, hpyv, hpzv, hixv, hiyv, hizv,
-          rmm_input_a.asArray(), group_m);
+          rmm_input_a.asArray(), group_m, rmm_input_a.stride);
       GGADensity<scalar_type> db = cpu_compute_density_gga(
           fv, gxv, gyv, gzv, hpxv, hpyv, hpzv, hixv, hiyv, hizv,
-          rmm_input_b.asArray(), group_m);
+          rmm_input_b.asArray(), group_m, rmm_input_b.stride);
 
       /** energy / potential **/
       scalar_type exc_corr = 0.0, corr1 = 0.0, corr2 = 0.0;
@@ -375,13 +377,15 @@ void PointGroupCPU<scalar_type>::solve_opened(
           gX.row(point), gY.row(point), gZ.row(point),
           rmm_input_a.asArray(), group_m,
           func2nuc_vec.data(), this->total_nucleii(),
-          ddx_a.data, ddy_a.data, ddz_a.data);
+          ddx_a.data, ddy_a.data, ddz_a.data,
+          rmm_input_a.stride);
       cpu_compute_density_derivs(
           function_values.row(point),
           gX.row(point), gY.row(point), gZ.row(point),
           rmm_input_b.asArray(), group_m,
           func2nuc_vec.data(), this->total_nucleii(),
-          ddx_b.data, ddy_b.data, ddz_b.data);
+          ddx_b.data, ddy_b.data, ddz_b.data,
+          rmm_input_b.stride);
 
       scalar_type factor_a = factors_rmm_a(point);
       scalar_type factor_b = factors_rmm_b(point);
