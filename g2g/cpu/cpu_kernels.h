@@ -335,15 +335,17 @@ int cpu_eval_gto_shell(
 // Using the upper triangle matches the iteration.cpp LDA loop exactly.
 template <class scalar_type>
 scalar_type cpu_compute_density_lda(const scalar_type* fv,
-                                     const scalar_type* rmm, int m) {
+                                     const scalar_type* rmm, int m,
+                                     int rmm_stride = 0) {
+  if (rmm_stride == 0) rmm_stride = m;
   scalar_type rho = 0;
   for (int i = 0; i < m; ++i) {
     scalar_type w = 0;
     // Matches iteration.cpp: for (int j = i; j < group_m; j++)
     //                            w += rmm_input(j, i) * Fj;
-    // rmm_input(j, i) = data[i * m + j] = rmm[i*m+j] in our flat layout.
+    // rmm_input(j, i) = data[i * rmm_stride + j] in our flat layout.
     for (int j = i; j < m; ++j)
-      w += rmm[i * m + j] * fv[j];
+      w += rmm[i * rmm_stride + j] * fv[j];
     rho += fv[i] * w;
   }
   return rho;
@@ -391,8 +393,9 @@ GGADensity<scalar_type> cpu_compute_density_gga(
     const scalar_type* __restrict__ gxv,  const scalar_type* __restrict__ gyv,  const scalar_type* __restrict__ gzv,
     const scalar_type* __restrict__ hpxv, const scalar_type* __restrict__ hpyv, const scalar_type* __restrict__ hpzv,
     const scalar_type* __restrict__ hixv, const scalar_type* __restrict__ hiyv, const scalar_type* __restrict__ hizv,
-    const scalar_type* __restrict__ rmm, int m) {
-    
+    const scalar_type* __restrict__ rmm, int m, int rmm_stride = 0) {
+
+    if (rmm_stride == 0) rmm_stride = m;
     GGADensity<scalar_type> res{};
 
     for (int i = 0; i < m; ++i) {
@@ -400,7 +403,7 @@ GGADensity<scalar_type> cpu_compute_density_gga(
         scalar_type ww1xc = 0, ww1yc = 0, ww1zc = 0;
         scalar_type ww2xc = 0, ww2yc = 0, ww2zc = 0;
 
-        const scalar_type* __restrict__ rmm_row = &rmm[i * m];
+        const scalar_type* __restrict__ rmm_row = &rmm[i * rmm_stride];
 
         // Fission 1: Primary density and first-order gradients
         // #pragma GCC ivdep tells the compiler "ignore vector dependencies", 
@@ -485,11 +488,13 @@ void cpu_compute_density_derivs(
     const scalar_type* gxv, const scalar_type* gyv, const scalar_type* gzv,
     const scalar_type* rmm, uint m,
     const unsigned* func2nuc, uint n_atoms,
-    scalar_type* ddx, scalar_type* ddy, scalar_type* ddz) {
+    scalar_type* ddx, scalar_type* ddy, scalar_type* ddz,
+    int rmm_stride = 0) {
+  if (rmm_stride == 0) rmm_stride = (int)m;
   for (int ii = 0; ii < (int)m; ++ii) {
     scalar_type w = 0;
     for (int j = 0; j < (int)m; ++j)
-      w += rmm[ii * m + j] * fv[j] * (ii == j ? 2 : 1);
+      w += rmm[ii * rmm_stride + j] * fv[j] * (ii == j ? 2 : 1);
     int nuc = (int)func2nuc[ii];
     ddx[nuc] -= w * gxv[ii];
     ddy[nuc] -= w * gyv[ii];
