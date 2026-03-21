@@ -138,8 +138,9 @@ int getintenv(const char* str, int default_value) {
 void diagnostic() {
   printf("  Threads OMP: %d - Threads CPU: %d - Threads GPU: %d\n",
          omp_get_max_threads(), G2G::cpu_threads, G2G::gpu_threads);
-  printf("  Small cube correction: %d - Separation points: %d\n",
-         MINCOST, SPLITPOINTS);
+  printf("  Small cube correction: %d - Split cost (P*M^2): %lld%s\n",
+         MINCOST, (long long)G2G::SPLIT_COST,
+         getenv("LIO_SPLIT_COST") ? " (manual)" : " (auto)");
 }
 
 template <class T>
@@ -324,121 +325,138 @@ void Partition::regenerate(void) {
   G2G::MINCOST = getintenv("LIO_MINCOST_OFFSET", 250000);
   G2G::THRESHOLD = getintenv("LIO_SPLIT_THRESHOLD", 80);
   G2G::SPLITPOINTS = getintenv("LIO_SPLIT_POINTS", 200);
-
-  // La grilla computada ahora tiene |puntos_totales| puntos, y |fortran_vars.m|
-  // funciones.
   uint nco_m = 0;
   uint m_m = 0;
-
   puntos_finales = 0;
-  // Completamos los parametros de los cubos y los agregamos a la particion.
+
+  // =========================================================================
+  // Phase 1: Create all group temporaries as PointGroupCPU.
+  // This gives us P and M for every group before deciding CPU/GPU assignment.
+  // =========================================================================
+  std::vector<PointGroupCPU<base_scalar_type>> cube_temps;
   for (uint i = 0; i < prism_size.x; i++) {
     for (uint j = 0; j < prism_size.y; j++) {
       for (uint k = 0; k < prism_size.z; k++) {
-        Group& points_ijk = prism[i][j][k];
-
         double3 cube_coord_abs = x0 + make_uint3(i, j, k) * little_cube_size;
-        PointGroup<base_scalar_type>* cube_funcs;
-#if GPU_KERNELS
-        if (is_big_group(points_ijk))
-          cube_funcs = new PointGroupGPU<base_scalar_type>();
-        else
-          cube_funcs = new PointGroupCPU<base_scalar_type>();
-#else
-        cube_funcs = new PointGroupCPU<base_scalar_type>();
-#endif
 
+        PointGroupCPU<base_scalar_type> cube_tmp;
         for (uint point = 0; point < prism[i][j][k].size(); point++)
-          cube_funcs->add_point(prism[i][j][k][point]);
+          cube_tmp.add_point(prism[i][j][k][point]);
 
-        cube_funcs->assign_functions_as_cube(cube_coord_abs, min_exps_func,
-                                             min_coeff_func);
+        cube_tmp.assign_functions_as_cube(cube_coord_abs, min_exps_func,
+                                          min_coeff_func);
 
-        if ((cube_funcs->total_functions_simple() == 0) ||
-            (cube_funcs->number_of_points < min_points_per_cube)) {
-          // Este cubo no tiene funciones o no tiene suficientes puntos.
-          delete cube_funcs;
+        if ((cube_tmp.total_functions_simple() == 0) ||
+            (cube_tmp.number_of_points < min_points_per_cube)) {
           continue;
         }
-        PointGroup<base_scalar_type>* cube;
-
-#if GPU_KERNELS
-        if (is_big_group(points_ijk))
-          cube = new PointGroupGPU<base_scalar_type>(
-              *(static_cast<PointGroupGPU<base_scalar_type>*>(cube_funcs)));
-        else
-          cube = new PointGroupCPU<base_scalar_type>(
-              *(static_cast<PointGroupCPU<base_scalar_type>*>(cube_funcs)));
-#else
-        cube = new PointGroupCPU<base_scalar_type>(
-            *(static_cast<PointGroupCPU<base_scalar_type>*>(cube_funcs)));
-#endif
-
-        delete cube_funcs;
-
-        tweights.start();
-        cube->compute_weights();
-        tweights.pause();
-
-        if (cube->number_of_points < min_points_per_cube) {
-          cout << "CUBE: not enough points" << endl;
-          delete cube;
-          continue;
-        }
-        cubes.push_back(cube);
-
-        puntos_finales += cube->number_of_points;
-        funciones_finales += cube->number_of_points * cube->total_functions();
-        costo += cube->number_of_points *
-                 (cube->total_functions() * cube->total_functions());
-        nco_m += cube->total_functions() * fortran_vars.nco;
-        m_m += cube->total_functions() * cube->total_functions();
+        cube_temps.push_back(cube_tmp);
       }
     }
   }
 
-  // Si esta habilitada la particion en esferas, entonces clasificamos y las
-  // agregamos a la particion tambien.
+  std::vector<PointGroupCPU<base_scalar_type>> sphere_temps;
   if (sphere_radius > 0) {
     for (uint i = 0; i < fortran_vars.atoms; i++) {
       Group& sphere_i = sphere_points[i];
       assert(sphere_i.size() != 0);
 
-      PointGroup<base_scalar_type>* sphere_funcs;
-#if GPU_KERNELS
-      if (is_big_group(sphere_i))
-        sphere_funcs = new PointGroupGPU<base_scalar_type>();
-      else
-        sphere_funcs = new PointGroupCPU<base_scalar_type>();
-#else
-      sphere_funcs = new PointGroupCPU<base_scalar_type>();
-#endif
+      PointGroupCPU<base_scalar_type> sphere_tmp;
       for (uint point = 0; point < sphere_i.size(); point++)
-        sphere_funcs->add_point(sphere_i[point]);
+        sphere_tmp.add_point(sphere_i[point]);
 
-      sphere_funcs->assign_functions_as_sphere(i, sphere_radius_array[i],
-                                               min_exps_func, min_coeff_func);
-      assert(sphere_funcs->total_functions_simple() != 0);
-      if (sphere_funcs->number_of_points < min_points_per_cube) {
+      sphere_tmp.assign_functions_as_sphere(i, sphere_radius_array[i],
+                                            min_exps_func, min_coeff_func);
+      assert(sphere_tmp.total_functions_simple() != 0);
+      if (sphere_tmp.number_of_points < min_points_per_cube) {
         cout << "not enough points" << endl;
-        delete sphere_funcs;
         continue;
       }
+      sphere_temps.push_back(sphere_tmp);
+    }
+  }
 
+  // =========================================================================
+  // Phase 2: Compute optimal CPU/GPU split threshold.
+  // Uses LPT simulation to balance max(CPU_bottleneck, GPU_total).
+  // LIO_SPLIT_COST env var overrides auto-tuning (for benchmarking).
+  // =========================================================================
+#if GPU_KERNELS
+  {
+    char* sc = getenv("LIO_SPLIT_COST");
+    if (sc) {
+      G2G::SPLIT_COST = strtoll(sc, NULL, 10);
+    } else {
+      std::vector<long long> all_pm2;
+      all_pm2.reserve(cube_temps.size() + sphere_temps.size());
+      for (size_t i = 0; i < cube_temps.size(); i++) {
+        all_pm2.push_back(
+            (long long)cube_temps[i].number_of_points *
+            cube_temps[i].total_functions() * cube_temps[i].total_functions());
+      }
+      for (size_t i = 0; i < sphere_temps.size(); i++) {
+        all_pm2.push_back(
+            (long long)sphere_temps[i].number_of_points *
+            sphere_temps[i].total_functions() *
+            sphere_temps[i].total_functions());
+      }
+      G2G::SPLIT_COST =
+          compute_optimal_split_cost(all_pm2, G2G::cpu_threads,
+                                     G2G::gpu_threads);
+    }
+  }
+#endif
+
+  // =========================================================================
+  // Phase 3: Convert each temp to its final CPU or GPU type.
+  // =========================================================================
+  for (size_t ti = 0; ti < cube_temps.size(); ti++) {
+    PointGroup<base_scalar_type>* cube;
+#if GPU_KERNELS
+    if (should_use_gpu(cube_temps[ti].number_of_points,
+                       cube_temps[ti].total_functions())) {
+      cube = new PointGroupGPU<base_scalar_type>();
+      cube->move_base_from(cube_temps[ti]);
+    } else {
+      cube = new PointGroupCPU<base_scalar_type>(cube_temps[ti]);
+    }
+#else
+    cube = new PointGroupCPU<base_scalar_type>(cube_temps[ti]);
+#endif
+
+    tweights.start();
+    cube->compute_weights();
+    tweights.pause();
+
+    if (cube->number_of_points < min_points_per_cube) {
+      cout << "CUBE: not enough points" << endl;
+      delete cube;
+      continue;
+    }
+    cubes.push_back(cube);
+
+    puntos_finales += cube->number_of_points;
+    funciones_finales += cube->number_of_points * cube->total_functions();
+    costo += cube->number_of_points *
+             (cube->total_functions() * cube->total_functions());
+    nco_m += cube->total_functions() * fortran_vars.nco;
+    m_m += cube->total_functions() * cube->total_functions();
+  }
+
+  if (sphere_radius > 0) {
+    for (size_t ti = 0; ti < sphere_temps.size(); ti++) {
       PointGroup<base_scalar_type>* sphere;
 #if GPU_KERNELS
-      if (is_big_group(sphere_i)) {
-        sphere = new PointGroupGPU<base_scalar_type>(
-            *(static_cast<PointGroupGPU<base_scalar_type>*>(sphere_funcs)));
+      if (should_use_gpu(sphere_temps[ti].number_of_points,
+                         sphere_temps[ti].total_functions())) {
+        sphere = new PointGroupGPU<base_scalar_type>();
+        sphere->move_base_from(sphere_temps[ti]);
       } else {
-        sphere = new PointGroupCPU<base_scalar_type>(
-            *(static_cast<PointGroupCPU<base_scalar_type>*>(sphere_funcs)));
+        sphere = new PointGroupCPU<base_scalar_type>(sphere_temps[ti]);
       }
 #else
-      sphere = new PointGroupCPU<base_scalar_type>(
-          *(static_cast<PointGroupCPU<base_scalar_type>*>(sphere_funcs)));
+      sphere = new PointGroupCPU<base_scalar_type>(sphere_temps[ti]);
 #endif
-      delete sphere_funcs;
 
       assert(sphere->number_of_points != 0);
       tweights.start();
@@ -535,6 +553,46 @@ void Partition::regenerate(void) {
   }
 
   compute_work_partition();
+
+  // Print group size distribution for CPU/GPU balance analysis
+  if (verbose > 3 && G2G::cpu_threads > 0 && G2G::gpu_threads > 0) {
+    int cpu_count = 0, gpu_count = 0;
+    long long cpu_cost = 0, gpu_cost = 0;
+    std::vector<int> gpu_sizes;
+    for (uint i = 0; i < cubes.size(); i++) {
+      if (cubes[i]->is_big_group()) {
+        gpu_count++;
+        gpu_cost += cubes[i]->cost();
+        gpu_sizes.push_back(cubes[i]->number_of_points);
+      } else {
+        cpu_count++;
+        cpu_cost += cubes[i]->cost();
+      }
+    }
+    for (uint i = 0; i < spheres.size(); i++) {
+      if (spheres[i]->is_big_group()) {
+        gpu_count++;
+        gpu_cost += spheres[i]->cost();
+        gpu_sizes.push_back(spheres[i]->number_of_points);
+      } else {
+        cpu_count++;
+        cpu_cost += spheres[i]->cost();
+      }
+    }
+    std::sort(gpu_sizes.begin(), gpu_sizes.end());
+    printf("  [partition] SPLIT_COST=%lld (P*M^2)  CPU: %d groups (cost %lld)  "
+           "GPU: %d groups (cost %lld)\n",
+           (long long)SPLIT_COST, cpu_count, cpu_cost, gpu_count, gpu_cost);
+    if (!gpu_sizes.empty()) {
+      printf("  [partition] GPU group points: min=%d median=%d max=%d\n",
+             gpu_sizes.front(),
+             gpu_sizes[gpu_sizes.size() / 2],
+             gpu_sizes.back());
+      // Show the smallest GPU group's P*M^2 vs the threshold
+      printf("  [partition] SPLIT_COST auto-tuned from %zu groups, %d CPU + %d GPU threads\n",
+             cubes.size() + spheres.size(), cpu_threads, gpu_threads);
+    }
+  }
 
   timeforgroup.resize(cubes.size() + spheres.size());
   next.resize(G2G::cpu_threads + G2G::gpu_threads);

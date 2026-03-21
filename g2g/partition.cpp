@@ -16,6 +16,8 @@ using namespace std;
 namespace G2G {
 
 int MINCOST, THRESHOLD, SPLITPOINTS;
+long long SPLIT_COST = 0;
+GPUHardware gpu_hw = {0, 0, 0, 0, 0, false};
 uint g2g_solve_epoch = 0;
 Partition partition;
 
@@ -42,11 +44,136 @@ bool PointGroupCPU<scalar_type>::is_big_group() const {
   return false;
 }
 
+#if GPU_KERNELS
 template <class scalar_type>
 bool PointGroupGPU<scalar_type>::is_big_group() const {
   return true;
 }
+#endif
 
+template <class scalar_type>
+void PointGroup<scalar_type>::move_base_from(PointGroup<scalar_type>& src) {
+  points = std::move(src.points);
+  number_of_points = src.number_of_points;
+  s_functions = src.s_functions;
+  p_functions = src.p_functions;
+  d_functions = src.d_functions;
+  func2global_nuc = std::move(src.func2global_nuc);
+  func2local_nuc = std::move(src.func2local_nuc);
+  local2global_func = std::move(src.local2global_func);
+  local2global_nuc = std::move(src.local2global_nuc);
+  inGlobal = src.inGlobal;
+}
+
+bool should_use_gpu(unsigned int points, unsigned int total_functions) {
+  if (cpu_threads == 0) return true;
+  if (gpu_threads == 0) return false;
+  long long pm2 = (long long)points * total_functions * total_functions;
+  return pm2 > SPLIT_COST;
+}
+
+// FP32 CUDA cores per SM, by compute capability major.minor.
+int cores_per_sm(int major, int minor) {
+  switch (major) {
+    case 2: return 32;                         // Fermi
+    case 3: return 192;                        // Kepler
+    case 5: return 128;                        // Maxwell
+    case 6: return (minor == 0) ? 64 : 128;   // Pascal (GP100 vs GP10x)
+    case 7: return (minor == 0) ? 64 : 64;    // Volta / Turing
+    case 8: return (minor == 0) ? 64 : 128;   // Ampere (A100 vs consumer)
+    case 9: return 128;                        // Hopper
+    case 10: return 128;                       // Blackwell
+    default: return 128;                       // future-proof guess
+  }
+}
+
+// Estimate SPEED_RATIO from GPU hardware properties.
+// Returns how many times faster the GPU kernel is vs one CPU core.
+// Scaled from measured GTX 1080 baseline (75x at 2560 cores, 1733 MHz).
+static double estimate_speed_ratio() {
+  if (!gpu_hw.valid) return 75.0;  // fallback if properties not available
+
+  // Reference: GTX 1080 (SM 6.1) measured 75x per-core speedup.
+  const double REF_CORES = 2560.0;   // 20 SMs * 128 cores
+  const double REF_CLOCK = 1733.0;   // boost clock MHz
+  const double REF_RATIO = 75.0;
+
+  double gpu_throughput = (double)gpu_hw.fp32_cores * gpu_hw.clock_mhz;
+  double ref_throughput = REF_CORES * REF_CLOCK;
+
+  // Scale linearly with FP32 throughput.  This is approximate: the density
+  // kernel is partially memory-bound, so actual scaling is sub-linear for
+  // very fast GPUs.  But directionally correct and much better than a
+  // fixed constant.
+  double ratio = REF_RATIO * (gpu_throughput / ref_throughput);
+
+  // Clamp to sane range: at minimum 10x (very old GPU), at most 2000x.
+  if (ratio < 10.0) ratio = 10.0;
+  if (ratio > 2000.0) ratio = 2000.0;
+  return ratio;
+}
+
+long long compute_optimal_split_cost(const std::vector<long long>& pm2_values,
+                                     int n_cpu, int n_gpu) {
+  // Trivial cases: only one device type available.
+  if (n_cpu == 0 || n_gpu == 0 || pm2_values.empty()) return 0;
+
+  // Performance model (all costs in units proportional to alpha_cpu):
+  //   T_cpu(group) = PM2                              (proportional to P*M^2)
+  //   T_gpu(group) = GPU_OVERHEAD + PM2 / SPEED_RATIO (fixed overhead + slope)
+  //
+  // SPEED_RATIO: estimated from GPU hardware (FP32 throughput vs reference).
+  // GPU_OVERHEAD: GPU fixed cost per group in PM2 units (kernel launch, memcpy,
+  //   CPU gather/scatter).  ~180K PM2 units, dominated by CPU-side work so
+  //   roughly constant across GPUs.
+  const double SPEED_RATIO = estimate_speed_ratio();
+  const double GPU_OVERHEAD = 180000.0;
+
+  std::vector<long long> sorted(pm2_values);
+  std::sort(sorted.begin(), sorted.end());
+  int N = (int)sorted.size();
+
+  // Initial GPU total: all groups on GPU, nothing on CPU.
+  // With multiple GPUs, groups are round-robin distributed, so effective
+  // GPU time is total / n_gpu.
+  double gpu_total = 0.0;
+  for (int j = 0; j < N; j++)
+    gpu_total += GPU_OVERHEAD + (double)sorted[j] / SPEED_RATIO;
+  gpu_total /= n_gpu;
+
+  long long best_threshold = 0;
+  double best_makespan = gpu_total;
+
+  // Try each split: groups 0..split go to CPU, split+1..N-1 go to GPU.
+  // Groups are sorted ascending by PM2.
+  for (int split = 0; split < N; split++) {
+    // Move group 'split' from GPU to CPU.
+    gpu_total -= (GPU_OVERHEAD + (double)sorted[split] / SPEED_RATIO) / n_gpu;
+
+    // LPT bin-pack CPU groups (0..split) into n_cpu threads.
+    // Assign largest-first to the least-loaded thread.
+    std::vector<double> loads(n_cpu, 0.0);
+    for (int i = split; i >= 0; i--) {
+      int min_t = 0;
+      for (int t = 1; t < n_cpu; t++)
+        if (loads[t] < loads[min_t]) min_t = t;
+      loads[min_t] += (double)sorted[i];
+    }
+    double cpu_bottleneck = 0.0;
+    for (int t = 0; t < n_cpu; t++)
+      if (loads[t] > cpu_bottleneck) cpu_bottleneck = loads[t];
+
+    double makespan = std::max(cpu_bottleneck, gpu_total);
+    if (makespan < best_makespan) {
+      best_makespan = makespan;
+      best_threshold = sorted[split];
+    }
+  }
+
+  return best_threshold;
+}
+
+#if GPU_KERNELS
 template <class scalar_type>
 void PointGroupGPU<scalar_type>::get_rmm_input(
     HostMatrix<scalar_type>& rmm_input, FortranMatrix<double>& source) const {
@@ -62,6 +189,7 @@ void PointGroupGPU<scalar_type>::get_rmm_input(
     rmm_input(this->rmm_rows[k], this->rmm_cols[k]) = val;
   }
 }
+#endif
 
 template <class scalar_type>
 void PointGroupCPU<scalar_type>::get_rmm_input(
@@ -80,6 +208,7 @@ void PointGroupCPU<scalar_type>::get_rmm_input(
   get_rmm_input(rmm_input, fortran_vars.rmm_input_ndens1);
 }
 
+#if GPU_KERNELS
 template <class scalar_type>
 void PointGroupGPU<scalar_type>::get_rmm_input(
     HostMatrix<scalar_type>& rmm_input) const {
@@ -87,15 +216,16 @@ void PointGroupGPU<scalar_type>::get_rmm_input(
 }
 
 template <class scalar_type>
-void PointGroupCPU<scalar_type>::get_rmm_input(
+void PointGroupGPU<scalar_type>::get_rmm_input(
     HostMatrix<scalar_type>& rmm_input_a,
     HostMatrix<scalar_type>& rmm_input_b) const {
   get_rmm_input(rmm_input_a, fortran_vars.rmm_dens_a);
   get_rmm_input(rmm_input_b, fortran_vars.rmm_dens_b);
 }
+#endif
 
 template <class scalar_type>
-void PointGroupGPU<scalar_type>::get_rmm_input(
+void PointGroupCPU<scalar_type>::get_rmm_input(
     HostMatrix<scalar_type>& rmm_input_a,
     HostMatrix<scalar_type>& rmm_input_b) const {
   get_rmm_input(rmm_input_a, fortran_vars.rmm_dens_a);
@@ -299,6 +429,7 @@ void PointGroupCPU<scalar_type>::deallocate() {
   function_values_transposed.deallocate();
 }
 
+#if GPU_KERNELS
 template <class scalar_type>
 void PointGroupGPU<scalar_type>::deallocate() {
   if (this->inGlobal) {
@@ -401,6 +532,7 @@ PointGroupGPU<scalar_type>::~PointGroupGPU<scalar_type>() {
     transpose_stream_2 = 0;
   }
 }
+#endif
 
 void Partition::compute_functions(bool forces, bool gga) {
   Timer t1;
@@ -586,6 +718,46 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
 
   Timer enditer;
   enditer.start();
+
+  // Print CPU vs GPU thread balance per SCF iteration
+  if (verbose > 3 && cpu_threads > 0 && gpu_threads > 0) {
+    double max_cpu = 0.0;
+    for (int i = 0; i < cpu_threads; i++)
+      if (next[i] > max_cpu) max_cpu = next[i];
+    double gpu_time = next[cpu_threads];
+    int cpu_groups = 0, gpu_groups = 0;
+    for (int i = 0; i < cpu_threads; i++) cpu_groups += work[i].size();
+    for (int i = cpu_threads; i < cpu_threads + gpu_threads; i++)
+      gpu_groups += work[i].size();
+    printf("  [balance] CPU max=%.1fms (%d groups/%d threads)  "
+           "GPU=%.1fms (%d groups/%d threads)  "
+           "idle=%.1fms (%s waits)\n",
+           max_cpu / 1e6, cpu_groups, cpu_threads,
+           gpu_time / 1e6, gpu_groups, gpu_threads,
+           fabs(gpu_time - max_cpu) / 1e6,
+           gpu_time > max_cpu ? "CPU" : "GPU");
+  }
+
+  // Dump per-group timing data on the second SCF iteration (first is cold)
+  static int solve_call = 0;
+  solve_call++;
+  if (verbose > 3 && solve_call == 2) {
+    printf("  [perfmodel] idx,device,points,functions,cost,time_us\n");
+    for (uint i = 0; i < cubes.size(); i++) {
+      printf("  [perfmodel] %u,%s,%u,%u,%lld,%.1f\n",
+             i, cubes[i]->is_big_group() ? "GPU" : "CPU",
+             cubes[i]->number_of_points, cubes[i]->total_functions(),
+             cubes[i]->cost(), timeforgroup[i] / 1e3);
+    }
+    for (uint i = 0; i < spheres.size(); i++) {
+      uint idx = i + cubes.size();
+      printf("  [perfmodel] %u,%s,%u,%u,%lld,%.1f\n",
+             idx, spheres[i]->is_big_group() ? "GPU" : "CPU",
+             spheres[i]->number_of_points, spheres[i]->total_functions(),
+             spheres[i]->cost(), timeforgroup[idx] / 1e3);
+    }
+  }
+
   if (work.size() > 1) rebalance(timeforgroup, next);
   if (compute_forces) {
     FortranMatrix<double> fort_forces_out(fort_forces_ptr, fortran_vars.atoms,

@@ -208,17 +208,15 @@ template<class T> void HostMatrix<T>::copy_submatrix(const CudaMatrix<T>& c, uns
   #endif
 }
 
+#if GPU_KERNELS
 template<class T> void HostMatrix<T>::copy_submatrix_async(const CudaMatrix<T>& c, cudaStream_t stream, unsigned int _elements) {
 	unsigned int _bytes = (_elements == 0 ? this->bytes() : _elements * sizeof(T));
 	if (_bytes > c.bytes())
     throw runtime_error("Can't copy more elements than what operator has");
 
-  #if GPU_KERNELS
 	cudaMemcpyAsync(this->data, c.data, _bytes, cudaMemcpyDeviceToHost, stream);
-  #else
-  assert(false);
-  #endif
 }
+#endif
 
 template<class T> void HostMatrix<T>::to_constant(const char* symbol) {
   #if GPU_KERNELS

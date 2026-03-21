@@ -15,7 +15,7 @@ def obtain_forces(file_in):
     return lista
 
 
-def error(fc, fc_ok):
+def error(fc, fc_ok, thre=1e-3):
     dim1 = len(fc)
     dim2 = len(fc_ok)
     scr = 0
@@ -25,7 +25,7 @@ def error(fc, fc_ok):
 
     for num in range(dim1):
         value = abs(fc[num] - fc_ok[num])
-        if value > 1e-3:
+        if value > thre:
             scr = -1
             print("Error detected in Forces:")
             print("Value in forces", fc[num])
@@ -34,7 +34,7 @@ def error(fc, fc_ok):
     return scr
 
 
-def Check():
+def Check(thre=1e-3):
     # Output
     fc = []
     is_file = os.path.isfile("forces")
@@ -62,7 +62,7 @@ def Check():
         print("Error reading in forces.ok.")
         return -1
 
-    ok_output = error(fc, fcok)
+    ok_output = error(fc, fcok, thre)
     if ok_output != 0:
         print("Test Forces:     ERROR")
     else:

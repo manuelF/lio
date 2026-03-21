@@ -46,6 +46,21 @@ extern "C" void g2g_init_(void) {
     if (cudaGetDeviceProperties(&devprop, i) != cudaSuccess)
       throw runtime_error("Could not get device propierties!");
     if (verbose > 2) cout << "  GPU Device used: " << devprop.name << endl;
+    // Store hardware properties from GPU 0 for performance model estimation.
+    if (i == 0) {
+      G2G::gpu_hw.sm_count = devprop.multiProcessorCount;
+      G2G::gpu_hw.clock_mhz = devprop.clockRate / 1000;
+      G2G::gpu_hw.major = devprop.major;
+      G2G::gpu_hw.minor = devprop.minor;
+      G2G::gpu_hw.fp32_cores = devprop.multiProcessorCount *
+                               G2G::cores_per_sm(devprop.major, devprop.minor);
+      G2G::gpu_hw.valid = true;
+      if (verbose > 3)
+        printf("  GPU HW: %d SMs, %d MHz, SM %d.%d, %d FP32 cores\n",
+               G2G::gpu_hw.sm_count, G2G::gpu_hw.clock_mhz,
+               G2G::gpu_hw.major, G2G::gpu_hw.minor,
+               G2G::gpu_hw.fp32_cores);
+    }
   }
   G2G::gpu_threads = devcount;
 #endif

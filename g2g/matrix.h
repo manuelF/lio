@@ -73,7 +73,9 @@ namespace G2G {
 
       void copy_to_tmp(T *) const;
       void copy_submatrix(const CudaMatrix<T>& c, unsigned int elements = 0);
+#if GPU_KERNELS
       void copy_submatrix_async(const CudaMatrix<T>& c, cudaStream_t stream, unsigned int elements = 0);
+#endif
       void copy_submatrix(const HostMatrix<T>& c, unsigned int elements = 0);
 
       void copy_transpose(const CudaMatrix<T>& cuda_matrix);

@@ -1,13 +1,189 @@
 WELCOME TO LIO
-lun mar 11 10:17:19 -03 2019
-  Using 4 CPU Threads and 0 GPU Threads.
+Fri 20 Mar 2026 09:55:40 PM CET
+G2G initialisation.
+  GPU Device used: NVIDIA GeForce GTX 1080
+  GPU HW: 20 SMs, 1771 MHz, SM 6.1, 2560 FP32 cores
+  Using 15 CPU Threads and 1 GPU Threads.
   QM atoms: 34 - MM atoms: 0
   Total number of basis: 364 (s: 106 p: 46 d: 20)
   Closed shell calculation - Occupied MO: 99
 AINT initialisation.
   Density basis - s: 207 p: 67 d: 66 - Total (w/contractions): 804
-Error found in lionml namelist. Using defaults for namelist lionml.
-iostat =   -1
+  Using device 0 for analytic integral calculations.
+  [partition] SPLIT_COST=34482336 (P*M^2)  CPU: 142 groups (cost 2831055620)  GPU: 23 groups (cost 13967736150)
+  [partition] GPU group points: min=2460 median=4074 max=9973
+  [partition] SPLIT_COST auto-tuned from 165 groups, 15 CPU + 1 GPU threads
+  [balance] CPU max=84.5ms (142 groups/15 threads)  GPU=100.7ms (23 groups/1 threads)  idle=16.1ms (CPU waits)
+  [balance] CPU max=90.4ms (142 groups/15 threads)  GPU=93.3ms (23 groups/1 threads)  idle=2.8ms (CPU waits)
+  [perfmodel] idx,device,points,functions,cost,time_us
+  [perfmodel] 0,CPU,13,3,250780,3.6
+  [perfmodel] 1,CPU,13,3,250780,4.1
+  [perfmodel] 2,CPU,14,3,250840,3.1
+  [perfmodel] 3,CPU,15,3,250900,3.5
+  [perfmodel] 4,CPU,19,3,251140,3.8
+  [perfmodel] 5,CPU,19,3,251140,3.7
+  [perfmodel] 6,CPU,19,3,251140,3.7
+  [perfmodel] 7,CPU,20,3,251200,3.9
+  [perfmodel] 8,CPU,21,3,251260,4.4
+  [perfmodel] 9,CPU,22,3,251320,4.6
+  [perfmodel] 10,CPU,23,3,251380,4.4
+  [perfmodel] 11,CPU,24,3,251440,4.3
+  [perfmodel] 12,CPU,24,3,251440,4.2
+  [perfmodel] 13,CPU,25,3,251500,5.3
+  [perfmodel] 14,CPU,28,3,251680,5.1
+  [perfmodel] 15,CPU,30,3,251800,4.9
+  [perfmodel] 16,CPU,30,3,251800,5.4
+  [perfmodel] 17,CPU,19,4,251900,5.0
+  [perfmodel] 18,CPU,33,3,251980,5.1
+  [perfmodel] 19,CPU,20,4,252000,5.0
+  [perfmodel] 20,CPU,21,4,252100,4.8
+  [perfmodel] 21,CPU,35,3,252100,5.8
+  [perfmodel] 22,CPU,36,3,252160,5.4
+  [perfmodel] 23,CPU,37,3,252220,6.3
+  [perfmodel] 24,CPU,37,3,252220,5.5
+  [perfmodel] 25,CPU,39,3,252340,5.6
+  [perfmodel] 26,CPU,40,3,252400,6.6
+  [perfmodel] 27,CPU,43,3,252580,6.6
+  [perfmodel] 28,CPU,46,3,252760,6.5
+  [perfmodel] 29,CPU,28,4,252800,5.6
+  [perfmodel] 30,CPU,49,3,252940,6.7
+  [perfmodel] 31,CPU,30,4,253000,6.0
+  [perfmodel] 32,CPU,50,3,253000,7.3
+  [perfmodel] 33,CPU,30,4,253000,6.5
+  [perfmodel] 34,CPU,32,4,253200,7.1
+  [perfmodel] 35,CPU,32,4,253200,6.6
+  [perfmodel] 36,CPU,36,4,253600,7.7
+  [perfmodel] 37,CPU,37,4,253700,7.7
+  [perfmodel] 38,CPU,66,3,253960,13.1
+  [perfmodel] 39,CPU,68,3,254080,8.6
+  [perfmodel] 40,CPU,48,4,254800,8.6
+  [perfmodel] 41,CPU,54,4,255400,11.5
+  [perfmodel] 42,CPU,55,4,255500,10.3
+  [perfmodel] 43,CPU,63,4,256300,11.7
+  [perfmodel] 44,CPU,67,4,256700,10.8
+  [perfmodel] 45,CPU,71,4,257100,12.7
+  [perfmodel] 46,CPU,37,6,257770,10.1
+  [perfmodel] 47,CPU,81,4,258100,12.9
+  [perfmodel] 48,CPU,87,4,258700,13.8
+  [perfmodel] 49,CPU,32,7,258960,11.2
+  [perfmodel] 50,CPU,34,7,259520,10.4
+  [perfmodel] 51,CPU,35,7,259800,11.1
+  [perfmodel] 52,CPU,47,6,259870,11.8
+  [perfmodel] 53,CPU,37,7,260360,12.4
+  [perfmodel] 54,CPU,54,6,261340,12.9
+  [perfmodel] 55,CPU,65,6,263650,15.3
+  [perfmodel] 56,CPU,51,7,264280,14.8
+  [perfmodel] 57,CPU,53,7,264840,16.1
+  [perfmodel] 58,CPU,58,7,266240,16.5
+  [perfmodel] 59,CPU,59,7,266520,17.0
+  [perfmodel] 60,CPU,48,8,267280,16.6
+  [perfmodel] 61,CPU,62,7,267360,16.9
+  [perfmodel] 62,CPU,44,9,269800,16.6
+  [perfmodel] 63,CPU,72,7,270160,19.4
+  [perfmodel] 64,CPU,65,8,273400,20.7
+  [perfmodel] 65,CPU,97,7,277160,27.0
+  [perfmodel] 66,CPU,55,10,280250,23.6
+  [perfmodel] 67,CPU,53,11,284980,27.3
+  [perfmodel] 68,CPU,101,8,286360,33.2
+  [perfmodel] 69,CPU,68,10,287400,19.4
+  [perfmodel] 70,CPU,53,13,298230,33.5
+  [perfmodel] 71,CPU,64,12,299920,34.9
+  [perfmodel] 72,CPU,96,10,302800,42.4
+  [perfmodel] 73,CPU,75,13,318250,47.0
+  [perfmodel] 74,CPU,80,14,334000,56.2
+  [perfmodel] 75,CPU,79,16,357440,69.0
+  [perfmodel] 76,CPU,103,14,358150,45.9
+  [perfmodel] 77,CPU,108,15,379600,45.0
+  [perfmodel] 78,CPU,85,19,411500,92.6
+  [perfmodel] 79,CPU,125,18,463750,126.2
+  [perfmodel] 80,CPU,132,18,475720,143.7
+  [perfmodel] 81,CPU,116,20,493600,138.2
+  [perfmodel] 82,CPU,132,20,527200,121.2
+  [perfmodel] 83,CPU,129,21,547990,164.2
+  [perfmodel] 84,CPU,126,23,597760,194.3
+  [perfmodel] 85,CPU,120,24,610000,199.0
+  [perfmodel] 86,CPU,131,24,643000,197.7
+  [perfmodel] 87,CPU,177,25,825250,305.9
+  [perfmodel] 88,CPU,167,28,928020,345.3
+  [perfmodel] 89,CPU,126,34,999700,252.9
+  [perfmodel] 90,CPU,164,31,1063440,292.4
+  [perfmodel] 91,CPU,146,35,1169800,401.4
+  [perfmodel] 92,CPU,156,36,1288960,406.1
+  [perfmodel] 93,CPU,168,35,1308400,398.1
+  [perfmodel] 94,CPU,199,34,1434050,366.7
+  [perfmodel] 95,CPU,159,40,1553800,641.6
+  [perfmodel] 96,CPU,234,38,1983940,519.3
+  [perfmodel] 97,CPU,264,43,2747440,1164.3
+  [perfmodel] 98,CPU,256,44,2784400,1134.6
+  [perfmodel] 99,CPU,246,53,3770260,1616.0
+  [perfmodel] 100,CPU,358,46,4119980,2100.6
+  [perfmodel] 101,CPU,281,52,4122180,2051.6
+  [perfmodel] 102,CPU,302,52,4411560,1121.8
+  [perfmodel] 103,CPU,378,51,5262280,2676.5
+  [perfmodel] 104,CPU,351,53,5272810,2695.9
+  [perfmodel] 105,CPU,302,62,6148060,2678.5
+  [perfmodel] 106,CPU,312,68,7569520,3141.8
+  [perfmodel] 107,CPU,400,60,7570000,3480.3
+  [perfmodel] 108,CPU,572,53,8435320,3954.9
+  [perfmodel] 109,CPU,383,68,9235180,3613.6
+  [perfmodel] 110,CPU,357,74,10156750,3749.6
+  [perfmodel] 111,CPU,375,76,11222500,5006.5
+  [perfmodel] 112,CPU,553,77,16856590,7295.6
+  [perfmodel] 113,CPU,742,73,20291420,7745.7
+  [perfmodel] 114,CPU,789,77,23943670,11617.8
+  [perfmodel] 115,CPU,628,105,35198200,15550.8
+  [perfmodel] 116,CPU,858,107,49825240,21187.0
+  [perfmodel] 117,CPU,2026,83,70876360,31379.6
+  [perfmodel] 118,CPU,1519,96,70974640,29885.9
+  [perfmodel] 119,CPU,1159,120,84393400,36737.5
+  [perfmodel] 120,CPU,2176,89,87398800,38261.1
+  [perfmodel] 121,CPU,1288,121,95317280,40018.5
+  [perfmodel] 122,CPU,1065,134,96579250,46035.4
+  [perfmodel] 123,GPU,2460,169,353629000,2746.4
+  [perfmodel] 124,GPU,3622,160,466763600,3491.2
+  [perfmodel] 125,GPU,3161,233,861970210,4539.1
+  [perfmodel] 126,GPU,4327,222,1071312310,5570.9
+  [perfmodel] 127,GPU,9426,156,1154557960,7782.2
+  [perfmodel] 128,GPU,4118,245,1241209300,6432.2
+  [perfmodel] 129,GPU,9973,210,2209768150,10972.2
+  [perfmodel] 130,GPU,7556,245,2277250600,10940.6
+  [perfmodel] 131,CPU,3492,54,52106200,23158.7
+  [perfmodel] 132,CPU,3492,54,52106200,23031.9
+  [perfmodel] 133,CPU,3492,55,54026800,23998.5
+  [perfmodel] 134,CPU,3492,58,59998120,26681.0
+  [perfmodel] 135,CPU,3492,61,66283720,26233.9
+  [perfmodel] 136,CPU,3492,62,68448760,30099.8
+  [perfmodel] 137,CPU,3492,63,70648720,30773.8
+  [perfmodel] 138,CPU,3492,68,82172320,25439.0
+  [perfmodel] 139,CPU,3492,77,105114760,32252.7
+  [perfmodel] 140,CPU,3492,83,121981120,63906.2
+  [perfmodel] 141,CPU,4074,77,122592220,52239.1
+  [perfmodel] 142,CPU,4074,79,128988400,54915.0
+  [perfmodel] 143,CPU,4074,79,128988400,55152.8
+  [perfmodel] 144,CPU,4074,80,132247600,50933.3
+  [perfmodel] 145,CPU,4074,82,138888220,59338.1
+  [perfmodel] 146,CPU,4074,88,159787840,63432.1
+  [perfmodel] 147,CPU,4074,89,163413700,70972.4
+  [perfmodel] 148,CPU,3492,97,166224760,69964.7
+  [perfmodel] 149,CPU,4074,92,174535720,75917.7
+  [perfmodel] 150,GPU,3492,103,187281520,2668.9
+  [perfmodel] 151,GPU,4074,98,197879740,2223.9
+  [perfmodel] 152,GPU,4074,98,197879740,2255.5
+  [perfmodel] 153,GPU,4074,102,214257220,2240.2
+  [perfmodel] 154,GPU,4074,103,218453440,2243.4
+  [perfmodel] 155,GPU,4074,107,235645720,2255.2
+  [perfmodel] 156,GPU,4074,107,235645720,2245.7
+  [perfmodel] 157,GPU,3492,116,237217120,2130.4
+  [perfmodel] 158,GPU,4074,117,281478220,2374.1
+  [perfmodel] 159,GPU,4074,120,296022400,2351.8
+  [perfmodel] 160,GPU,4074,121,300951940,2389.4
+  [perfmodel] 161,GPU,4656,119,332688400,3136.3
+  [perfmodel] 162,GPU,4656,131,402807760,3863.6
+  [perfmodel] 163,GPU,4656,144,486336400,3997.9
+  [perfmodel] 164,GPU,4656,147,506729680,4112.8
+  [balance] CPU max=83.4ms (142 groups/15 threads)  GPU=98.5ms (23 groups/1 threads)  idle=15.1ms (CPU waits)
+  [balance] CPU max=88.3ms (142 groups/15 threads)  GPU=93.2ms (23 groups/1 threads)  idle=4.9ms (CPU waits)
+Namelist &lionml not found.
 
 LIO input variables
  ! -- General and theory level: -- !
@@ -21,7 +197,7 @@ LIO input variables
   n_ghosts =     0
  ! -- Input and output options: -- !
   verbose =   4, style =  F, timers =   0, writeXYZ =  F, writeForces =  T,
-  dipole =  F, mulliken =  T, lowdin =  F, fukui =  F, print_coeffs =  F,
+  dipole =  T, mulliken =  T, lowdin =  F, fukui =  F, print_coeffs =  F,
   VCInp =  F, FRestartIn =      restart.in          , restart_freq =     0,
   FRestart =      restart.out         , TDRestart =  F, writeDens =  F,
   TD_rst_freq =    500, gaussian_convert =  F,
@@ -48,15 +224,15 @@ LIO input variables
   cube_orb_file =      orb.cube            , cube_elec_file =      dens.cube           
  ! -- GPU Options: -- !
   energy_all_iterations =  F, assign_all_functions =  F, remove_zero_weights =  T,
-  max_function_exponent =     8, free_global_memory =     0.70000000,
+  max_function_exponent =     8, free_global_memory =     0.00000000,
   sphere_radius =     0.60000000, little_cube_size =     8.00000000,
   min_points_per_cube =     1, gpu_level =     4
- ! -- Transport and DFTB: -- !
+ ! -- Transport and TBDFT: -- !
   transport_calc =  F, generate_rho0 =  F, driving_rate =     0.00100000,
-  gate_field =  T, pop_drive =   1, save_charge_freq =     1, DFTB_calc =  F,
+  gate_field =  T, pop_drive =   1, save_charge_freq =     1, TBDFT_calc =  F,
   MTB =     0, alfaTB =     0.00000000, betaTB =     0.00000000,
   gammaTB =     0.00000000, VBias_TB =     0.00000000, start_TDTB =     0,
-  end_TDTB =     0, end_BTB =     0, TBLoad =  F, TBSave =  F
+  end_TDTB =     0, end_BTB =     0
   nbias=    0
  ! -- Ehrenfest: -- !
   ndyn_steps =      0, edyn_steps =      0, nullify_forces =  F,
@@ -74,41 +250,62 @@ LIO input variables
 LIO initialisation.
 
 Starting SCF cycles.
-  Step =      1  - QM Energy =     -1440.65476 - Rho diff (crit) =  2.27E+00 ( 1.00E-06) - Energy diff (crit) =  1.44E+03 ( 1.00E+00)
-  Step =      2  - QM Energy =       403.86400 - Rho diff (crit) =  1.15E+00 ( 1.00E-06) - Energy diff (crit) =  1.84E+03 ( 1.00E+00)
-  Step =      3  - QM Energy =      -692.59696 - Rho diff (crit) =  9.57E-01 ( 1.00E-06) - Energy diff (crit) =  1.10E+03 ( 1.00E+00)
+  Step =      1  - QM Energy =  -1440.65191 - Rho diff (crit) = 2.00E+00 (1.00E-06) - Energy diff (crit) = 1.44E+03 (1.00E+00)
+  Step =      2  - QM Energy =    404.01485 - Rho diff (crit) = 1.08E+00 (1.00E-06) - Energy diff (crit) = 1.84E+03 (1.00E+00)
+  Step =      3  - QM Energy =   -692.26840 - Rho diff (crit) = 8.67E-01 (1.00E-06) - Energy diff (crit) = 1.10E+03 (1.00E+00)
+  Step =      4  - QM Energy =   -951.63742 - Rho diff (crit) = 7.24E-01 (1.00E-06) - Energy diff (crit) = 2.59E+02 (1.00E+00)
+  [balance] CPU max=89.9ms (142 groups/15 threads)  GPU=93.7ms (23 groups/1 threads)  idle=3.8ms (CPU waits)
+  [balance] CPU max=88.8ms (142 groups/15 threads)  GPU=97.0ms (23 groups/1 threads)  idle=8.2ms (CPU waits)
+  [balance] CPU max=86.1ms (142 groups/15 threads)  GPU=95.6ms (23 groups/1 threads)  idle=9.5ms (CPU waits)
+  [balance] CPU max=91.9ms (142 groups/15 threads)  GPU=93.2ms (23 groups/1 threads)  idle=1.3ms (CPU waits)
+  [balance] CPU max=88.8ms (142 groups/15 threads)  GPU=94.8ms (23 groups/1 threads)  idle=6.0ms (CPU waits)
+  [balance] CPU max=89.2ms (142 groups/15 threads)  GPU=93.3ms (23 groups/1 threads)  idle=4.0ms (CPU waits)
+  [balance] CPU max=86.7ms (142 groups/15 threads)  GPU=93.5ms (23 groups/1 threads)  idle=6.8ms (CPU waits)
+  [balance] CPU max=86.7ms (142 groups/15 threads)  GPU=94.2ms (23 groups/1 threads)  idle=7.5ms (CPU waits)
+  [balance] CPU max=83.9ms (142 groups/15 threads)  GPU=93.4ms (23 groups/1 threads)  idle=9.4ms (CPU waits)
+  [balance] CPU max=88.1ms (142 groups/15 threads)  GPU=93.3ms (23 groups/1 threads)  idle=5.3ms (CPU waits)
+  [balance] CPU max=91.3ms (142 groups/15 threads)  GPU=93.3ms (23 groups/1 threads)  idle=2.0ms (CPU waits)
+  [balance] CPU max=89.7ms (142 groups/15 threads)  GPU=93.4ms (23 groups/1 threads)  idle=3.7ms (CPU waits)
+  [balance] CPU max=119.1ms (142 groups/15 threads)  GPU=98.6ms (23 groups/1 threads)  idle=20.6ms (GPU waits)
+  [balance] CPU max=98.1ms (142 groups/15 threads)  GPU=94.0ms (23 groups/1 threads)  idle=4.1ms (GPU waits)
+  [balance] CPU max=87.6ms (142 groups/15 threads)  GPU=93.5ms (23 groups/1 threads)  idle=5.9ms (CPU waits)
+  [balance] CPU max=88.4ms (142 groups/15 threads)  GPU=93.8ms (23 groups/1 threads)  idle=5.4ms (CPU waits)
+  [balance] CPU max=102.4ms (142 groups/15 threads)  GPU=96.6ms (23 groups/1 threads)  idle=5.7ms (GPU waits)
+  [balance] CPU max=99.7ms (142 groups/15 threads)  GPU=100.4ms (23 groups/1 threads)  idle=0.7ms (CPU waits)
+  [balance] CPU max=86.7ms (142 groups/15 threads)  GPU=93.4ms (23 groups/1 threads)  idle=6.6ms (CPU waits)
+  [balance] CPU max=88.3ms (142 groups/15 threads)  GPU=93.3ms (23 groups/1 threads)  idle=5.0ms (CPU waits)
+  [balance] CPU max=84.5ms (142 groups/15 threads)  GPU=93.3ms (23 groups/1 threads)  idle=8.8ms (CPU waits)
+  [balance] CPU max=67.8ms (142 groups/15 threads)  GPU=83.5ms (23 groups/1 threads)  idle=15.7ms (CPU waits)
+  [balance] CPU max=120.9ms (142 groups/15 threads)  GPU=185.0ms (23 groups/1 threads)  idle=64.1ms (CPU waits)
 G2G Deinitialisation.
-  Step =      4  - QM Energy =      -951.73510 - Rho diff (crit) =  8.14E-01 ( 1.00E-06) - Energy diff (crit) =  2.59E+02 ( 1.00E+00)
-  Step =      5  - QM Energy =     -1566.54903 - Rho diff (crit) =  6.04E-01 ( 1.00E-06) - Energy diff (crit) =  6.15E+02 ( 1.00E+00)
-  Step =      6  - QM Energy =     -1817.26622 - Rho diff (crit) =  4.50E-01 ( 1.00E-06) - Energy diff (crit) =  2.51E+02 ( 1.00E+00)
-  Step =      7  - QM Energy =     -1802.65718 - Rho diff (crit) =  4.47E-01 ( 1.00E-06) - Energy diff (crit) =  1.46E+01 ( 1.00E+00)
-  Step =      8  - QM Energy =     -1715.90991 - Rho diff (crit) =  3.06E-01 ( 1.00E-06) - Energy diff (crit) =  8.67E+01 ( 1.00E+00)
-  Step =      9  - QM Energy =     -2040.67582 - Rho diff (crit) =  1.52E-01 ( 1.00E-06) - Energy diff (crit) =  3.25E+02 ( 1.00E+00)
-  Step =     10  - QM Energy =     -2138.18130 - Rho diff (crit) =  2.02E-01 ( 1.00E-06) - Energy diff (crit) =  9.75E+01 ( 1.00E+00)
-  Step =     11  - QM Energy =     -2087.85647 - Rho diff (crit) =  2.56E-01 ( 1.00E-06) - Energy diff (crit) =  5.03E+01 ( 1.00E+00)
-  Step =     12  - QM Energy =     -2113.20759 - Rho diff (crit) =  1.69E-01 ( 1.00E-06) - Energy diff (crit) =  2.54E+01 ( 1.00E+00)
-  Step =     13  - QM Energy =     -2149.28427 - Rho diff (crit) =  2.89E-02 ( 1.00E-06) - Energy diff (crit) =  3.61E+01 ( 1.00E+00)
-  Step =     14  - QM Energy =     -2145.22409 - Rho diff (crit) =  2.48E-02 ( 1.00E-06) - Energy diff (crit) =  4.06E+00 ( 1.00E+00)
-  Step =     15  - QM Energy =     -2148.58533 - Rho diff (crit) =  5.81E-03 ( 1.00E-06) - Energy diff (crit) =  3.36E+00 ( 1.00E+00)
-  Step =     16  - QM Energy =     -2148.69828 - Rho diff (crit) =  3.45E-03 ( 1.00E-06) - Energy diff (crit) =  1.13E-01 ( 1.00E+00)
-  Step =     17  - QM Energy =     -2148.64119 - Rho diff (crit) =  1.90E-03 ( 1.00E-06) - Energy diff (crit) =  5.71E-02 ( 1.00E+00)
-  Step =     18  - QM Energy =     -2148.64812 - Rho diff (crit) =  7.52E-04 ( 1.00E-06) - Energy diff (crit) =  6.93E-03 ( 1.00E+00)
-  Step =     19  - QM Energy =     -2148.66710 - Rho diff (crit) =  3.29E-04 ( 1.00E-06) - Energy diff (crit) =  1.90E-02 ( 1.00E+00)
-  Step =     20  - QM Energy =     -2148.65574 - Rho diff (crit) =  1.76E-04 ( 1.00E-06) - Energy diff (crit) =  1.14E-02 ( 1.00E+00)
-  Step =     21  - QM Energy =     -2148.65314 - Rho diff (crit) =  1.52E-04 ( 1.00E-06) - Energy diff (crit) =  2.59E-03 ( 1.00E+00)
-  Step =     22  - QM Energy =     -2148.65217 - Rho diff (crit) =  7.39E-05 ( 1.00E-06) - Energy diff (crit) =  9.71E-04 ( 1.00E+00)
-  Step =     23  - QM Energy =     -2148.64952 - Rho diff (crit) =  3.08E-05 ( 1.00E-06) - Energy diff (crit) =  2.65E-03 ( 1.00E+00)
-  Step =     24  - QM Energy =     -2148.65086 - Rho diff (crit) =  1.48E-05 ( 1.00E-06) - Energy diff (crit) =  1.34E-03 ( 1.00E+00)
-  Step =     25  - QM Energy =     -2148.65075 - Rho diff (crit) =  5.81E-06 ( 1.00E-06) - Energy diff (crit) =  1.12E-04 ( 1.00E+00)
-  Step =     26  - QM Energy =     -2148.65085 - Rho diff (crit) =  2.23E-06 ( 1.00E-06) - Energy diff (crit) =  1.04E-04 ( 1.00E+00)
-  Step =     27  - QM Energy =     -2148.65090 - Rho diff (crit) =  6.93E-07 ( 1.00E-06) - Energy diff (crit) =  4.22E-05 ( 1.00E+00)
-  Convergence achieved in     27 iterations. Final energy  -2148.6508956 A.U.
+  Step =      5  - QM Energy =  -1566.35650 - Rho diff (crit) = 5.56E-01 (1.00E-06) - Energy diff (crit) = 6.15E+02 (1.00E+00)
+  Step =      6  - QM Energy =  -1817.40384 - Rho diff (crit) = 4.13E-01 (1.00E-06) - Energy diff (crit) = 2.51E+02 (1.00E+00)
+  Step =      7  - QM Energy =  -1802.31611 - Rho diff (crit) = 4.14E-01 (1.00E-06) - Energy diff (crit) = 1.51E+01 (1.00E+00)
+  Step =      8  - QM Energy =  -1715.39170 - Rho diff (crit) = 2.96E-01 (1.00E-06) - Energy diff (crit) = 8.69E+01 (1.00E+00)
+  Step =      9  - QM Energy =  -2045.61750 - Rho diff (crit) = 1.44E-01 (1.00E-06) - Energy diff (crit) = 3.30E+02 (1.00E+00)
+  Step =     10  - QM Energy =  -2141.26511 - Rho diff (crit) = 1.20E-01 (1.00E-06) - Energy diff (crit) = 9.56E+01 (1.00E+00)
+  Step =     11  - QM Energy =  -2136.93897 - Rho diff (crit) = 1.24E-01 (1.00E-06) - Energy diff (crit) = 4.33E+00 (1.00E+00)
+  Step =     12  - QM Energy =  -2144.89586 - Rho diff (crit) = 4.21E-02 (1.00E-06) - Energy diff (crit) = 7.96E+00 (1.00E+00)
+  Step =     13  - QM Energy =  -2148.45464 - Rho diff (crit) = 8.81E-03 (1.00E-06) - Energy diff (crit) = 3.56E+00 (1.00E+00)
+  Step =     14  - QM Energy =  -2148.37402 - Rho diff (crit) = 5.95E-03 (1.00E-06) - Energy diff (crit) = 8.06E-02 (1.00E+00)
+  Step =     15  - QM Energy =  -2148.67684 - Rho diff (crit) = 2.30E-03 (1.00E-06) - Energy diff (crit) = 3.03E-01 (1.00E+00)
+  Step =     16  - QM Energy =  -2148.57604 - Rho diff (crit) = 1.31E-03 (1.00E-06) - Energy diff (crit) = 1.01E-01 (1.00E+00)
+  Step =     17  - QM Energy =  -2148.60771 - Rho diff (crit) = 8.22E-04 (1.00E-06) - Energy diff (crit) = 3.17E-02 (1.00E+00)
+  Step =     18  - QM Energy =  -2148.63534 - Rho diff (crit) = 4.43E-04 (1.00E-06) - Energy diff (crit) = 2.76E-02 (1.00E+00)
+  Step =     19  - QM Energy =  -2148.64936 - Rho diff (crit) = 1.43E-04 (1.00E-06) - Energy diff (crit) = 1.40E-02 (1.00E+00)
+  Step =     20  - QM Energy =  -2148.64748 - Rho diff (crit) = 6.75E-05 (1.00E-06) - Energy diff (crit) = 1.88E-03 (1.00E+00)
+  Step =     21  - QM Energy =  -2148.65023 - Rho diff (crit) = 2.18E-05 (1.00E-06) - Energy diff (crit) = 2.75E-03 (1.00E+00)
+  Step =     22  - QM Energy =  -2148.65080 - Rho diff (crit) = 8.81E-06 (1.00E-06) - Energy diff (crit) = 5.69E-04 (1.00E+00)
+  Step =     23  - QM Energy =  -2148.65091 - Rho diff (crit) = 3.21E-06 (1.00E-06) - Energy diff (crit) = 1.12E-04 (1.00E+00)
+  Step =     24  - QM Energy =  -2148.65080 - Rho diff (crit) = 1.64E-06 (1.00E-06) - Energy diff (crit) = 1.09E-04 (1.00E+00)
+  Step =     25  - QM Energy =  -2148.65084 - Rho diff (crit) = 8.46E-07 (1.00E-06) - Energy diff (crit) = 4.02E-05 (1.00E+00)
+  Convergence achieved in     25 iterations. Final energy  -2148.6508386 A.U.
 
 Final Energy Contributions in A.U.
-  Total energy = -2341.457177
-  One electron = -8447.402967
-  Coulomb      =  3711.393371
+  Total energy = -2341.463612
+  One electron = -8447.403995
+  Coulomb      =  3711.394457
   Nuclear      =  2587.358700
-  Exch. Corr.  =  -221.250571
+  Exch. Corr.  =  -221.257062
   QM-MM energy =    28.444289
 

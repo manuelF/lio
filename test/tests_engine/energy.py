@@ -42,7 +42,7 @@ def obtain_energies(file_in):
     return energies
 
 
-def error(ene, ene_ok):
+def error(ene, ene_ok, total_energy_thre=1.5e-4):
     tipo = [
         "Total energy",
         "One electron",
@@ -62,7 +62,7 @@ def error(ene, ene_ok):
         value = abs(ene[num] - ene_ok[num])
         thre = 1e-2
         if tipo[num] == "Total energy":
-            thre = 1.5e-4
+            thre = total_energy_thre
         if value > thre:
             scr = -1
             print("Error in", tipo[num])
@@ -72,7 +72,7 @@ def error(ene, ene_ok):
     return scr
 
 
-def Check():
+def Check(total_energy_thre=1.5e-4):
     # Output
     is_file = os.path.isfile("output")
     if is_file == False:
@@ -101,7 +101,7 @@ def Check():
         print("Error in reading energies in output.ok.")
         return -1
 
-    ok_output = error(energies, energiesok)
+    ok_output = error(energies, energiesok, total_energy_thre)
 
     if ok_output != 0:
         print("Test Energy:     ERROR")
