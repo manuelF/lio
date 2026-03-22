@@ -408,10 +408,10 @@ extern "C" void g2g_solve_groups_(const uint& computation_type,
 /* general options */
 namespace G2G {
 uint max_function_exponent = 10;
-double little_cube_size = 8.0;
+double little_cube_size = -1.0;
 uint min_points_per_cube = 1;
 bool assign_all_functions = false;
-double sphere_radius = 0.6;
+double sphere_radius = -1.0;
 bool remove_zero_weights = true;
 bool energy_all_iterations = false;
 double free_global_memory = 0.0;

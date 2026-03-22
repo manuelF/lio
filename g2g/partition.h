@@ -389,7 +389,8 @@ bool should_use_gpu(unsigned int points, unsigned int total_functions);
 // Uses LPT bin-packing simulation to minimize parallel makespan =
 // max(CPU_bottleneck, GPU_total) given the actual group distribution.
 long long compute_optimal_split_cost(const std::vector<long long>& pm2_values,
-                                     int n_cpu, int n_gpu);
+                                     int n_cpu, int n_gpu,
+                                     double* out_makespan = nullptr);
 
 // Epoch counter incremented once per Partition::solve() call (i.e. once per SCF
 // iteration).  GPU groups check this to upload shared data (global RMM) only

@@ -81,9 +81,9 @@ subroutine lio_defaults()
     mulliken       = .false.       ; dipole             = .false.       ;
 
 !   Old GPU_options
-    max_function_exponent = 10     ; little_cube_size     = 8.0         ;
+    max_function_exponent = 10     ; little_cube_size     = -1.0        ;
     min_points_per_cube   = 1      ; assign_all_functions = .false.     ;
-    sphere_radius         = 0.6    ; remove_zero_weights  = .true.      ;
+    sphere_radius         = -1.0   ; remove_zero_weights  = .true.      ;
     energy_all_iterations = .false.; free_global_memory   = 0.0         ;
 
 !   Cube, grid and other options.

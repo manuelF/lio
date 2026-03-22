@@ -114,7 +114,8 @@ static double estimate_speed_ratio() {
 }
 
 long long compute_optimal_split_cost(const std::vector<long long>& pm2_values,
-                                     int n_cpu, int n_gpu) {
+                                     int n_cpu, int n_gpu,
+                                     double* out_makespan) {
   // Trivial cases: only one device type available.
   if (n_cpu == 0 || n_gpu == 0 || pm2_values.empty()) return 0;
 
@@ -170,6 +171,7 @@ long long compute_optimal_split_cost(const std::vector<long long>& pm2_values,
     }
   }
 
+  if (out_makespan) *out_makespan = best_makespan;
   return best_threshold;
 }
 

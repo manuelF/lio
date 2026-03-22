@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <climits>
+#include <cfloat>
 #include <cassert>
 
 #include "common.h"
@@ -15,6 +16,134 @@
 
 using namespace std;
 using namespace G2G;
+
+/************************************************************
+ * Evaluate a (cube_size, sphere_radius) pair: separate all
+ * points into sphere vs cube groups, assign basis functions,
+ * and return the predicted parallel makespan.
+ ************************************************************/
+static double evaluate_partition(
+    double cube_size, double sr,
+    const double3& x0, const double3& x1,
+    const std::vector<Point>& all_points,
+    const std::vector<double>& min_exps_func,
+    const std::vector<double>& min_coeff_func,
+    int n_cpu, int n_gpu,
+    int& out_n_groups) {
+
+  // Separate points into per-atom sphere groups and cube points.
+  typedef vector<Point> Group;
+  vector<Group> sphere_pts;
+  std::vector<Point> cube_pts;
+  vector<double> sr_array;
+
+  if (sr > 0) {
+    sphere_pts.resize(fortran_vars.atoms);
+    sr_array.resize(fortran_vars.atoms);
+    for (uint atom = 0; atom < fortran_vars.atoms; atom++) {
+      uint atom_shells = fortran_vars.shells(atom);
+      uint included_shells = (uint)ceil(sr * atom_shells);
+      if (included_shells == 0) {
+        sr_array[atom] = 0;
+      } else {
+        double x = cos((M_PI / (atom_shells + 1)) *
+                       (atom_shells - included_shells + 1));
+        double rm = fortran_vars.rm(atom);
+        sr_array[atom] = rm * (1.0 + x) / (1.0 - x);
+      }
+    }
+  }
+
+  for (size_t p = 0; p < all_points.size(); p++) {
+    const Point& pt = all_points[p];
+    if (sr > 0) {
+      uint atom_shells = fortran_vars.shells(pt.atom);
+      uint included_shells = (uint)ceil(sr * atom_shells);
+      if (pt.shell >= (atom_shells - included_shells)) {
+        sphere_pts[pt.atom].push_back(pt);
+        continue;
+      }
+    }
+    cube_pts.push_back(pt);
+  }
+
+  // Build cube groups.
+  uint3 prism_size = ceil_uint3((x1 - x0) / cube_size);
+
+  vector<vector<vector<Group> > > prism(
+      prism_size.x,
+      vector<vector<Group> >(prism_size.y, vector<Group>(prism_size.z)));
+
+  for (size_t p = 0; p < cube_pts.size(); p++) {
+    uint3 cc = floor_uint3((cube_pts[p].position - x0) / cube_size);
+    if (cc.x >= prism_size.x || cc.y >= prism_size.y || cc.z >= prism_size.z)
+      continue;
+    prism[cc.x][cc.y][cc.z].push_back(cube_pts[p]);
+  }
+
+  // Temporarily set the global little_cube_size for assign_functions_as_cube().
+  double saved_lcs = little_cube_size;
+  little_cube_size = cube_size;
+
+  std::vector<long long> all_pm2;
+  int n_groups = 0;
+
+  for (uint i = 0; i < prism_size.x; i++) {
+    for (uint j = 0; j < prism_size.y; j++) {
+      for (uint k = 0; k < prism_size.z; k++) {
+        if (prism[i][j][k].empty()) continue;
+
+        double3 cube_coord_abs = x0 + make_uint3(i, j, k) * cube_size;
+
+        PointGroupCPU<base_scalar_type> cube_tmp;
+        for (uint pt = 0; pt < prism[i][j][k].size(); pt++)
+          cube_tmp.add_point(prism[i][j][k][pt]);
+
+        cube_tmp.assign_functions_as_cube(cube_coord_abs, min_exps_func,
+                                          min_coeff_func);
+
+        if (cube_tmp.total_functions_simple() == 0 ||
+            cube_tmp.number_of_points < min_points_per_cube)
+          continue;
+
+        all_pm2.push_back(
+            (long long)cube_tmp.number_of_points *
+            cube_tmp.total_functions() * cube_tmp.total_functions());
+        n_groups++;
+      }
+    }
+  }
+
+  little_cube_size = saved_lcs;
+
+  // Build sphere groups.
+  if (sr > 0) {
+    for (uint i = 0; i < fortran_vars.atoms; i++) {
+      if (sphere_pts[i].empty()) continue;
+
+      PointGroupCPU<base_scalar_type> sphere_tmp;
+      for (uint pt = 0; pt < sphere_pts[i].size(); pt++)
+        sphere_tmp.add_point(sphere_pts[i][pt]);
+
+      sphere_tmp.assign_functions_as_sphere(i, sr_array[i],
+                                            min_exps_func, min_coeff_func);
+
+      if (sphere_tmp.total_functions_simple() == 0 ||
+          sphere_tmp.number_of_points < min_points_per_cube)
+        continue;
+
+      all_pm2.push_back(
+          (long long)sphere_tmp.number_of_points *
+          sphere_tmp.total_functions() * sphere_tmp.total_functions());
+      n_groups++;
+    }
+  }
+
+  out_n_groups = n_groups;
+  double makespan = 0.0;
+  compute_optimal_split_cost(all_pm2, n_cpu, n_gpu, &makespan);
+  return makespan;
+}
 
 /************************************************************
  * Construct partition
@@ -161,6 +290,13 @@ struct Sorter {
 /* methods */
 void Partition::regenerate(void) {
   Timer tweights;
+
+  // Environment variable overrides.
+  char* lcs_env = getenv("LIO_CUBE_SIZE");
+  if (lcs_env) little_cube_size = atof(lcs_env);
+  char* sr_env = getenv("LIO_SPHERE_RADIUS");
+  if (sr_env) sphere_radius = atof(sr_env);
+
   // Determina el exponente minimo para cada tipo de atomo.
   // uno por elemento de la tabla periodica.
   vector<double> min_exps(120, numeric_limits<double>::max());
@@ -216,37 +352,7 @@ void Partition::regenerate(void) {
   // lejano
   // y x1 el vertice superior, derecho y mas cercano.
 
-  // Generamos la particion en cubos.
-  uint3 prism_size = ceil_uint3((x1 - x0) / little_cube_size);
-
   typedef vector<Point> Group;
-  vector<vector<vector<Group> > > prism(
-      prism_size.x,
-      vector<vector<Group> >(prism_size.y, vector<Group>(prism_size.z)));
-
-  // Inicializamos las esferas.
-  vector<Group> sphere_points;
-  vector<double> sphere_radius_array;
-  if (sphere_radius > 0) {
-    sphere_radius_array.resize(fortran_vars.atoms);
-    sphere_points.resize(fortran_vars.atoms);
-    for (uint atom = 0; atom < fortran_vars.atoms; atom++) {
-      uint atom_shells = fortran_vars.shells(atom);
-      uint included_shells = (uint)ceil(sphere_radius * atom_shells);
-      double radius;
-      if (included_shells == 0) {
-        radius = 0;
-      } else {
-        double x = cos((M_PI / (atom_shells + 1)) *
-                       (atom_shells - included_shells + 1));
-        double rm = fortran_vars.rm(atom);
-        radius = rm * (1.0 + x) / (1.0 - x);
-      }
-      _DBG(cout << "esfera incluye " << included_shells << " capas de "
-                << atom_shells << " (radio: " << radius << ")" << endl);
-      sphere_radius_array[atom] = radius;
-    }
-  }
 
   // Precomputamos las distancias entre atomos.
   for (uint i = 0; i < fortran_vars.atoms; i++) {
@@ -262,7 +368,10 @@ void Partition::regenerate(void) {
     fortran_vars.nearest_neighbor_dists(i) = nearest_neighbor_dist;
   }
 
-  // Computamos los puntos y los asignamos a los cubos y esferas.
+  // =========================================================================
+  // Point generation pass: generate ALL points into a flat vector.
+  // Sphere/cube separation happens later, after auto-tuning sphere_radius.
+  // =========================================================================
   uint puntos_totales = 0;
   uint puntos_finales = 0;
   uint funciones_finales = 0;
@@ -271,7 +380,8 @@ void Partition::regenerate(void) {
   // Limpiamos las colecciones de las esferas y cubos que tengamos guardadas.
   this->clear();
 
-  // Computa las posiciones de los puntos (y los guarda).
+  std::vector<Point> all_points;
+
   for (uint atom = 0; atom < fortran_vars.atoms; atom++) {
     uint atom_shells = fortran_vars.shells(atom);
     const double3& atom_position(fortran_vars.atom_positions(atom));
@@ -300,26 +410,107 @@ void Partition::regenerate(void) {
           double point_weight =
               wrad * fortran_vars.wang(point);  // integration weight
           Point point_object(atom, shell, point, point_position, point_weight);
-          uint included_shells = (uint)ceil(sphere_radius * atom_shells);
-
-          // Si esta capa esta muy lejos del nucleo, la modelamos como esfera,
-          // sino como cubo.
-          if (shell >= (atom_shells - included_shells)) {
-            // Asignamos este punto a la esfera de este atomo.
-            sphere_points[atom].push_back(point_object);
-          } else {
-            // Insertamos este punto en el cubo correspondiente.
-            uint3 cube_coord =
-                floor_uint3((point_position - x0) / little_cube_size);
-            if (cube_coord.x >= prism_size.x || cube_coord.y >= prism_size.y ||
-                cube_coord.z >= prism_size.z)
-              throw std::runtime_error("Se accedio a un cubo invalido");
-            prism[cube_coord.x][cube_coord.y][cube_coord.z].push_back(
-                point_object);
-          }
+          all_points.push_back(point_object);
         }
       }
     }
+  }
+
+  // =========================================================================
+  // Auto-tune little_cube_size and sphere_radius: try multiple (cube_size,
+  // sphere_radius) pairs, pick the one that minimizes predicted parallel
+  // makespan.  Activated when little_cube_size < 0 or sphere_radius < 0.
+  // =========================================================================
+  bool do_autotune = (little_cube_size < 0 || sphere_radius < 0);
+#if GPU_KERNELS
+  if (G2G::cpu_threads > 0 && G2G::gpu_threads > 0 && do_autotune) {
+    const double cs_candidates[] = {4.0, 5.6, 8.0, 11.3, 16.0};
+    const double sr_candidates[] = {0.0, 0.3, 0.6, 0.9};
+    const int n_cs = 5, n_sr = 4;
+    double best_makespan = DBL_MAX;
+    double best_cs = 8.0, best_sr = 0.6;
+
+    for (int ci = 0; ci < n_cs; ci++) {
+      // If cube_size is explicitly set (>0), only try that value.
+      double cs = (little_cube_size > 0) ? little_cube_size : cs_candidates[ci];
+      for (int si = 0; si < n_sr; si++) {
+        // If sphere_radius is explicitly set (>=0), only try that value.
+        double sr = (sphere_radius >= 0) ? sphere_radius : sr_candidates[si];
+        int ng = 0;
+        double ms = evaluate_partition(cs, sr, x0, x1, all_points,
+                                       min_exps_func, min_coeff_func,
+                                       cpu_threads, gpu_threads, ng);
+        if (verbose > 3)
+          printf("  [partition] cube_size=%.1f sphere_radius=%.1f: "
+                 "%d groups, makespan=%.0f\n", cs, sr, ng, ms);
+        if (ms < best_makespan) {
+          best_makespan = ms;
+          best_cs = cs;
+          best_sr = sr;
+        }
+        // Skip remaining sr candidates if sphere_radius is fixed.
+        if (sphere_radius >= 0) break;
+      }
+      // Skip remaining cs candidates if cube_size is fixed.
+      if (little_cube_size > 0) break;
+    }
+    if (little_cube_size < 0) little_cube_size = best_cs;
+    if (sphere_radius < 0) sphere_radius = best_sr;
+  }
+#endif
+  if (little_cube_size < 0) little_cube_size = 8.0;   // fallback for CPU-only
+  if (sphere_radius < 0) sphere_radius = 0.6;         // fallback for CPU-only
+
+  if (do_autotune && verbose > 0)
+    printf("  Auto-detected cube_size=%.1f sphere_radius=%.1f\n",
+           little_cube_size, sphere_radius);
+
+  // =========================================================================
+  // Separate points into sphere vs cube using the (possibly auto-tuned) params.
+  // =========================================================================
+  vector<Group> sphere_points;
+  vector<double> sphere_radius_array;
+  if (sphere_radius > 0) {
+    sphere_radius_array.resize(fortran_vars.atoms);
+    sphere_points.resize(fortran_vars.atoms);
+    for (uint atom = 0; atom < fortran_vars.atoms; atom++) {
+      uint atom_shells = fortran_vars.shells(atom);
+      uint included_shells = (uint)ceil(sphere_radius * atom_shells);
+      double radius;
+      if (included_shells == 0) {
+        radius = 0;
+      } else {
+        double x = cos((M_PI / (atom_shells + 1)) *
+                       (atom_shells - included_shells + 1));
+        double rm = fortran_vars.rm(atom);
+        radius = rm * (1.0 + x) / (1.0 - x);
+      }
+      sphere_radius_array[atom] = radius;
+    }
+  }
+
+  uint3 prism_size = ceil_uint3((x1 - x0) / little_cube_size);
+
+  vector<vector<vector<Group> > > prism(
+      prism_size.x,
+      vector<vector<Group> >(prism_size.y, vector<Group>(prism_size.z)));
+
+  for (size_t p = 0; p < all_points.size(); p++) {
+    const Point& pt = all_points[p];
+    if (sphere_radius > 0) {
+      uint atom_shells = fortran_vars.shells(pt.atom);
+      uint included_shells = (uint)ceil(sphere_radius * atom_shells);
+      if (pt.shell >= (atom_shells - included_shells)) {
+        sphere_points[pt.atom].push_back(pt);
+        continue;
+      }
+    }
+    uint3 cube_coord =
+        floor_uint3((pt.position - x0) / little_cube_size);
+    if (cube_coord.x >= prism_size.x || cube_coord.y >= prism_size.y ||
+        cube_coord.z >= prism_size.z)
+      throw std::runtime_error("Se accedio a un cubo invalido");
+    prism[cube_coord.x][cube_coord.y][cube_coord.z].push_back(pt);
   }
 
   G2G::MINCOST = getintenv("LIO_MINCOST_OFFSET", 250000);
