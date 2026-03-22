@@ -46,9 +46,18 @@ SRCS_CPP := $(wildcard *_cpu_test.cpp)
 BINS_CPP := $(SRCS_CPP:.cpp=)
 
 BINS := $(BINS_CU) $(BINS_CPP)
-CHECKS:= racecheck memcheck initcheck synccheck
 
-.PHONY: all build run clean
+# compute-sanitizer path: auto-detect from PATH, fall back to known locations.
+SANITIZER := $(shell command -v compute-sanitizer 2>/dev/null)
+ifeq ($(SANITIZER),)
+  ifneq ($(wildcard $(CUDA_HOME)/bin/compute-sanitizer),)
+    SANITIZER := $(CUDA_HOME)/bin/compute-sanitizer
+  endif
+endif
+
+SANITIZER_CHECKS := memcheck racecheck initcheck synccheck
+
+.PHONY: all build run sanitize clean
 
 all: build run
 
@@ -61,14 +70,27 @@ build: $(BINS)
             $(G2G_DIR)/cpu/cpu_kernels.h
 	$(CXX) $(CXXFLAGS) -o $@ $< -lm
 
+# Default run: execute each test directly (fast).
 run: build
 	@for t in $(BINS); do \
-	  for c in $(CHECKS); do \
 	  echo "----------------------------------------"; \
 	  echo "Running $$t ..."; \
 	  echo "----------------------------------------"; \
-	  /usr/local/cuda-13.1/bin/compute-sanitizer --tool $$c ./$$t; \
-	done; \
+	  ./$$t; \
+	done
+
+# Sanitize: run each GPU test under compute-sanitizer with all check tools (slow).
+sanitize: build
+ifeq ($(SANITIZER),)
+	$(error compute-sanitizer not found. Set CUDA_HOME or add it to PATH.)
+endif
+	@for t in $(BINS_CU); do \
+	  for c in $(SANITIZER_CHECKS); do \
+	    echo "========================================"; \
+	    echo "Sanitizing $$t ($$c) ..."; \
+	    echo "========================================"; \
+	    $(SANITIZER) --tool $$c ./$$t; \
+	  done; \
 	done
 
 clean:

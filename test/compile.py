@@ -21,7 +21,7 @@ def compile_lio(options):
 
 
 def run_lio():
-   cmd = ["./new_tests.py"]
+   cmd = ["./run_tests.py"]
    process = subprocess.Popen(cmd, cwd=os.path.abspath("."))
    process.wait()
    return process.returncode
