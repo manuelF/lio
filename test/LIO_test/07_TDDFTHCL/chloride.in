@@ -9,6 +9,7 @@ ntdstep    = 50000
 tdstep     = 0.004
 propagator = 2
 
-little_cube_size = 15.5 
-sphere_radius    = 0.5 
+free_global_memory = -1.0
+little_cube_size = -1.0
+sphere_radius    = -1.0
 &end
