@@ -44,7 +44,7 @@ ifeq ($(libxc),2)
 else
 #NO LIBXC
     LIBXC_LIBRARIES := -L$(LIBXC_LIBS) -lxc
-    CXXFLAGS += -DUSE_LIBXC=0 -DLIBXC_CPU=1 -I$(LIBXC_INCLUDES)
+    CXXFLAGS += -DUSE_LIBXC=0 -DLIBXC_CPU=1
 endif
 endif
 
