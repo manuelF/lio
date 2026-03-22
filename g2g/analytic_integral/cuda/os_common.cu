@@ -310,11 +310,17 @@ void OSIntegral<scalar_type>::get_gradient_output(double* qm_forces, uint partia
     //
     // The energy partial results are being reduced on-device and that works very well, could probably do that for forces too
     //
+    // Index with width (CudaMatrix stride), not HostMatrix::stride which pads
+    // to 64-byte boundaries and misaligns when sizeof(T) doesn't divide 64
+    // evenly (e.g. float3 with sizeof=12 → elems_per_line=5, but width is
+    // multiple of 32).
+    uint w = cpu_partial_qm_forces.width;
     for (uint i = 0; i < G2G::fortran_vars.atoms; i++) {
       for (uint j = 0; j < partial_out_size; j++) {
-        qm_forces[i + 0 * G2G::fortran_vars.atoms] += cpu_partial_qm_forces(j,i).x;
-        qm_forces[i + 1 * G2G::fortran_vars.atoms] += cpu_partial_qm_forces(j,i).y;
-        qm_forces[i + 2 * G2G::fortran_vars.atoms] += cpu_partial_qm_forces(j,i).z;
+        const auto& v = cpu_partial_qm_forces.data[i * w + j];
+        qm_forces[i + 0 * G2G::fortran_vars.atoms] += v.x;
+        qm_forces[i + 1 * G2G::fortran_vars.atoms] += v.y;
+        qm_forces[i + 2 * G2G::fortran_vars.atoms] += v.z;
       }
     }
 

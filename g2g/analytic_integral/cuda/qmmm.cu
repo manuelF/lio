@@ -425,11 +425,15 @@ void QMMMIntegral<scalar_type>::get_gradient_output(double* mm_forces,
   // The energy partial results are being reduced on-device and that works very
   // well, could probably do that for forces too
   //
+  // Index with width (CudaMatrix stride), not HostMatrix::stride which pads
+  // to 64-byte boundaries and misaligns for float3 (sizeof=12).
+  uint w = cpu_partial_mm_forces.width;
   for (uint i = 0; i < integral_vars.clatoms; i++) {
     for (uint j = 0; j < partial_out_size; j++) {
-      mm_forces[i + 0 * integral_vars.clatoms] += cpu_partial_mm_forces(j, i).x;
-      mm_forces[i + 1 * integral_vars.clatoms] += cpu_partial_mm_forces(j, i).y;
-      mm_forces[i + 2 * integral_vars.clatoms] += cpu_partial_mm_forces(j, i).z;
+      const auto& v = cpu_partial_mm_forces.data[i * w + j];
+      mm_forces[i + 0 * integral_vars.clatoms] += v.x;
+      mm_forces[i + 1 * integral_vars.clatoms] += v.y;
+      mm_forces[i + 2 * integral_vars.clatoms] += v.z;
     }
   }
 
