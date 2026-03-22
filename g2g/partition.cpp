@@ -711,6 +711,23 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
       element.stop();
       timeforgroup[ind] = element.getTotal();
     }
+
+#if GPU_KERNELS
+    // After all GPU groups finish: sync and download the accumulated Fock
+    // matrix from GPU into this thread's rmm_outputs buffer.
+    if (gpu_thread && compute_rmm) {
+      cudaStreamSynchronize(0);
+      uint M = fortran_vars.m;
+      uint rmm_global_size = M * (M + 1) / 2;
+      if (OPEN) {
+        download_gpu_fock_open(rmm_outputs_a[i].data, rmm_outputs_b[i].data,
+                               rmm_global_size);
+      } else {
+        download_gpu_fock(rmm_outputs[i].data, rmm_global_size);
+      }
+    }
+#endif
+
     t.stop();
 
     next[i] = t.getTotal();

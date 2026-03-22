@@ -38,10 +38,38 @@ namespace G2G {
 #include "kernels/force.h"
 #include "kernels/transpose.h"
 #include "kernels/rmm_gather.h"
+#include "kernels/rmm_scatter.h"
 
 using std::cout;
 using std::endl;
 using std::vector;
+
+// Static GPU buffers for GPU-side Fock scatter (shared across all GPU groups).
+// Each group's gpu_scatter_rmm atomicAdds into these; downloaded once per
+// iteration after all GPU groups finish.
+static CudaMatrix<double> s_global_fock_dev;
+static CudaMatrix<double> s_global_fock_a_dev;
+static CudaMatrix<double> s_global_fock_b_dev;
+static uint s_fock_epoch = 0;
+
+void download_gpu_fock(double* output, uint n_elements) {
+  if (s_global_fock_dev.is_allocated()) {
+    cudaMemcpy(output, s_global_fock_dev.data,
+               n_elements * sizeof(double), cudaMemcpyDeviceToHost);
+  }
+}
+
+void download_gpu_fock_open(double* output_a, double* output_b,
+                            uint n_elements) {
+  if (s_global_fock_a_dev.is_allocated()) {
+    cudaMemcpy(output_a, s_global_fock_a_dev.data,
+               n_elements * sizeof(double), cudaMemcpyDeviceToHost);
+  }
+  if (s_global_fock_b_dev.is_allocated()) {
+    cudaMemcpy(output_b, s_global_fock_b_dev.data,
+               n_elements * sizeof(double), cudaMemcpyDeviceToHost);
+  }
+}
 
 // extern "C" void g2g_timer_sum_start_(const char* timer_name, unsigned int
 // length_arg); extern "C" void g2g_timer_sum_stop_(const char* timer_name,
@@ -550,11 +578,26 @@ void PointGroupGPU<scalar_type>::solve_closed(
     }
     cudaAssertNoError("update_rmm");
 
-    /*** Contribute this RMM to the total RMM ***/
-    rmm_output_host.resize(COALESCED_DIMENSION(group_m), group_m);
-    rmm_output_host.copy_submatrix_async(rmm_output_gpu, 0);
-    cudaStreamSynchronize(0);
-    this->add_rmm_output(rmm_output_host, rmm_output_local);
+    /*** Scatter local Fock to global packed Fock on GPU ***/
+    {
+      uint M = fortran_vars.m;
+      uint rmm_global_size = M * (M + 1) / 2;
+      if (!s_global_fock_dev.is_allocated() ||
+          s_global_fock_dev.width != rmm_global_size) {
+        s_global_fock_dev.resize(rmm_global_size, 1);
+      }
+      if (s_fock_epoch != g2g_solve_epoch) {
+        cudaMemset(s_global_fock_dev.data, 0,
+                   rmm_global_size * sizeof(double));
+        s_fock_epoch = g2g_solve_epoch;
+      }
+      uint n_indexes = this->rmm_bigs.size();
+      dim3 scatter_block(256);
+      dim3 scatter_grid((n_indexes + 255) / 256);
+      gpu_scatter_rmm<scalar_type><<<scatter_grid, scatter_block>>>(
+          rmm_output_gpu.data, rmm_bigs_gpu.data, rmm_rows_gpu.data,
+          rmm_cols_gpu.data, s_global_fock_dev.data, n_indexes, rmm_width);
+    }
   }
   timers.rmm.pause();
 
@@ -930,11 +973,32 @@ void PointGroupGPU<scalar_type>::solve_opened(
           function_values.data, group_m);
     }
     cudaAssertNoError("update_rmm");
-    /*** Contribute this RMM to the total RMM ***/
-    HostMatrix<scalar_type> rmm_output_a_cpu(rmm_output_a_gpu);
-    HostMatrix<scalar_type> rmm_output_b_cpu(rmm_output_b_gpu);
-    this->add_rmm_output(rmm_output_a_cpu, rmm_output_local_a);
-    this->add_rmm_output(rmm_output_b_cpu, rmm_output_local_b);
+    /*** Scatter local Fock (alpha+beta) to global packed Fock on GPU ***/
+    {
+      uint M = fortran_vars.m;
+      uint rmm_global_size = M * (M + 1) / 2;
+      if (!s_global_fock_a_dev.is_allocated() ||
+          s_global_fock_a_dev.width != rmm_global_size) {
+        s_global_fock_a_dev.resize(rmm_global_size, 1);
+        s_global_fock_b_dev.resize(rmm_global_size, 1);
+      }
+      if (s_fock_epoch != g2g_solve_epoch) {
+        cudaMemset(s_global_fock_a_dev.data, 0,
+                   rmm_global_size * sizeof(double));
+        cudaMemset(s_global_fock_b_dev.data, 0,
+                   rmm_global_size * sizeof(double));
+        s_fock_epoch = g2g_solve_epoch;
+      }
+      uint n_indexes = this->rmm_bigs.size();
+      dim3 scatter_block(256);
+      dim3 scatter_grid((n_indexes + 255) / 256);
+      gpu_scatter_rmm<scalar_type><<<scatter_grid, scatter_block>>>(
+          rmm_output_a_gpu.data, rmm_bigs_gpu.data, rmm_rows_gpu.data,
+          rmm_cols_gpu.data, s_global_fock_a_dev.data, n_indexes, rmm_width);
+      gpu_scatter_rmm<scalar_type><<<scatter_grid, scatter_block>>>(
+          rmm_output_b_gpu.data, rmm_bigs_gpu.data, rmm_rows_gpu.data,
+          rmm_cols_gpu.data, s_global_fock_b_dev.data, n_indexes, rmm_width);
+    }
   }
   timers.rmm.pause();
 

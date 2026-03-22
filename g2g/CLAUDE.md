@@ -98,39 +98,40 @@ next[i] = total thread time
 ```
 1. compute_functions()          → launch transpose kernels on persistent non-blocking
                                    streams (transpose_stream_1/2), return immediately
-2. get_rmm_input()              → CPU: gather RMM submatrix (~O(M_group²) work)
-                                   OVERLAPS with transposes from step 1
-3. cudaMemcpy2DToArrayAsync()   → upload RMM to CUDA texture array (stream 0)
+                                   (skipped when fgm=-1 caching is active after iter 1)
+2. gpu_gather_rmm()             → GPU kernel: gather global packed RMM into local submatrix
+                                   (shared global RMM buffer uploaded once per iteration, epoch-gated)
+3. cudaMemcpy2DToArrayAsync()   → D2D copy from flat GPU buffer to CUDA array for texture reads
                                    implicitly waits for transpose streams (blocking stream rule)
 4. Launch density/rmm kernels   → stream 0
-5. cudaStreamSynchronize(0)     → wait for all GPU work
-6. add_rmm_output()             → CPU: scatter results back (~O(M_group²) work)
-                                   GPU IS IDLE during this step
+5. gpu_scatter_rmm()            → GPU kernel: atomicAdd local Fock into global packed Fock buffer
+                                   (no sync needed — next group's work queues behind on stream 0)
 → then step 1 for next group
+6. (after ALL groups) sync + D2H download of global Fock buffer (once per iteration)
 ```
 
-**Critical idle gap**: Between groups, the GPU is idle during step 6 (`add_rmm_output`) and
-any remaining setup before step 1 of the next group. Per-group CPU overhead (get_rmm_input +
-add_rmm_output + cudaMalloc/cudaFree) accounts for ~60% of the GPU thread's wall time.
+**Key design**: Steps 2 and 5 (gather/scatter) run entirely on GPU, eliminating the per-group
+CPU serialization that previously required `cudaStreamSynchronize` + CPU scatter between every
+group. The global Fock buffer (`s_global_fock_dev`) is zeroed once per SCF iteration
+(epoch-gated) and accumulated via `atomicAdd(double)` (natively supported on SM 6.0+).
 
 ### Measured configuration (fosfatoQMMM, 34 QM atoms, 25 SCF iters)
 
-*Last profiled: 2026-03-19, after warp-shuffle + persistent-streams + pinned-memory + BLAS optimizations.*
+*Last profiled: 2026-03-23, after all optimizations including fgm=-1 caching, AINT float, GPU scatter.*
 
 | Parameter | Value |
 |---|---|
 | cpu_threads | 15 (= OMP_NUM_THREADS − 1 GPU) |
 | gpu_threads | 1 |
 | SPLITPOINTS | 200 (default) |
-| GPU groups per SCF iter | ~78 (= 1960 gpu_compute_density calls / 25) |
-| **Wall time (total)** | **5.84 s** |
-| Wall time per SCF iter | ~204 ms (5.11 s SCF / 25 iters) |
-| Post-SCF (AINT, one-time) | ~728 ms |
-| GPU kernel time (total) | 2.82 s (48% of wall) |
-| GPU kernel time (SCF only) | 2.04 s (35% of wall) |
-| Memcpy + memset | 47 + 6 = 53 ms (<1% of wall) |
-| cudaMalloc + cudaFree | 2.07 s (35% of wall) — GlobalMemoryPool churn |
-| Memory transfers | 6090 Pinned, 8165 Pageable (AINT still pageable) |
+| GPU groups per SCF iter | ~45 (= 1134 gpu_compute_density calls / 25) |
+| **Wall time (total)** | **3.22 s** |
+| Post-SCF (AINT float, one-time) | ~418 ms |
+| GPU kernel time (total) | 1.34 s (42% of wall) |
+| GPU kernel time (SCF only) | 0.92 s (29% of wall) |
+| Memcpy + memset | 40 + 5 = 45 ms (<2% of wall) |
+| cudaMalloc + cudaFree | 92 ms (3% of wall) — mostly first-iter + AINT |
+| cudaStreamSynchronize | 837 ms / 151 calls (forces sync only, no RMM sync) |
 
 ### GPU kernel time breakdown (fosfatoQMMM)
 
@@ -138,42 +139,47 @@ add_rmm_output + cudaMalloc/cudaFree) accounts for ~60% of the GPU thread's wall
 
 | Kernel | Total time | % GPU | Calls | Avg/call |
 |---|---|---|---|---|
-| gpu_compute_density (GGA) | 1047 ms | 37.1% | 1960 | 534 µs |
-| gpu_update_rmm | 345 ms | 12.2% | 1820 | 189 µs |
-| transpose\<vec4\> | 310 ms | 11.0% | 3920 | 79 µs |
-| gpu_compute_functions | 153 ms | 5.4% | 1890 | 81 µs |
-| gpu_compute_density_derivs | 110 ms | 3.9% | 70 | 1.58 ms |
-| transpose\<float\> | 40 ms | 1.4% | 1960 | 21 µs |
-| gpu_compute_forces | 18 ms | 0.6% | 70 | 256 µs |
-| gpu_accumulate_point (all) | 8 ms | 0.3% | 1960 | 4 µs |
-| gpu_compute_weights | 4 ms | 0.1% | 70 | 53 µs |
+| gpu_compute_density (GGA) | 602 ms | 45.0% | 1134 | 531 µs |
+| gpu_update_rmm | 193 ms | 14.4% | 1050 | 183 µs |
+| gpu_compute_density_derivs | 75 ms | 5.6% | 42 | 1.79 ms |
+| gpu_compute_forces | 12 ms | 0.9% | 42 | 276 µs |
+| transpose\<vec4\> | 7 ms | 0.5% | 84 | 83 µs |
+| gpu_accumulate_point (all) | 4 ms | 0.3% | 1134 | 3.5 µs |
+| gpu_compute_functions | 4 ms | 0.3% | 42 | 87 µs |
+| gpu_gather_rmm | 3 ms | 0.2% | 1134 | 2.9 µs |
+| gpu_compute_weights | 3 ms | 0.2% | 42 | 69 µs |
+| gpu_scatter_rmm | 3 ms | 0.2% | 1050 | 2.4 µs |
+| transpose\<float\> | 1 ms | 0.1% | 42 | 20 µs |
 
-**Post-SCF (AINT, called once after convergence):**
+Note: with `fgm=-1` caching, `compute_functions` and transpose run only on the first
+iteration (42 calls = 42 groups × 1 iter). Subsequent iterations reuse cached values.
+
+**Post-SCF (AINT float, called once after convergence):**
 
 | Kernel | Total time |
 |---|---|
-| gpu_qmmm_forces (all angular momenta) | 469 ms |
-| gpu_qmmm_fock (all angular momenta) | 149 ms |
-| gpu_coulomb_forces (all angular momenta) | 110 ms |
+| gpu_qmmm_forces (all angular momenta) | 268 ms |
+| gpu_coulomb_forces (all angular momenta) | 104 ms |
+| gpu_qmmm_fock (all angular momenta) | 46 ms |
 
 ### CUDA API overhead
 
 | API call | Time | Calls | Note |
 |---|---|---|---|
-| cudaFree | 1604 ms | 18780 | GlobalMemoryPool: alloc+free each kernel launch |
-| cudaStreamSynchronize | 1549 ms | 2030 | Waiting for GPU work |
-| cudaMalloc | 465 ms | 18780 | GlobalMemoryPool churn |
-| cudaDeviceSynchronize | 291 ms | 6 | Post-SCF barriers |
-| cudaMemcpy | 174 ms | 10176 | Mostly AINT (pageable) |
-| cudaLaunchKernel | 135 ms | 13830 | — |
+| cudaStreamSynchronize | 837 ms | 151 | Forces sync only (RMM scatter is async) |
+| cudaDeviceSynchronize | 131 ms | 6 | Post-SCF barriers |
+| cudaLaunchKernel | 69 ms | 5836 | — |
+| cudaFree | 65 ms | 1240 | Residual (first-iter + AINT) |
+| cudaMemcpy | 40 ms | 624 | Mostly AINT (pageable) |
+| cudaMalloc | 27 ms | 1240 | Residual (first-iter + AINT) |
 
 ### Thread runtime: who is the bottleneck?
 
-- **GPU thread** takes ~204 ms/iter (processes all ~78 big groups sequentially).
-- **CPU threads** (15 threads × many small groups) finish within ~204 ms (not the bottleneck).
-- The GPU thread IS the critical path. GPU kernels run ~40% of GPU thread time (~81 ms);
-  the remaining ~60% is CPU overhead between launches (get_rmm_input + add_rmm_output)
-  and CUDA API overhead (cudaMalloc/cudaFree from GlobalMemoryPool).
+- **GPU thread** is the critical path. With `fgm=-1` caching + GPU scatter, most
+  per-group CPU overhead is eliminated. The dominant cost is now the GPU kernels
+  themselves (density + rmm_update) plus the 151 remaining `cudaStreamSynchronize`
+  calls for forces readback.
+- **CPU threads** (15 threads × many small groups) finish well within the GPU thread's time.
 
 ### Known optimizations applied
 
@@ -186,6 +192,8 @@ add_rmm_output + cudaMalloc/cudaFree) accounts for ~60% of the GPU thread's wall
 | `5a7d1743` | BLAS in int3lu (DGEMV, DSPMV, DDOT) | Reduced per-iteration Fortran CPU |
 | `104f8dc9` | DGELSS in DIIS solver (replaces DGELS) | Robust to float32 noise; bounded coefficients |
 | (uncommitted) | Auto-detect GPU memory caching (`fgm=-1`) | −89% malloc calls, −93% malloc+free time; **−34% wall** (5.87→3.87s) |
+| `627e32b5` | AINT float precision (`aint_mp=1` default) | AINT kernels 1.65× faster; −15% wall (3.87→3.29s) |
+| (uncommitted) | GPU-side RMM scatter (`gpu_scatter_rmm` + `gpu_gather_rmm`) | Eliminates per-group cudaStreamSync + CPU scatter; −5% wall (3.38→3.22s) |
 
 ### GPU memory caching (`free_global_memory`)
 
@@ -219,22 +227,26 @@ See `todo/gpu/optimize_memory_pool.md` for details.
 
 ### Open optimization opportunities (ranked by expected impact)
 
-1. **GPU-side RMM gather/scatter** (`todo/gpu/optimize_rmm_gather_gpu.md`) — 20-40% speedup.
-   Move `get_rmm_input()` / `add_rmm_output()` from CPU to GPU kernels. Eliminates the
-   largest CPU overhead in the GPU thread (~60% of per-group time). Prerequisite for
-   multi-stream pipeline.
+1. ~~**GPU-side RMM gather/scatter**~~ — **DONE** (2026-03-23). `gpu_gather_rmm` +
+   `gpu_scatter_rmm` replace CPU `get_rmm_input()` / `add_rmm_output()`. Eliminates
+   per-group `cudaStreamSynchronize` for RMM (2030→151 calls). Actual speedup was ~5%
+   (not the estimated 20-40%) because `fgm=-1` caching had already reduced the number
+   of groups needing scatter, shrinking the overhead that scatter elimination targeted.
 2. ~~**Reduce GlobalMemoryPool churn**~~ — **SOLVED** (2026-03-20). Auto-detect caching
    (`fgm=-1`) eliminates 89% of malloc/free calls. See "GPU memory caching" section above.
-   Remaining 2,051 calls are from per-group temporaries and AINT; see Phase 3 in
-   `todo/gpu/optimize_memory_pool.md` for further reduction.
+   Remaining 1,240 calls are from first-iter setup and AINT.
 3. ~~**Replace tex2D with `__ldg`**~~ — **REJECTED** (2026-03-20). Causes 36% regression
    in `gpu_compute_density` on Pascal SM 6.1 due to loss of 2D spatial locality in texture
    cache (82.85% → 76.48% L1 hit rate). See `todo/gpu/optimize_density_texture.md` and
    `cuda/CLAUDE.md` for full analysis. Do NOT re-attempt on Pascal hardware.
-4. **Multi-stream GPU pipeline** — launch group N+1 while N's scatter completes.
-   Requires #1 first (GPU-side scatter removes CPU serialization).
-5. **Open-shell GGA register reduction** — 93 regs → 56 regs (see TODO file).
-6. **Dynamic OpenMP tasks for CPU** (`todo/cpu/optimize_cpu_threading.md`).
+4. **Eliminate forces cudaStreamSynchronize** — 837 ms in 151 calls. Currently each group
+   syncs to read back forces. Could use GPU-side force accumulation (similar to Fock scatter)
+   to eliminate per-group sync entirely. Expected ~10-20% wall time reduction.
+5. **Multi-stream GPU pipeline** — launch group N+1 while N's kernels run.
+   Now feasible since scatter is GPU-side, but diminishing returns with `fgm=-1` caching
+   (fewer groups per iteration, kernels dominate).
+6. **Open-shell GGA register reduction** — 93 regs → 56 regs (see TODO file).
+7. **Dynamic OpenMP tasks for CPU** (`todo/cpu/optimize_cpu_threading.md`).
 
 ---
 

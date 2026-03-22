@@ -396,6 +396,12 @@ long long compute_optimal_split_cost(const std::vector<long long>& pm2_values,
 // iteration).  GPU groups check this to upload shared data (global RMM) only
 // once per iteration instead of once per group.
 extern uint g2g_solve_epoch;
+
+// Download the GPU-side accumulated Fock matrix into a host buffer.
+// Called once per iteration from partition.cpp after all GPU groups finish.
+// Closed-shell version downloads one buffer; open-shell downloads alpha+beta.
+void download_gpu_fock(double* output, uint n_elements);
+void download_gpu_fock_open(double* output_a, double* output_b, uint n_elements);
 }
 
 #endif
