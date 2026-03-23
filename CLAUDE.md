@@ -96,9 +96,44 @@ Fortran calls C++ via `extern "C"` bindings with trailing underscores (e.g., `g2
 
 ## Research & Optimization Knowledge Base
 
-All optimization research, profiling analysis, and technical investigations
-live in `research/`. See [`research/INDEX.md`](research/INDEX.md) for the
-central index with status tracking and priority rankings.
+`research/` contains all optimization research, profiling analysis, bug investigations,
+and technical evaluations — 43 files organized into 7 areas. This is the project's
+institutional memory for performance work.
+
+### How to navigate it
+
+1. **Start at [`research/INDEX.md`](research/INDEX.md)** — it has the area map, current
+   priorities, completed work, and rejected dead ends (~65 lines).
+2. **Drill into the relevant sub-index** (e.g., `research/gpu/INDEX.md`) — each lists
+   every file in that area with status (DONE/OPEN/REJECTED), impact rating, and a
+   one-line summary. Read only the sub-index, not every file.
+3. **Read individual files only when you need the details** for a specific optimization
+   you're about to implement or a constraint you need to understand.
+
+### When to consult research/
+
+- **Before any GPU kernel optimization**: read `research/guides/cuda_optimization_guide.md`
+  for the tier framework, and `research/convergence/INDEX.md` for float32/DIIS constraints.
+- **Before re-investigating a closed topic**: check the "Rejected / Dead Ends" table in
+  `research/INDEX.md` — several approaches (Kahan summation, `__ldg`, level shifting,
+  single-row restructuring) have been thoroughly tested and ruled out with data.
+- **When profiling**: `g2g/cuda/CLAUDE.md` has project-specific nvprof gotchas;
+  `research/gpu/roofline_gpu_compute_density.md` has the density kernel roofline analysis.
+- **When writing new research**: add the file to the appropriate `research/<area>/` folder
+  and update that area's `INDEX.md` with status and summary. Update `research/INDEX.md`
+  priorities table if the work is high-impact or represents a new dead end.
+
+### Area quick reference
+
+| Area | Sub-index | When to read |
+|------|-----------|--------------|
+| `gpu/` | 20 files (6 done, 14 open) | Modifying any CUDA kernel |
+| `cpu/` | 5 files (all open) | Modifying CPU code path |
+| `convergence/` | 4 files | Touching anything that feeds the SCF loop |
+| `infrastructure/` | 7 files | Memory management, threading, data layout |
+| `fortran/` | 4 files | Working in lioamber/ |
+| `tddft/` | 1 file | TD-DFT / Ehrenfest dynamics |
+| `guides/` | 2 files | Starting any optimization work |
 
 ## Code Style
 
