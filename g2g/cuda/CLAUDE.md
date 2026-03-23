@@ -1,11 +1,8 @@
-
 ## Profiling Procedures
 
 ### Hardware and tooling constraints
 
-- **GPU**: GTX 1080 (SM 6.1, Pascal)
 - **ncu (Nsight Compute) requires SM 7.0+** — cannot be used on this hardware
-- **nsys (Nsight Systems)** works but `nvprof` gives more detailed kernel-level data on SM 6.x
 - **nvprof** is the primary profiling tool for this project
 
 ### Reference test case
@@ -16,198 +13,31 @@ iterations). Located at `test/LIO_test/03_fosfatoQMMM/`.
 Input files: `fos.in`, `fos.xyz`, `basis`
 Binary: `liosolo/liosolo`
 
-### Step 1: Build
+### Project-specific gotchas
 
-```bash
-cd /media/manuel/storage/dev/lio
-make clean && make cuda=1 cpu=0
-```
+- Use the normal release build for profiling (not `dbg=1` — debug disables optimizations).
+- Always measure wall time **without** nvprof first (nvprof adds ~10-20% overhead).
+- `liosolo` must be called directly, NOT via `run.sh`. nvprof does not profile child
+  processes by default, so `./run.sh` produces an empty profile.
+- **Save profiles once, query many times** (`nvprof -o file.nvvp` then `nvprof -i file.nvvp`).
+  Avoids re-running the full simulation for each metric query.
+- `--metrics` queries require re-running with instrumentation (~5-10× slower). They CANNOT
+  be extracted from saved `.nvvp` files. Only collect for specific kernels you're investigating.
 
-For profiling, use the normal release build (not `dbg=1`). Debug builds with `-g -G` disable
-optimizations and give misleading timings.
+### Time budget framework
 
-### Step 2: Measure wall time (without profiler overhead)
+Parse profiles into these categories:
 
-Always measure wall time **without** nvprof first, since nvprof adds ~10-20% overhead:
+| Category | How to measure |
+|---|---|
+| GPU kernel time | `--print-gpu-summary`, sum all kernel times |
+| GPU memcpy time | `--print-gpu-summary`, sum `[CUDA memcpy *]` rows |
+| cudaMalloc+cudaFree | `--print-api-summary`, sum those two rows |
+| cudaStreamSync | `--print-api-summary` |
+| CPU overhead | wall_time minus the above |
 
-```bash
-source liohome.sh
-cd test/LIO_test/03_fosfatoQMMM
-time ../../../liosolo/liosolo -i fos.in -c fos.xyz -b basis -v > /dev/null 2>&1
-```
-
-Expected output (as of 2026-03-19): `real ~5.8s`
-
-### Step 3: Collect nvprof profile (save once, query many times)
-
-**Critical**: save the profile to a `.nvvp` file and replay it. This avoids re-running the
-full simulation for each different metric query.
-
-```bash
-source liohome.sh
-cd test/LIO_test/03_fosfatoQMMM
-nvprof -o /tmp/profile.nvvp ../../../liosolo/liosolo -i fos.in -c fos.xyz -b basis -v > /dev/null 2>&1
-```
-
-**Important**: `liosolo` must be called directly, NOT via `run.sh`. nvprof does not profile
-child processes by default, so calling `./run.sh` (which spawns liosolo as a subprocess)
-produces an empty profile. Use `--profile-child-processes` only if you must go through a
-wrapper script.
-
-### Step 4: Query the saved profile
-
-All subsequent queries use `-i /tmp/profile.nvvp` (no re-execution):
-
-#### GPU kernel summary (most useful — shows time per kernel)
-```bash
-nvprof -i /tmp/profile.nvvp --print-gpu-summary
-```
-
-Key columns: `Time(%)`, `Time`, `Calls`, `Avg`, `Name`
-
-This tells you which kernels dominate GPU time. Look for:
-- `gpu_compute_density` — should be #1 (density accumulation)
-- `gpu_update_rmm` — Fock matrix update
-- `transpose<vec4>` — data layout transformations
-- `gpu_compute_functions` — basis function evaluation
-- `gpu_qmmm_forces` / `gpu_coulomb_forces` / `gpu_qmmm_fock` — post-SCF (called once)
-
-#### CUDA API summary (shows CPU-side overhead)
-```bash
-nvprof -i /tmp/profile.nvvp --print-api-summary
-```
-
-Key things to look for:
-- `cudaMalloc` + `cudaFree` — GlobalMemoryPool churn (should be ~18K calls each)
-- `cudaStreamSynchronize` — time CPU waits for GPU
-- `cudaMemcpy` — host↔device transfers (high count = many small copies)
-- `cudaMallocHost` — pinned memory allocations (should be ~350 if pinned optimization is active)
-- `cudaMemcpyAsync` vs `cudaMemcpy` — async should dominate for SCF transfers
-
-#### GPU trace (per-transfer details — pinned vs pageable)
-```bash
-nvprof -i /tmp/profile.nvvp --print-gpu-trace 2>&1 | head -20
-```
-
-The `SrcMemType` / `DstMemType` columns show `Pinned` or `Pageable` for each transfer.
-To count:
-```bash
-nvprof -i /tmp/profile.nvvp --print-gpu-trace 2>&1 | grep -c "Pinned"
-nvprof -i /tmp/profile.nvvp --print-gpu-trace 2>&1 | grep -c "Pageable"
-```
-
-SCF transfers (energy/forces/rmm) should show `Pinned`. AINT (post-SCF) transfers are
-still `Pageable` and that's expected.
-
-#### Hardware metrics (per-kernel deep-dive)
-```bash
-# Occupancy and stall reasons
-nvprof -i /tmp/profile.nvvp --metrics achieved_occupancy,stall_exec_dependency,stall_sync \
-    --kernels "gpu_compute_density"
-
-# Memory metrics
-nvprof -i /tmp/profile.nvvp --metrics tex_cache_hit_rate,l2_read_hit_rate \
-    --kernels "gpu_compute_density"
-
-# Warp efficiency
-nvprof -i /tmp/profile.nvvp --metrics warp_execution_efficiency \
-    --kernels "gpu_compute_density"
-```
-
-**Note**: `--metrics` queries may require re-running the program (nvprof replays kernels
-with instrumentation). For metrics, you can also collect them during the initial run:
-```bash
-nvprof -o /tmp/profile_metrics.nvvp \
-    --metrics achieved_occupancy,stall_exec_dependency,stall_sync,tex_cache_hit_rate \
-    ../../../liosolo/liosolo -i fos.in -c fos.xyz -b basis -v > /dev/null 2>&1
-```
-
-But this makes the run much slower (~5-10×). Only do this for specific kernels you're
-investigating, not as a routine step.
-
-#### Register and shared memory usage (compile-time, no profiling needed)
-```bash
-cd /media/manuel/storage/dev/lio
-make cuda=1 cpu=0 2>&1 | grep -E "registers|smem|shared"
-```
-
-Or add `--ptxas-options=-v` to NVCCFLAGS in `g2g/Makefile.cuda` to see per-kernel resource
-usage at compile time.
-
-### Step 5: Analyze results
-
-#### Time budget framework
-
-Parse the profile into these categories:
-
-| Category | How to measure | What it means |
-|---|---|---|
-| GPU kernel time | `--print-gpu-summary`, sum all kernel times | Actual computation on GPU |
-| GPU memcpy time | `--print-gpu-summary`, sum `[CUDA memcpy *]` rows | Data transfer time |
-| cudaMalloc+cudaFree | `--print-api-summary`, sum those two rows | Memory management overhead |
-| cudaStreamSync | `--print-api-summary` | CPU waiting for GPU |
-| CPU overhead | wall_time − GPU_kernel − cudaMalloc/Free − sync | get_rmm_input + add_rmm_output + Fortran |
-
-**Total GPU time** = first kernel's time / (first kernel's percentage / 100).
-For example, if `gpu_compute_density` shows `37.1%` and `1.047s`, total = 1.047/0.371 = 2.82s.
-
-#### SCF vs post-SCF split
-
-SCF kernels are called many times (1960 density calls = 78 groups × 25 iters).
-Post-SCF kernels (`gpu_qmmm_forces`, `gpu_coulomb_forces`, `gpu_qmmm_fock`) are called
-once total (after convergence). Separate them when analyzing optimization targets:
-- SCF kernel time / 25 = per-iteration GPU cost
-- Post-SCF is fixed overhead regardless of convergence speed
-
-### Step 6: Comparing two kernel implementations (A/B profiling)
-
-When evaluating a kernel optimization, collect metrics for BOTH the baseline and the
-modified version using the same methodology. This is the only reliable way to determine
-whether a change helps or hurts.
-
-#### Procedure
-
-1. **Build baseline**, collect a metric run:
-   ```bash
-   source liohome.sh && cd test/LIO_test/03_fosfatoQMMM
-   nvprof --kernels "<kernel_name>" \
-       --metrics tex_cache_hit_rate,l2_tex_read_hit_rate,gld_efficiency,achieved_occupancy,stall_memory_dependency,stall_exec_dependency \
-       ../../../liosolo/liosolo -i fos.in -c fos.xyz -b basis -v > /dev/null 2>/tmp/metrics_baseline.txt
-   ```
-
-2. **Build modified version**, collect the same metrics:
-   ```bash
-   nvprof --kernels "<kernel_name>" \
-       --metrics tex_cache_hit_rate,l2_tex_read_hit_rate,gld_efficiency,achieved_occupancy,stall_memory_dependency,stall_exec_dependency \
-       ../../../liosolo/liosolo -i fos.in -c fos.xyz -b basis -v > /dev/null 2>/tmp/metrics_modified.txt
-   ```
-
-3. **Compare side-by-side.** Key metrics to watch:
-
-   | Metric | What it tells you |
-   |--------|-------------------|
-   | `tex_cache_hit_rate` (Unified Cache Hit Rate) | L1/texture cache effectiveness — most impactful for memory-bound kernels |
-   | `l2_tex_read_hit_rate` | L2 hit rate for texture/`__ldg` reads |
-   | `gld_efficiency` | Coalescing quality (100% = perfect) |
-   | `achieved_occupancy` | Fraction of max warps active — changes indicate register pressure |
-   | `stall_memory_dependency` | % cycles stalled waiting for memory — the #1 bottleneck indicator |
-   | `stall_exec_dependency` | % cycles stalled on instruction dependencies |
-
-4. **Also collect wall-time and GPU-summary profiles** (without `--metrics`, which adds
-   replay overhead) to measure actual speedup/regression.
-
-**Important**: `--metrics` queries with `--kernels` filter require re-running the program
-with kernel replay instrumentation. They CANNOT be extracted from saved `.nvvp` files.
-Always collect metrics by running the program directly, not by importing profiles.
-
-#### Interpreting results
-
-- **Cache hit rate drops > 3 pp** usually signal a regression for memory-bound kernels.
-  On Pascal, each L1 miss costs ~200+ cycles.
-- **stall_memory_dependency increase** directly correlates with slower execution.
-- **achieved_occupancy changes** indicate register pressure differences. More registers
-  per thread → fewer concurrent blocks → lower occupancy → worse latency hiding.
-- **gld_efficiency** should stay ≥60%. Below that, the access pattern has coalescing issues.
+Separate SCF kernels (called per iteration × 25) from post-SCF kernels
+(`gpu_qmmm_forces`, `gpu_coulomb_forces`, `gpu_qmmm_fock` — called once).
 
 ---
 
@@ -223,10 +53,5 @@ tiling), which gives 82.85% L1 cache hit rate for the RMM access pattern
 `data[col * stride + row]`. `__ldg` uses linear addressing on the same physical cache,
 achieving only 76.48% — the 6.4 pp drop causes 9.5 pp more memory stall cycles.
 
-The 17ms saved by eliminating texture setup infrastructure is dwarfed by the 380ms kernel
-regression. **Keep tex2D for all RMM reads on Pascal.**
-
-See `todo/gpu/optimize_density_texture.md` for full metrics and analysis.
-
-This may be revisitable on Volta+ (SM 7.0+) where L1 is 128KB and caching policies differ.
-
+**Keep tex2D for all RMM reads on Pascal.** May be revisitable on Volta+ (SM 7.0+).
+See `todo/gpu/optimize_density_texture.md` for full metrics.
