@@ -54,4 +54,4 @@ tiling), which gives 82.85% L1 cache hit rate for the RMM access pattern
 achieving only 76.48% — the 6.4 pp drop causes 9.5 pp more memory stall cycles.
 
 **Keep tex2D for all RMM reads on Pascal.** May be revisitable on Volta+ (SM 7.0+).
-See `todo/gpu/optimize_density_texture.md` for full metrics.
+See `../../research/gpu/optimize_density_texture.md` for full metrics.

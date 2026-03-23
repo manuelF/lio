@@ -198,7 +198,7 @@ reallocates function/gradient/hessian buffers for all GPU groups (19K malloc/fre
 because the timing-dependent `rebalance()` function makes different group-to-thread
 assignment decisions when the GPU finishes faster. This is NOT a caching correctness bug —
 it's inherent to the timing-dependent rebalancer interacting with FP accumulation order.
-See `todo/gpu/optimize_memory_pool.md` for details.
+See `../research/gpu/optimize_memory_pool.md` for details.
 
 ### Open optimization opportunities (ranked by expected impact)
 
@@ -212,7 +212,7 @@ See `todo/gpu/optimize_memory_pool.md` for details.
    Remaining 1,240 calls are from first-iter setup and AINT.
 3. ~~**Replace tex2D with `__ldg`**~~ — **REJECTED** (2026-03-20). Causes 36% regression
    in `gpu_compute_density` on Pascal SM 6.1 due to loss of 2D spatial locality in texture
-   cache (82.85% → 76.48% L1 hit rate). See `todo/gpu/optimize_density_texture.md` and
+   cache (82.85% → 76.48% L1 hit rate). See `../research/gpu/optimize_density_texture.md` and
    `cuda/CLAUDE.md` for full analysis. Do NOT re-attempt on Pascal hardware.
 4. **Eliminate forces cudaStreamSynchronize** — 837 ms in 151 calls. Currently each group
    syncs to read back forces. Could use GPU-side force accumulation (similar to Fock scatter)
@@ -221,7 +221,7 @@ See `todo/gpu/optimize_memory_pool.md` for details.
    Now feasible since scatter is GPU-side, but diminishing returns with `fgm=-1` caching
    (fewer groups per iteration, kernels dominate).
 6. **Open-shell GGA register reduction** — 93 regs → 56 regs (see TODO file).
-7. **Dynamic OpenMP tasks for CPU** (`todo/cpu/optimize_cpu_threading.md`).
+7. **Dynamic OpenMP tasks for CPU** (`../research/cpu/optimize_cpu_threading.md`).
 
 ---
 

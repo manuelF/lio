@@ -446,7 +446,7 @@ Mitigations:
 
 *In LIO:* `gpu_compute_density_opened` (open-shell GGA) uses 93 registers → 34%
 occupancy on SM 6.1. Target: reduce to ~56 registers by replacing with 2 calls to
-the closed-shell kernel. See `g2g/todo/gpu/optimize_open_shell_registers.md`.
+the closed-shell kernel. See `../gpu/optimize_open_shell_registers.md`.
 
 ---
 
@@ -593,7 +593,7 @@ __device__ float warpReduceSum(float val) {
 intra-warp reduction.
 
 *In LIO:* Already applied in `energy.h` and `energy_open.h`. See
-`g2g/todo/gpu/optimize_warp_shuffle.md`.
+`../gpu/optimize_warp_shuffle.md`.
 
 ---
 

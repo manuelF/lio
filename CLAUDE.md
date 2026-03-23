@@ -94,6 +94,12 @@ Standalone Fortran driver for testing without AMBER/GROMACS.
 Fortran calls C++ via `extern "C"` bindings with trailing underscores (e.g., `g2g_init_`).
 `FortranVars` in `g2g/init.h` is the shared state. `FortranMatrix` handles column-major layout.
 
+## Research & Optimization Knowledge Base
+
+All optimization research, profiling analysis, and technical investigations
+live in `research/`. See [`research/INDEX.md`](research/INDEX.md) for the
+central index with status tracking and priority rankings.
+
 ## Code Style
 
 - **C++**: Google C++ style via `.clang-format` in `g2g/`. Run `clang-format -i` before committing.
