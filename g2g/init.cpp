@@ -412,6 +412,7 @@ double little_cube_size = -1.0;
 uint min_points_per_cube = 1;
 bool assign_all_functions = false;
 double sphere_radius = -1.0;
+int sphere_decomp_size = -1;
 bool remove_zero_weights = true;
 bool energy_all_iterations = false;
 double free_global_memory = 0.0;

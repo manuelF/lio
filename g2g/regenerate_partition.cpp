@@ -23,7 +23,7 @@ using namespace G2G;
  * and return the predicted parallel makespan.
  ************************************************************/
 static double evaluate_partition(
-    double cube_size, double sr,
+    double cube_size, double sr, int sphere_decomp,
     const double3& x0, const double3& x1,
     const std::vector<Point>& all_points,
     const std::vector<double>& min_exps_func,
@@ -116,26 +116,56 @@ static double evaluate_partition(
 
   little_cube_size = saved_lcs;
 
-  // Build sphere groups.
+  // Build sphere groups, optionally decomposed into sub-chunks.
   if (sr > 0) {
     for (uint i = 0; i < fortran_vars.atoms; i++) {
       if (sphere_pts[i].empty()) continue;
 
-      PointGroupCPU<base_scalar_type> sphere_tmp;
-      for (uint pt = 0; pt < sphere_pts[i].size(); pt++)
-        sphere_tmp.add_point(sphere_pts[i][pt]);
+      const double3& atom_pos = fortran_vars.atom_positions(i);
+      Group& all_atom_points = sphere_pts[i];
+      size_t n_pts = all_atom_points.size();
 
-      sphere_tmp.assign_functions_as_sphere(i, sr_array[i],
-                                            min_exps_func, min_coeff_func);
+      if (sphere_decomp <= 0 || (size_t)sphere_decomp >= n_pts) {
+        // No decomposition: one group per atom (original behavior).
+        PointGroupCPU<base_scalar_type> sphere_tmp;
+        for (size_t p = 0; p < n_pts; p++)
+          sphere_tmp.add_point(all_atom_points[p]);
+        sphere_tmp.assign_functions_as_sphere(i, sr_array[i],
+                                              min_exps_func, min_coeff_func);
+        if (sphere_tmp.total_functions_simple() != 0 &&
+            sphere_tmp.number_of_points >= min_points_per_cube) {
+          all_pm2.push_back(
+              (long long)sphere_tmp.number_of_points *
+              sphere_tmp.total_functions() * sphere_tmp.total_functions());
+          n_groups++;
+        }
+      } else {
+        // Decompose into sub-chunks with tighter radial bounds.
+        for (size_t start = 0; start < n_pts; ) {
+          size_t end = std::min(start + (size_t)sphere_decomp, n_pts);
+          if (n_pts - end < (size_t)sphere_decomp / 4) end = n_pts;
 
-      if (sphere_tmp.total_functions_simple() == 0 ||
-          sphere_tmp.number_of_points < min_points_per_cube)
-        continue;
+          PointGroupCPU<base_scalar_type> sphere_tmp;
+          double max_dist = 0;
+          for (size_t p = start; p < end; p++) {
+            sphere_tmp.add_point(all_atom_points[p]);
+            double d = distance(all_atom_points[p].position, atom_pos);
+            if (d > max_dist) max_dist = d;
+          }
 
-      all_pm2.push_back(
-          (long long)sphere_tmp.number_of_points *
-          sphere_tmp.total_functions() * sphere_tmp.total_functions());
-      n_groups++;
+          sphere_tmp.assign_functions_as_sphere(i, max_dist,
+                                                min_exps_func, min_coeff_func);
+
+          if (sphere_tmp.total_functions_simple() != 0 &&
+              sphere_tmp.number_of_points >= min_points_per_cube) {
+            all_pm2.push_back(
+                (long long)sphere_tmp.number_of_points *
+                sphere_tmp.total_functions() * sphere_tmp.total_functions());
+            n_groups++;
+          }
+          start = end;
+        }
+      }
     }
   }
 
@@ -296,6 +326,8 @@ void Partition::regenerate(void) {
   if (lcs_env) little_cube_size = atof(lcs_env);
   char* sr_env = getenv("LIO_SPHERE_RADIUS");
   if (sr_env) sphere_radius = atof(sr_env);
+  char* sd_env = getenv("LIO_SPHERE_DECOMP");
+  if (sd_env) sphere_decomp_size = atoi(sd_env);
 
   // Determina el exponente minimo para cada tipo de atomo.
   // uno por elemento de la tabla periodica.
@@ -417,53 +449,65 @@ void Partition::regenerate(void) {
   }
 
   // =========================================================================
-  // Auto-tune little_cube_size and sphere_radius: try multiple (cube_size,
-  // sphere_radius) pairs, pick the one that minimizes predicted parallel
-  // makespan.  Activated when little_cube_size < 0 or sphere_radius < 0.
+  // Auto-tune little_cube_size, sphere_radius, and sphere_decomp_size:
+  // try multiple (cube_size, sphere_radius, decomp_size) triples, pick the
+  // one that minimizes predicted parallel makespan.
+  // Activated when little_cube_size < 0 or sphere_radius < 0.
   // =========================================================================
   bool do_autotune = (little_cube_size < 0 || sphere_radius < 0);
 #if GPU_KERNELS
   if (G2G::cpu_threads > 0 && G2G::gpu_threads > 0 && do_autotune) {
     const double cs_candidates[] = {4.0, 5.6, 8.0, 11.3, 16.0};
     const double sr_candidates[] = {0.0, 0.3, 0.6, 0.9};
-    const int n_cs = 5, n_sr = 4;
+    const int sd_candidates[] = {0, 128, 256, 512};
+    const int n_cs = 5, n_sr = 4, n_sd = 4;
     double best_makespan = DBL_MAX;
     double best_cs = 8.0, best_sr = 0.6;
+    int best_sd = 0;
 
     for (int ci = 0; ci < n_cs; ci++) {
-      // If cube_size is explicitly set (>0), only try that value.
       double cs = (little_cube_size > 0) ? little_cube_size : cs_candidates[ci];
       for (int si = 0; si < n_sr; si++) {
-        // If sphere_radius is explicitly set (>=0), only try that value.
         double sr = (sphere_radius >= 0) ? sphere_radius : sr_candidates[si];
-        int ng = 0;
-        double ms = evaluate_partition(cs, sr, x0, x1, all_points,
-                                       min_exps_func, min_coeff_func,
-                                       cpu_threads, gpu_threads, ng);
-        if (verbose > 3)
-          printf("  [partition] cube_size=%.1f sphere_radius=%.1f: "
-                 "%d groups, makespan=%.0f\n", cs, sr, ng, ms);
-        if (ms < best_makespan) {
-          best_makespan = ms;
-          best_cs = cs;
-          best_sr = sr;
+        for (int di = 0; di < n_sd; di++) {
+          // Skip decomp search if sphere_radius is 0 (no spheres to decompose)
+          // or if decomp_size is explicitly set.
+          int sd = (sr == 0.0) ? 0
+                 : (sphere_decomp_size >= 0) ? sphere_decomp_size
+                 : sd_candidates[di];
+          int ng = 0;
+          double ms = evaluate_partition(cs, sr, sd, x0, x1, all_points,
+                                         min_exps_func, min_coeff_func,
+                                         cpu_threads, gpu_threads, ng);
+          if (verbose > 3)
+            printf("  [partition] cube_size=%.1f sphere_radius=%.1f "
+                   "sphere_decomp=%d: %d groups, makespan=%.0f\n",
+                   cs, sr, sd, ng, ms);
+          if (ms < best_makespan) {
+            best_makespan = ms;
+            best_cs = cs;
+            best_sr = sr;
+            best_sd = sd;
+          }
+          if (sr == 0.0 || sphere_decomp_size >= 0) break;
         }
-        // Skip remaining sr candidates if sphere_radius is fixed.
         if (sphere_radius >= 0) break;
       }
-      // Skip remaining cs candidates if cube_size is fixed.
       if (little_cube_size > 0) break;
     }
     if (little_cube_size < 0) little_cube_size = best_cs;
     if (sphere_radius < 0) sphere_radius = best_sr;
+    if (sphere_decomp_size < 0) sphere_decomp_size = best_sd;
   }
 #endif
-  if (little_cube_size < 0) little_cube_size = 8.0;   // fallback for CPU-only
-  if (sphere_radius < 0) sphere_radius = 0.6;         // fallback for CPU-only
+  if (little_cube_size < 0) little_cube_size = 8.0;
+  if (sphere_radius < 0) sphere_radius = 0.6;
+  if (sphere_decomp_size < 0) sphere_decomp_size = 0;
 
   if (do_autotune && verbose > 0)
-    printf("  Auto-detected cube_size=%.1f sphere_radius=%.1f\n",
-           little_cube_size, sphere_radius);
+    printf("  Auto-detected cube_size=%.1f sphere_radius=%.1f "
+           "sphere_decomp=%d\n",
+           little_cube_size, sphere_radius, sphere_decomp_size);
 
   // =========================================================================
   // Separate points into sphere vs cube using the (possibly auto-tuned) params.
@@ -548,22 +592,88 @@ void Partition::regenerate(void) {
 
   std::vector<PointGroupCPU<base_scalar_type>> sphere_temps;
   if (sphere_radius > 0) {
+    const int sd = sphere_decomp_size;
+    long long cost_orig = 0, cost_decomp = 0;
+    int atoms_with_spheres = 0, total_subgroups = 0;
+
     for (uint i = 0; i < fortran_vars.atoms; i++) {
       Group& sphere_i = sphere_points[i];
-      assert(sphere_i.size() != 0);
+      if (sphere_i.empty()) continue;
 
-      PointGroupCPU<base_scalar_type> sphere_tmp;
-      for (uint point = 0; point < sphere_i.size(); point++)
-        sphere_tmp.add_point(sphere_i[point]);
+      const double3& atom_pos = fortran_vars.atom_positions(i);
+      size_t n_pts = sphere_i.size();
+      atoms_with_spheres++;
 
-      sphere_tmp.assign_functions_as_sphere(i, sphere_radius_array[i],
-                                            min_exps_func, min_coeff_func);
-      assert(sphere_tmp.total_functions_simple() != 0);
-      if (sphere_tmp.number_of_points < min_points_per_cube) {
-        cout << "not enough points" << endl;
-        continue;
+      if (sd <= 0 || (size_t)sd >= n_pts) {
+        // No decomposition: one group per atom (original behavior).
+        PointGroupCPU<base_scalar_type> sphere_tmp;
+        for (size_t p = 0; p < n_pts; p++)
+          sphere_tmp.add_point(sphere_i[p]);
+        sphere_tmp.assign_functions_as_sphere(i, sphere_radius_array[i],
+                                              min_exps_func, min_coeff_func);
+        if (sphere_tmp.total_functions_simple() != 0 &&
+            sphere_tmp.number_of_points >= min_points_per_cube) {
+          long long c = (long long)sphere_tmp.number_of_points *
+                        sphere_tmp.total_functions() * sphere_tmp.total_functions();
+          cost_orig += c;
+          cost_decomp += c;
+          sphere_temps.push_back(sphere_tmp);
+          total_subgroups++;
+        }
+      } else {
+        // Compute baseline cost for logging.
+        PointGroupCPU<base_scalar_type> baseline_tmp;
+        for (size_t p = 0; p < n_pts; p++)
+          baseline_tmp.add_point(sphere_i[p]);
+        baseline_tmp.assign_functions_as_sphere(i, sphere_radius_array[i],
+                                                min_exps_func, min_coeff_func);
+        int baseline_M = baseline_tmp.total_functions();
+        cost_orig += (long long)n_pts * baseline_M * baseline_M;
+
+        int atom_subgroups = 0;
+        for (size_t start = 0; start < n_pts; ) {
+          size_t end = std::min(start + (size_t)sd, n_pts);
+          if (n_pts - end < (size_t)sd / 4) end = n_pts;
+
+          PointGroupCPU<base_scalar_type> sphere_tmp;
+          double max_dist = 0;
+          for (size_t p = start; p < end; p++) {
+            sphere_tmp.add_point(sphere_i[p]);
+            double d = distance(sphere_i[p].position, atom_pos);
+            if (d > max_dist) max_dist = d;
+          }
+
+          sphere_tmp.assign_functions_as_sphere(i, max_dist,
+                                                min_exps_func, min_coeff_func);
+
+          if (sphere_tmp.total_functions_simple() != 0 &&
+              sphere_tmp.number_of_points >= min_points_per_cube) {
+            int sub_M = sphere_tmp.total_functions();
+            long long sub_cost = (long long)sphere_tmp.number_of_points * sub_M * sub_M;
+            cost_decomp += sub_cost;
+            if (verbose > 3)
+              printf("  [sphere-decomp] atom %u chunk %d: %u pts, "
+                     "dist=%.2f (vs %.2f), M=%d (vs %d), cost=%lld\n",
+                     i, atom_subgroups,
+                     sphere_tmp.number_of_points,
+                     max_dist, sphere_radius_array[i],
+                     sub_M, baseline_M, sub_cost);
+            sphere_temps.push_back(sphere_tmp);
+            atom_subgroups++;
+          }
+          start = end;
+        }
+        total_subgroups += atom_subgroups;
       }
-      sphere_temps.push_back(sphere_tmp);
+    }
+    if (verbose > 0) {
+      printf("  [sphere-decomp] %d atoms -> %d subgroups (decomp_size=%d)\n",
+             atoms_with_spheres, total_subgroups, sd);
+      if (sd > 0)
+        printf("  [sphere-decomp] cost: original=%lld decomposed=%lld "
+               "reduction=%.1f%%\n",
+               cost_orig, cost_decomp,
+               cost_orig > 0 ? 100.0 * (1.0 - (double)cost_decomp / cost_orig) : 0.0);
     }
   }
 

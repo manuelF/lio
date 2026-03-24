@@ -60,6 +60,7 @@ extern uint min_points_per_cube;
 extern double becke_cutoff;
 extern bool assign_all_functions;
 extern double sphere_radius;  // between 0 and 1!
+extern int sphere_decomp_size;  // max points per sphere sub-group (-1 = auto)
 extern bool remove_zero_weights;
 extern bool energy_all_iterations;
 extern double big_function_cutoff;

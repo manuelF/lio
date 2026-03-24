@@ -29,6 +29,8 @@
 
 #define FORCE_BLOCK_SIZE 256
 
+#define SPHERE_DECOMP_SIZE 512
+
 // used for "types" constant memory
 #define MAX_ATOMS 200
 
