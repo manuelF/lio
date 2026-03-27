@@ -12,6 +12,7 @@
 #include "timer.h"
 
 #include "global_memory_pool.h"
+#include "partition_cost.h"
 
 using std::cout;
 using std::endl;
@@ -366,31 +367,14 @@ extern int MINCOST, THRESHOLD, SPLITPOINTS;
 extern long long SPLIT_COST;  // Auto-computed P*M^2 threshold; override via LIO_SPLIT_COST env
 extern int cpu_threads, gpu_threads;
 
-// GPU hardware properties for performance model estimation.
-// Populated once in g2g_init_() from cudaGetDeviceProperties.
-struct GPUHardware {
-  int sm_count;       // multiProcessorCount
-  int clock_mhz;      // clockRate / 1000
-  int major, minor;    // compute capability
-  int fp32_cores;      // total FP32 cores (sm_count * cores_per_sm)
-  bool valid;          // false if no GPU or properties not yet queried
-};
+// GPUHardware, cores_per_sm, estimate_speed_ratio, compute_optimal_split_cost
+// are declared in partition_cost.h (included above).
 extern GPUHardware gpu_hw;
-
-// FP32 CUDA cores per SM, by compute capability.
-int cores_per_sm(int major, int minor);
 
 // Decide whether a group should run on GPU based on its computational cost.
 // GPU if P * M^2 > SPLIT_COST.  Threshold is auto-computed at partition time
 // via compute_optimal_split_cost(), or manually set via LIO_SPLIT_COST env.
 bool should_use_gpu(unsigned int points, unsigned int total_functions);
-
-// Compute the optimal P*M^2 threshold for CPU/GPU work splitting.
-// Uses LPT bin-packing simulation to minimize parallel makespan =
-// max(CPU_bottleneck, GPU_total) given the actual group distribution.
-long long compute_optimal_split_cost(const std::vector<long long>& pm2_values,
-                                     int n_cpu, int n_gpu,
-                                     double* out_makespan = nullptr);
 
 // Epoch counter incremented once per Partition::solve() call (i.e. once per SCF
 // iteration).  GPU groups check this to upload shared data (global RMM) only

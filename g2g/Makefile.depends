@@ -11,12 +11,16 @@ init.o: scalar_vector_types.h datatypes/cpu_primitives.h timer.h partition.h
 init.o: global_memory_pool.h
 matrix.o: common.h matrix.h cuda_includes.h cuda/cuda_extra.h
 matrix.o: scalar_vector_types.h datatypes/cpu_primitives.h
+partition_cost.o: partition_cost.h
 partition.o: common.h init.h matrix.h cuda_includes.h cuda/cuda_extra.h
 partition.o: scalar_vector_types.h datatypes/cpu_primitives.h partition.h
-partition.o: timer.h global_memory_pool.h
+partition.o: partition_cost.h timer.h global_memory_pool.h
+partition_autotune.o: common.h init.h partition.h partition_cost.h
+partition_autotune.o: partition_autotune.h scalar_vector_types.h
 regenerate_partition.o: common.h init.h matrix.h cuda_includes.h
 regenerate_partition.o: cuda/cuda_extra.h scalar_vector_types.h
-regenerate_partition.o: datatypes/cpu_primitives.h partition.h timer.h
+regenerate_partition.o: datatypes/cpu_primitives.h partition.h
+regenerate_partition.o: partition_autotune.h partition_cost.h timer.h
 regenerate_partition.o: global_memory_pool.h
 timer.o: timer.h cuda_includes.h cuda/cuda_extra.h
 analytic_integral/aint_init.o: common.h matrix.h cuda_includes.h
