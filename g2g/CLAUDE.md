@@ -214,14 +214,19 @@ See `../research/gpu/optimize_memory_pool.md` for details.
    in `gpu_compute_density` on Pascal SM 6.1 due to loss of 2D spatial locality in texture
    cache (82.85% → 76.48% L1 hit rate). See `../research/gpu/optimize_density_texture.md` and
    `cuda/CLAUDE.md` for full analysis. Do NOT re-attempt on Pascal hardware.
-4. **Eliminate forces cudaStreamSynchronize** — 837 ms in 151 calls. Currently each group
-   syncs to read back forces. Could use GPU-side force accumulation (similar to Fock scatter)
-   to eliminate per-group sync entirely. Expected ~10-20% wall time reduction.
-5. **Multi-stream GPU pipeline** — launch group N+1 while N's kernels run.
-   Now feasible since scatter is GPU-side, but diminishing returns with `fgm=-1` caching
-   (fewer groups per iteration, kernels dominate).
+4. ~~**Eliminate forces cudaStreamSynchronize**~~ — **NOT WORTH IT** (2026-03-28).
+   Analysis shows 837ms/151 calls breaks down as: 25 structural Fock syncs (675ms of
+   real GPU work, unavoidable) + 126 post-SCF syncs (5.5ms pipeline overhead, 0.2% wall).
+   The remaining syncs are NOT in the SCF hot loop — SCF iterations are already sync-free
+   after RMM scatter. See `../research/gpu/async_execution.md` for full accounting.
+5. ~~**Multi-stream GPU pipeline**~~ — **NOT WORTH IT**. With `fgm=-1` caching and
+   GPU-side scatter, CPU launch overhead is ~60µs/group vs ~700µs/group kernel time.
+   GPU is never starved. Double buffering would save <1ms total.
 6. **Open-shell GGA register reduction** — 93 regs → 56 regs (see TODO file).
-7. **Dynamic OpenMP tasks for CPU** (`../research/cpu/optimize_cpu_threading.md`).
+7. **CPU-GPU Fock overlap** — Run int3lu (CPU Coulomb) concurrently with g2g GPU work.
+   Would recover ~250ms barrier idle per run. Requires Fortran-level restructuring.
+8. **GPU kernel optimization** — Density kernel is 45% of GPU time with roofline room.
+   See `../research/gpu/roofline_gpu_compute_density.md`.
 
 ---
 

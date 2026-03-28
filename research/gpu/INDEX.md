@@ -26,7 +26,7 @@ The density kernel (`gpu_compute_density`) dominates at 45% of GPU time — star
 
 | File | Impact | Summary |
 |------|--------|---------|
-| [async_execution.md](async_execution.md) | HIGH | Eliminate 837ms forces `cudaStreamSynchronize` (151 calls) via GPU-side accumulation |
+| [async_execution.md](async_execution.md) | DIMINISHED | Phases 1-2 DONE; remaining syncs are post-SCF only (~5.5ms/3.22s = 0.2%), not worth pursuing |
 | [optimize_open_shell_registers.md](optimize_open_shell_registers.md) | HIGH | Open-shell GGA: 93 regs → 56 regs (34% → 56% occupancy) by splitting into 2 closed-shell calls |
 | [stream_sharding.md](stream_sharding.md) | MEDIUM | Multi-stream concurrent group processing; diminishing returns with fgm=-1 |
 | [optimize_density_gemm.md](optimize_density_gemm.md) | MEDIUM | Reformulate density as GEMM (Y=F·R) — reduces O(M²) reads to O(M) |

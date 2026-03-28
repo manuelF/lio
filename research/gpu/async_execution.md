@@ -1,82 +1,130 @@
 # Optimization: Async Execution and CPU-GPU Overlap
 
-## Summary (Corrected — Code Audit Findings)
+**Status:** MOSTLY DONE — Phases 1-2 implemented; remaining phases have negligible ROI
+**Last updated:** 2026-03-28
 
-The original description overstated the problem. `iteration.cu` **already uses**
-`cudaMemcpy2DToArrayAsync` for RMM copies (lines ~243, 470, 699, 806) and
-`copy_submatrix_async` for result readbacks (lines ~382, 507, 545). Timers use
-`timers.xxx.start()` / `timers.xxx.pause()` — not `start_and_sync()`.
+## What Was Done
 
-**What is actually blocking and serializating:**
+### Phase 1 — Pinned Memory (DONE)
+Pinned host memory for all PointGroupGPU transfer buffers. Result:
+cudaMemcpyAsync 1636ms → 7.5ms (218×), −2.2% wall time.
 
-1. **`get_rmm_input()` CPU loop (most expensive)**: Runs entirely on CPU after all
-   GPU kernels for one kernel phase complete. It gathers/scatters the global RMM
-   (density matrix) from Fortran packed storage into a local group-sized matrix,
-   then initiates `cudaMemcpy2DToArrayAsync`. This CPU work happens while the GPU
-   could be doing other work. Solution: move this to the GPU — see
-   `optimize_rmm_gather_gpu.md`.
+### Phase 2 — GPU RMM Gather/Scatter (DONE)
+`gpu_gather_rmm` + `gpu_scatter_rmm` replace CPU `get_rmm_input()` / `add_rmm_output()`.
+Eliminates per-group `cudaStreamSynchronize` for RMM during the SCF loop.
+cudaStreamSynchronize calls: 2030 → 151. Actual speedup: **~5% wall** (not the
+originally estimated 20–40%, because `fgm=-1` caching had already reduced the number
+of groups needing gather/scatter).
 
-2. **Single-stream execution**: All kernels execute on the default stream (stream 0).
-   No CPU-GPU overlap; no concurrent group processing. While one group's kernels run,
-   the CPU prepares nothing useful.
+## What Remains — And Why It's Not Worth Doing
 
-3. **Pinned memory not consistently used**: `HostMatrix` defaults to `NonPinned` (uses
-   `new T[...]`). Async copies from pageable host memory are internally staged through
-   a pinned buffer by the CUDA driver, adding latency. See `optimize_pinned_memory.md`.
+### Phase 3 — GPU-side Force/Energy Accumulation (NOT RECOMMENDED)
 
-4. **Timer overhead**: `Timer::start()` and `Timer::pause()` insert `cudaEventRecord`
-   on the default stream, which is fine for profiling but adds driver calls per group.
-   During production runs, this overhead accumulates across hundreds of groups.
+**Originally estimated:** 20–40% speedup
+**Actual expected gain:** ~0.2% (~5.5ms on a 3.22s run)
 
-## Proposal
+#### Detailed sync call accounting (fosfatoQMMM, 42 GPU groups, 25 SCF iters)
 
-### Phase 1 — Pinned Memory + True Async (Low Risk)
-- Allocate `rmm_input_cpu`, `forces_host`, `energy_host`, `rmm_output_host` as
-  `HostMatrix<T>(Pinned)` so async copies are DMA-direct without driver staging.
-- This alone makes the existing `copy_submatrix_async` calls actually asynchronous.
-- Files: `g2g/cuda/iteration.cu` — change allocation flags.
+The 151 remaining `cudaStreamSynchronize` calls (837ms total) break down as:
 
-### Phase 2 — RMM Gather on GPU (Highest Impact)
-- Port `get_rmm_input()` to a CUDA kernel `gpu_gather_rmm<<<>>>` that reads the global
-  RMM from a GPU buffer and writes the local group-sized subset to `rmm_cuArray`.
-- Eliminates the D2H → CPU-shuffle → H2D round-trip entirely.
-- See `optimize_rmm_gather_gpu.md` for full specification.
+| Source | Location | When called | Calls | Approx time |
+|--------|----------|-------------|-------|-------------|
+| Fock download | `partition.cpp:620` | Every SCF iter (`compute_rmm=true`) | 25 | ~675ms |
+| Energy readback | `iteration.cu:435` | Post-SCF energy-only call | 42 | ~22ms |
+| Energy readback | `iteration.cu:435` | Post-SCF forces call | 42 | ~22ms |
+| Forces readback | `iteration.cu:546` | Post-SCF forces call | 42 | ~111ms |
+| **Total** | | | **151** | **~830ms** |
 
-### Phase 3 — Double Buffering Pipeline (High Impact, High Complexity)
-- Create two `Workspace` objects per stream: while GPU executes group N,
-  CPU+copy-engine prepares group N+1.
-- Requires restructuring `Partition::solve` to submit and synchronize with a lookahead
-  of 1 group.
+#### Why the original estimate was wrong
 
-### Phase 4 — Timer Bypass in Production Mode (Easy)
-- Wrap timer calls in `#ifdef LIO_PROFILE` or check a runtime flag.
-- Removes `cudaEventRecord` overhead on the hot path.
+The 20–40% estimate was written **before** Phases 1-2 were implemented. At that time,
+the dominant cost was per-group RMM sync during the SCF hot loop (2000+ calls, 25 iters).
+After Phase 2, the SCF loop has **zero per-group syncs** — only one structural Fock
+download sync per iteration.
 
-## Impact
-- Phase 1 (pinned): **5–10% latency reduction** for memory-transfer-bound groups.
-- Phase 2 (GPU RMM gather): **20–40% overall speedup** (removes dominant CPU stall).
-- Phase 3 (double buffering): **10–20% additional** on top of Phase 2.
-- Phase 4 (timers): **1–3%** micro-optimization.
+The remaining 126 post-SCF syncs (energy + forces) are **not in the hot loop**. They run
+once after SCF convergence. The "pipeline gap" each sync introduces is:
+- Forces CPU scatter: ~50µs/group (34 atoms × ~1.5µs)
+- Energy CPU sum: ~5µs/group
+- Sync driver overhead: ~10µs/call
+- **Total per-group gap: ~65µs × 42 groups × 2 passes ≈ 5.5ms**
 
-## Difficulty Assessment
-- Phase 1: **Low** (change allocation flags)
-- Phase 2: **Medium** (new kernel, index mapping, correctness-critical)
-- Phase 3: **High** (restructure solve loop, synchronization)
-- Phase 4: **Trivial**
+On a 3.22s run: **0.17%**. Well within measurement noise.
 
-## Files to Modify
-- `g2g/cuda/iteration.cu`: All phases.
-- `g2g/matrix.cpp`: Phase 1 — default allocation flag for iteration buffers.
-- `g2g/partition.h` / `g2g/partition.cpp`: Phase 3 — workspace double-buffering.
-- `g2g/cuda/kernels/` (new file): Phase 2 — `rmm_gather.h`.
+#### The 837ms is NOT overhead — it's GPU execution time
 
-## Correctness Risk
-- Phase 1: **None** — behavior-identical, just faster.
-- Phase 2: **High** — Fortran packed indexing must be reproduced exactly. The
-  existing `get_rmm_input` has upper/lower triangle logic that must be ported correctly.
-  Run `agua`, `fosfato`, `Fe3H2O6` tests after every change.
-- Phase 3: **High** — stream synchronization errors cause data corruption.
+The `cudaStreamSynchronize` time is where the CPU thread blocks while the GPU
+does real work. The 675ms in the 25 Fock download syncs IS the GPU computing density
++ RMM across all 42 groups per iteration (~30ms kernel time × 25 iters, minus CPU
+launch overlap). This time cannot be reduced by eliminating syncs — the GPU kernels
+take the same time regardless of how we synchronize.
 
-## Estimations
-- Combined Phase 1+2: **25–45% overall runtime improvement**.
-- Combined Phase 1+2+3: **35–60%** for large systems with many groups.
+#### MD simulations don't change the calculus
+
+In molecular dynamics, forces are computed once per MD step (after SCF converges).
+The forces sync overhead is ~2.7ms per step (42 syncs × 65µs gap) — still 0.08%
+of a ~3.2s MD step. Not significant even over 1000 steps.
+
+#### Larger systems scale proportionally
+
+For N=500 basis, ~500 GPU groups: 500 syncs × 65µs = ~32ms. But GPU kernel time also
+scales to ~500ms+. The overhead ratio stays at ~6%, but this is the upper bound and
+only applies to the post-SCF forces pass (run once, not 25×).
+
+### Phase 4 — Double Buffering Pipeline (NOT RECOMMENDED)
+
+**Originally estimated:** 10–20% additional
+**Actual expected gain:** Near zero
+
+With `fgm=-1` caching, `compute_functions` and transpose run only on iteration 1.
+The remaining per-group work is: gather → density → accumulate → rmm → scatter, all
+on stream 0. Double buffering would overlap CPU launch prep with GPU kernel execution,
+but the CPU launch overhead (~12µs × 5 kernels = 60µs/group) is already negligible
+compared to kernel execution (~700µs/group). The GPU is never starved for work.
+
+### Phase 5 — Timer Bypass in Production (LOW PRIORITY)
+
+Still valid but low impact: `cudaEventRecord` calls add ~5-10µs per group per timer.
+For 42 groups × ~10 timers × 25 iters = ~525µs total. Trivial.
+
+## Current Bottleneck Breakdown (fosfatoQMMM, 3.22s wall)
+
+| Bottleneck | Time | % Wall | Actionable? |
+|------------|------|--------|-------------|
+| Fortran SCF overhead (converger, int3lu, DIIS) | ~1.1s | 34% | CPU-GPU overlap (arch change) |
+| GPU kernel execution (density+rmm, 25 SCF iters) | ~750ms | 23% | Kernel optimization (roofline) |
+| Fock download sync (structural, 25×) | ~675ms | 21% | Cannot eliminate — need Fock for next iter |
+| AINT post-SCF (one-time) | ~418ms | 13% | Separate optimization target |
+| CPU barrier idle (15 threads × 10ms × 25 iters) | ~250ms | 8% | Speed up GPU or overlap Fortran work |
+| Post-SCF syncs (energy + forces) | ~5.5ms | 0.2% | GPU-side scatter (not worth it) |
+
+## What Would Actually Help (ranked)
+
+1. **CPU-GPU Fock overlap** — Run int3lu (CPU Coulomb, ~11% of CPU time) concurrently
+   with g2g GPU work. Currently the Fortran SCF loop is strictly sequential:
+   `g2g_solve_groups → int3lu → converger → next iter`. If Fock buffers were separated
+   (XC vs Coulomb), int3lu could run during the GPU's density+rmm phase, recovering
+   most of the 250ms barrier idle. **Difficulty: High** (Fortran architectural change).
+
+2. **GPU kernel optimization** — The density kernel is 45% of GPU time and has room
+   on the roofline. See `roofline_gpu_compute_density.md`. Even a 10% improvement in
+   the density kernel saves ~60ms wall time — more than GPU-side forces scatter would.
+
+3. **Open-shell register pressure** — 93 → 56 registers for open-shell GGA would
+   improve occupancy from 34% → 56%. Irrelevant for closed-shell fosfatoQMMM but
+   significant for open-shell benchmarks. See `optimize_open_shell_registers.md`.
+
+## Historical Context
+
+This file originally proposed 4 phases with combined 35–60% speedup estimates.
+Those estimates were based on the pre-optimization state (2030 sync calls, no RMM
+caching). After implementing Phases 1-2 plus `fgm=-1` caching, the landscape changed
+fundamentally:
+
+- **Before:** Per-group syncs dominated SCF iteration time (2030 calls/25 iters = ~81/iter)
+- **After:** SCF iterations are sync-free except one structural Fock download per iter
+- **Remaining syncs:** 126 post-SCF calls with ~5.5ms total pipeline overhead
+
+The lesson: **always re-profile after each optimization**. Removing one bottleneck
+can shift the cost structure so dramatically that previously high-impact items become
+irrelevant.
