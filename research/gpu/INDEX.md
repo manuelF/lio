@@ -28,8 +28,8 @@ The density kernel (`gpu_compute_density`) dominates at 45% of GPU time — star
 |------|--------|---------|
 | [async_execution.md](async_execution.md) | DIMINISHED | Phases 1-2 DONE; remaining syncs are post-SCF only (~5.5ms/3.22s = 0.2%), not worth pursuing |
 | [optimize_open_shell_registers.md](optimize_open_shell_registers.md) | HIGH | Open-shell GGA: 93 regs → 56 regs (34% → 56% occupancy) by splitting into 2 closed-shell calls |
-| [stream_sharding.md](stream_sharding.md) | MEDIUM | Multi-stream concurrent group processing; diminishing returns with fgm=-1 |
-| [optimize_density_gemm.md](optimize_density_gemm.md) | MEDIUM | Reformulate density as GEMM (Y=F·R) — reduces O(M²) reads to O(M) |
+| [stream_sharding.md](stream_sharding.md) | NOT WORTH IT | CPU launch overhead 60µs/group vs 700µs kernel; GPU never starved with fgm=-1 |
+| [optimize_density_gemm.md](optimize_density_gemm.md) | HIGH | Only remaining >10% opportunity for density kernel; eliminates texture+divergence; FP-order risk |
 | [optimize_rmm.md](optimize_rmm.md) | MEDIUM | Replace custom RMM SYRK with cuBLAS `cublasSsyrk` |
 
 ### Open — Lower Impact / Speculative
@@ -37,7 +37,7 @@ The density kernel (`gpu_compute_density`) dominates at 45% of GPU time — star
 | File | Impact | Summary |
 |------|--------|---------|
 | [optimize_energy_derivs.md](optimize_energy_derivs.md) | MEDIUM | Force kernel O(M²·P) bottleneck; GEMM reformulation |
-| [optimize_kernel_fusion.md](optimize_kernel_fusion.md) | MEDIUM | Fuse density + accumulate_point to keep intermediates in registers |
+| [optimize_kernel_fusion.md](optimize_kernel_fusion.md) | NOT WORTH IT | accumulate_point is 3.5µs/call (0.3% GPU); fusion would push regs to ~80 → 25% occupancy |
 | [optimize_screening.md](optimize_screening.md) | MEDIUM | Spatial block culling for basis functions (high difficulty) |
 | [optimize_transpose.md](optimize_transpose.md) | LOW | Eliminate transpose by writing compute_functions in transposed layout |
 | [optimize_weight_cache.md](optimize_weight_cache.md) | LOW | Cache Becke weights across SCF (depends only on atom positions) |
@@ -49,4 +49,4 @@ The density kernel (`gpu_compute_density`) dominates at 45% of GPU time — star
 
 | File | Summary |
 |------|---------|
-| [roofline_gpu_compute_density.md](roofline_gpu_compute_density.md) | Roofline analysis of the GGA density kernel on GTX 1080 |
+| [roofline_gpu_compute_density.md](roofline_gpu_compute_density.md) | Full roofline + opportunity analysis: kernel is at 52-69% of realistic ceiling; GEMM reformulation is only remaining >10% path |
