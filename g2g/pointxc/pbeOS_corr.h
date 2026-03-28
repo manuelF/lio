@@ -115,9 +115,10 @@ __host__ __device__ void pbeOS_corr(scalar_type rho, scalar_type rs,
   // ECZET =
   // 4.D0*(ZET**3)*F*(EP-EU+ALFM/FZZ)+FZ*(Z4*EP-Z4*EU-(1.D0-Z4)*ALFM/FZZ)
   // COMM = EC -RS*ECRS/3.D0-ZET*ECZET
-  scalar_type ECZET = (scalar_type)4.0f * pow((scalar_type)zet, 3) * F *
+  scalar_type zet2 = zet * zet;
+  scalar_type ECZET = (scalar_type)4.0 * zet2 * zet * F *
                           (EP - EU + ALFM / FZZ) +
-                      FZ * (Z4 * EP - Z4 * EU - (1.0f - Z4) * ALFM / FZZ);
+                      FZ * (Z4 * EP - Z4 * EU - ((scalar_type)1.0 - Z4) * ALFM / FZZ);
   scalar_type COMM = ec - rs * ECRS / (scalar_type)3.0f - zet * ECZET;
   vc_a = COMM + ECZET;
   vc_b = COMM - ECZET;
@@ -190,7 +191,7 @@ __host__ __device__ void pbeOS_corr(scalar_type rho, scalar_type rs,
   scalar_type FAC = EASYPBE_DELTA / B + (scalar_type)1.0f;
   scalar_type BG = -(scalar_type)3.0f * B2 * ec * FAC / (EASYPBE_BETA * G4);
   scalar_type BEC = B2 * FAC / (EASYPBE_BETA * G3);
-  scalar_type Q8 = pow(Q5, 2) + EASYPBE_DELTA * Q4 * Q5 * T2;
+  scalar_type Q8 = Q5 * Q5 + EASYPBE_DELTA * Q4 * Q5 * T2;
   scalar_type Q9 = (scalar_type)1.0f + (scalar_type)2.0f * B * T2;
 
   //      hB = -BET*G3*B*T6*(2.D0+B*T2)/Q8

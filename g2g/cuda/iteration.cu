@@ -434,7 +434,7 @@ void PointGroupGPU<scalar_type>::solve_closed(
     energy_host.copy_submatrix_async(energy_gpu, 0);
     cudaStreamSynchronize(0);
     for (uint i = 0; i < this->number_of_points; i++) {
-      energy += energy_host(i);
+      energy += (double)energy_host(i);
     }
   } else {
 #undef compute_parameters
@@ -548,9 +548,9 @@ void PointGroupGPU<scalar_type>::solve_closed(
     for (uint i = 0; i < this->total_nucleii(); ++i) {
       vec_type4 atom_force = forces_host(i);
       uint global_nuc = this->local2global_nuc[i];
-      fort_forces_ms(global_nuc, 0) += atom_force.x;
-      fort_forces_ms(global_nuc, 1) += atom_force.y;
-      fort_forces_ms(global_nuc, 2) += atom_force.z;
+      fort_forces_ms(global_nuc, 0) += (double)atom_force.x;
+      fort_forces_ms(global_nuc, 1) += (double)atom_force.y;
+      fort_forces_ms(global_nuc, 2) += (double)atom_force.z;
     }
     timers.forces.pause();
   }
@@ -853,11 +853,11 @@ void PointGroupGPU<scalar_type>::solve_opened(
     HostMatrix<scalar_type> energy_c2_cpu(energy_c2_gpu);
 
     for (uint i = 0; i < this->number_of_points; i++) {
-      energy += energy_cpu(i);
-      energy_i += energy_i_cpu(i);
-      energy_c += energy_c_cpu(i);
-      energy_c1 += energy_c1_cpu(i);
-      energy_c2 += energy_c2_cpu(i);
+      energy += (double)energy_cpu(i);
+      energy_i += (double)energy_i_cpu(i);
+      energy_c += (double)energy_c_cpu(i);
+      energy_c1 += (double)energy_c1_cpu(i);
+      energy_c2 += (double)energy_c2_cpu(i);
     }
   } else {
     gpu_compute_density_opened<scalar_type, false, true, false>
@@ -935,9 +935,9 @@ void PointGroupGPU<scalar_type>::solve_opened(
       vec_type4 atom_force_b = forces_cpu_b(i);
       uint global_nuc = this->local2global_nuc[i];
 
-      fort_forces_ms(global_nuc, 0) += atom_force_a.x + atom_force_b.x;
-      fort_forces_ms(global_nuc, 1) += atom_force_a.y + atom_force_b.y;
-      fort_forces_ms(global_nuc, 2) += atom_force_a.z + atom_force_b.z;
+      fort_forces_ms(global_nuc, 0) += (double)atom_force_a.x + (double)atom_force_b.x;
+      fort_forces_ms(global_nuc, 1) += (double)atom_force_a.y + (double)atom_force_b.y;
+      fort_forces_ms(global_nuc, 2) += (double)atom_force_a.z + (double)atom_force_b.z;
     }
 
     timers.forces.pause();
@@ -1209,7 +1209,7 @@ void PointGroupGPU<scalar_type>::compute_weights(void) {
   uint i = 0;
   for (vector<Point>::iterator p = this->points.begin();
        p != this->points.end(); ++p, ++i) {
-    p->weight *= point_weights_cpu(i);
+    p->weight *= (double)point_weights_cpu(i);
   }
 }
 

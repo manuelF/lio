@@ -63,6 +63,7 @@ CXXWARN_FLAGS := \
 	-Wcast-align \
 	-Wreturn-type \
 	-Wno-unused-function \
+	-Wdouble-promotion \
 	$(SPACE)
 
 CWARN_FLAGS := $(CXXWARN_FLAGS) \
@@ -73,7 +74,7 @@ CWARN_FLAGS := $(CXXWARN_FLAGS) \
 	-Wmain \
 
 # Compiler-specific flags
-NVCCFLAGS   := $(ARCHFLAGS) --compiler-options -fPIC --compiler-options -Wall
+NVCCFLAGS   := $(ARCHFLAGS) --compiler-options -fPIC --compiler-options -Wall --compiler-options -Wdouble-promotion
 ifeq ($(intel),0)
   CXXFLAGS    += $(CXXWARN_FLAGS)
 endif
@@ -243,6 +244,9 @@ CUDA_OBJ     += $(CUDA_SOURCES:%.cu=%.o)
 # CXX=icc
 $(UGO): $(CUDA_OBJ)
 	nvcc $(NVCCFLAGS) -dlink $(CUDA_OBJ) -o $@
+
+pointxc/%.o: NVCCFLAGS := $(subst --compiler-options -Wdouble-promotion,,$(NVCCFLAGS))
+pointxc/%.o: CXXFLAGS := $(filter-out -Wdouble-promotion,$(CXXFLAGS))
 
 pointxc/%.o:pointxc/%.cpp
 	nvcc $(NVCCFLAGS) -o $@ -dc $<

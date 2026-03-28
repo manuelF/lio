@@ -103,12 +103,12 @@ void PointGroupCPU<scalar_type>::solve_closed(
 
       if (compute_energy) {
         localenergy +=
-            (partial_density * this->points[point].weight) * (exc + corr);
+            (double)partial_density * this->points[point].weight * (double)(exc + corr);
       }
 
       /** RMM **/
       if (compute_rmm || compute_forces) {
-        factors_rmm(point) = this->points[point].weight * y2a;
+        factors_rmm(point) = (scalar_type)(this->points[point].weight * (double)y2a);
       }
     }
   } else {
@@ -145,7 +145,7 @@ void PointGroupCPU<scalar_type>::solve_closed(
       const scalar_type wp = this->points[point].weight;
 
       if (compute_energy) {
-        localenergy += (pd * wp) * (exc + corr);
+        localenergy += (double)(pd * wp) * (double)(exc + corr);
       }
 
       /** RMM **/
@@ -198,9 +198,9 @@ void PointGroupCPU<scalar_type>::solve_closed(
     for (int i = 0; i < this->total_nucleii(); i++) {
       uint global_atom = this->local2global_nuc[i];
       vec_type3 this_force = forces[i];
-      fort_forces(global_atom, 0) += this_force.x;
-      fort_forces(global_atom, 1) += this_force.y;
-      fort_forces(global_atom, 2) += this_force.z;
+      fort_forces(global_atom, 0) += (double)this_force.x;
+      fort_forces(global_atom, 1) += (double)this_force.y;
+      fort_forces(global_atom, 2) += (double)this_force.z;
     }
   }
   timers.forces.pause();
@@ -328,7 +328,7 @@ void PointGroupCPU<scalar_type>::solve_opened(
       const scalar_type wp = this->points[point].weight;
 
       if (compute_energy) {
-        localenergy += ((pd_a + pd_b) * wp) * (exc + corr);
+        localenergy += (double)((pd_a + pd_b) * wp) * (double)(exc + corr);
       }
 
       /** RMM **/
@@ -406,9 +406,9 @@ void PointGroupCPU<scalar_type>::solve_opened(
     for (int i = 0; i < this->total_nucleii(); i++) {
       uint global_atom = this->local2global_nuc[i];
       vec_type3 this_force = forces_a[i] + forces_b[i];
-      fort_forces(global_atom, 0) += this_force.x;
-      fort_forces(global_atom, 1) += this_force.y;
-      fort_forces(global_atom, 2) += this_force.z;
+      fort_forces(global_atom, 0) += (double)this_force.x;
+      fort_forces(global_atom, 1) += (double)this_force.y;
+      fort_forces(global_atom, 2) += (double)this_force.z;
     }
   }
   timers.forces.pause();

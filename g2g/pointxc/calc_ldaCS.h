@@ -57,7 +57,7 @@ __host__ __device__ void calc_ldaCS(scalar_type dens, scalar_type& ex,
       scalar_type x1 = rs / (scalar_type)11.4;
       scalar_type vc;
 
-      if (x1 > 1.0) {
+      if (x1 > (scalar_type)1.0) {
         ec = (scalar_type)-0.0333 *
              ((scalar_type)0.5 * x1 - (scalar_type)0.33333333333333);
         vc = (scalar_type)0.0111 * x1 * (scalar_type)0.5;

@@ -58,8 +58,8 @@ __host__ __device__ void calc_ggaCS(scalar_type dens,
 
   scalar_type d0 = hess1.x + hess1.y + hess1.z;
   scalar_type u0 =
-      ((grad.x * grad.x) * hess1.x + 2.0 * grad.x * grad.y * hess2.x +
-       2.0 * grad.y * grad.z * hess2.z + 2.0 * grad.x * grad.z * hess2.y +
+      ((grad.x * grad.x) * hess1.x + (scalar_type)2.0 * grad.x * grad.y * hess2.x +
+       (scalar_type)2.0 * grad.y * grad.z * hess2.z + (scalar_type)2.0 * grad.x * grad.z * hess2.y +
        (grad.y * grad.y) * hess1.y + (grad.z * grad.z) * hess1.z) /
       dgrad;
   y2a = 0;
@@ -70,66 +70,67 @@ __host__ __device__ void calc_ggaCS(scalar_type dens,
     scalar_type ckf = (scalar_type)3.0936677 * y;
     scalar_type s = dgrad / ((scalar_type)2.0 * ckf * dens);
 
-    scalar_type fx = (1.0 / 15.0);
+    scalar_type fx = ((scalar_type)1.0 / (scalar_type)15.0);
     scalar_type s2 = (s * s);
     scalar_type s3 = (s * s * s);
-    scalar_type g0 = 1.0 + 1.296 * s2 + 14.0 * pow(s, 4) + 0.2 * pow(s, 6);
+    scalar_type g0 = (scalar_type)1.0 + (scalar_type)1.296 * s2 + (scalar_type)14.0 * (s2 * s2) + (scalar_type)0.2 * (s2 * s2 * s2);
     scalar_type F = pow(g0, fx);
     scalar_type e = POT_ALPHA * F * y;
     ex = e;
 
-    scalar_type t = d0 / (dens * 4.0 * (ckf * ckf));
-    scalar_type u = u0 / (pow((scalar_type)2.0 * ckf, 3) * dens2);
+    scalar_type t = d0 / (dens * (scalar_type)4.0 * (ckf * ckf));
+    scalar_type twockf = (scalar_type)2.0 * ckf;
+    scalar_type u = u0 / (twockf * twockf * twockf * dens2);
 
-    scalar_type g2 = 2.592 * s + 56.0 * s3 + 1.2 * pow(s, 5);
-    scalar_type g3 = 2.592 + 56.0 * s2 + 1.2 * pow(s, 4);
-    scalar_type g4 = 112.0 * s + 4.8 * s3;
+    scalar_type g2 = (scalar_type)2.592 * s + (scalar_type)56.0 * s3 + (scalar_type)1.2 * (s2 * s3);
+    scalar_type g3 = (scalar_type)2.592 + (scalar_type)56.0 * s2 + (scalar_type)1.2 * (s2 * s2);
+    scalar_type g4 = (scalar_type)112.0 * s + (scalar_type)4.8 * s3;
     scalar_type dF = fx * F / g0 * g2;
-    scalar_type dsF = fx * F / g0 * (-14.0 * fx * g3 * g2 / g0 + g4);
+    scalar_type dsF = fx * F / g0 * ((scalar_type)-14.0 * fx * g3 * g2 / g0 + g4);
 
     y2a = POT_ALPHA * y *
-          (1.33333333333 * F - t / s * dF - (u - 1.3333333333 * s3) * dsF);
+          ((scalar_type)1.33333333333 * F - t / s * dF - (u - (scalar_type)1.3333333333 * s3) * dsF);
   } else if (iexch >= 5 && iexch <= 7) {  // Becke  : Phys. Rev A 38 3098 (1988)
     scalar_type e0 = POT_ALPHA * y;
-    scalar_type y2 = dens / 2.0;
+    scalar_type y2 = dens / (scalar_type)2.0;
     scalar_type r13 = cbrt(y2);
-    scalar_type r43 = cbrt(pow(y2, 4));
-    scalar_type Xs = dgrad / (2.0 * r43);
+    scalar_type r43 = cbrt(y2 * y2 * y2 * y2);
+    scalar_type Xs = dgrad / ((scalar_type)2.0 * r43);
     scalar_type siper = asinh(Xs);
-    scalar_type DN = 1.0 + 6.0 * POT_BETA * Xs * siper;
-    scalar_type ect = -2.0 * POT_BETA * r43 * Xs * Xs / (DN * dens);
+    scalar_type DN = (scalar_type)1.0 + (scalar_type)6.0 * POT_BETA * Xs * siper;
+    scalar_type ect = (scalar_type)-2.0 * POT_BETA * r43 * Xs * Xs / (DN * dens);
     scalar_type e = e0 + ect;
     ex = e;
 
     // Potential
-    scalar_type v0 = 1.33333333333333 * e0;
-    scalar_type Fb = 1.0 / DN;
-    scalar_type XA1 = Xs / sqrt(1.0 + Xs * Xs);
-    scalar_type DN1 = 1.0 + Fb * (1.0 - 6.0 * POT_BETA * Xs * XA1);
+    scalar_type v0 = (scalar_type)1.33333333333333 * e0;
+    scalar_type Fb = (scalar_type)1.0 / DN;
+    scalar_type XA1 = Xs / sqrt((scalar_type)1.0 + Xs * Xs);
+    scalar_type DN1 = (scalar_type)1.0 + Fb * ((scalar_type)1.0 - (scalar_type)6.0 * POT_BETA * Xs * XA1);
     scalar_type DN2 =
-        1.0 / (1.0 + Xs * Xs) + 2.0 * Fb * (2.0 - 6.0 * POT_BETA * Xs * XA1);
-    scalar_type DN3 = siper * (1.0 + 2.0 * Fb) + XA1 * DN2;
-    scalar_type D02 = d0 / 2.0;
-    scalar_type de1 = 1.33333333333333 / (cbrt(pow((scalar_type)dens, 7)));
+        (scalar_type)1.0 / ((scalar_type)1.0 + Xs * Xs) + (scalar_type)2.0 * Fb * ((scalar_type)2.0 - (scalar_type)6.0 * POT_BETA * Xs * XA1);
+    scalar_type DN3 = siper * ((scalar_type)1.0 + (scalar_type)2.0 * Fb) + XA1 * DN2;
+    scalar_type D02 = d0 / (scalar_type)2.0;
+    scalar_type de1 = (scalar_type)1.33333333333333 / (cbrt(pow(dens, (scalar_type)7.0)));
 
     scalar_type DGRADx =
         (grad.x * hess1.x + grad.y * hess2.x + grad.z * hess2.y) / dgrad;
     scalar_type GRADXx = cbrt((scalar_type)2.0) *
-                         (1.0 / (dens * y) * DGRADx - de1 * grad.x * dgrad);
+                         ((scalar_type)1.0 / (dens * y) * DGRADx - de1 * grad.x * dgrad);
     scalar_type DGRADy =
         (grad.x * hess2.x + grad.y * hess1.y + grad.z * hess2.z) / dgrad;
     scalar_type GRADXy = cbrt((scalar_type)2.0) *
-                         (1.0 / (dens * y) * DGRADy - de1 * grad.y * dgrad);
+                         ((scalar_type)1.0 / (dens * y) * DGRADy - de1 * grad.y * dgrad);
     scalar_type DGRADz =
         (grad.x * hess2.y + grad.y * hess2.z + grad.z * hess1.z) / dgrad;
     scalar_type GRADXz = cbrt((scalar_type)2.0) *
-                         (1.0 / (dens * y) * DGRADz - de1 * grad.z * dgrad);
+                         ((scalar_type)1.0 / (dens * y) * DGRADz - de1 * grad.z * dgrad);
 
-    scalar_type T1 = grad.x / 2.0 * GRADXx;
-    scalar_type T2 = grad.y / 2.0 * GRADXy;
-    scalar_type T3 = grad.z / 2.0 * GRADXz;
-    scalar_type DN4 = 6.0 * POT_BETA * Fb * (T1 + T2 + T3);
-    scalar_type DN5 = 1.33333333333333 * r43 * r13 * Xs * Xs;
+    scalar_type T1 = grad.x / (scalar_type)2.0 * GRADXx;
+    scalar_type T2 = grad.y / (scalar_type)2.0 * GRADXy;
+    scalar_type T3 = grad.z / (scalar_type)2.0 * GRADXz;
+    scalar_type DN4 = (scalar_type)6.0 * POT_BETA * Fb * (T1 + T2 + T3);
+    scalar_type DN5 = (scalar_type)1.33333333333333 * r43 * r13 * Xs * Xs;
     scalar_type TOT2 = DN5 - D02 * DN1 + DN4 * DN3;
 
     scalar_type vxc = -POT_BETA * Fb / r43 * TOT2;
@@ -169,65 +170,65 @@ __host__ __device__ void calc_ggaCS(scalar_type dens,
     scalar_type Xxo = (POT_VOSKO_X0 * POT_VOSKO_X0) +
                       POT_VOSKO_B1 * POT_VOSKO_X0 + POT_VOSKO_C1;
 
-    scalar_type t1 = 2.0 * x1 + POT_VOSKO_B1;
+    scalar_type t1 = (scalar_type)2.0 * x1 + POT_VOSKO_B1;
     scalar_type t2 = log(Xx);
     scalar_type t3 = atan(POT_VOSKO_Q / t1);
     scalar_type t4 = POT_VOSKO_B1 * POT_VOSKO_X0 / Xxo;
 
     ec = POT_VOSKO_A1 *
-         (2.0 * log(x1) - t2 + 2.0 * POT_VOSKO_B1 / POT_VOSKO_Q * t3 -
-          t4 * (2.0 * log(x1 - POT_VOSKO_X0) - t2 +
-                2.0 * (POT_VOSKO_B1 + 2.0 * POT_VOSKO_X0) / POT_VOSKO_Q * t3));
+         ((scalar_type)2.0 * log(x1) - t2 + (scalar_type)2.0 * POT_VOSKO_B1 / POT_VOSKO_Q * t3 -
+          t4 * ((scalar_type)2.0 * log(x1 - POT_VOSKO_X0) - t2 +
+                (scalar_type)2.0 * (POT_VOSKO_B1 + (scalar_type)2.0 * POT_VOSKO_X0) / POT_VOSKO_Q * t3));
 
-    scalar_type t5 = (POT_VOSKO_B1 * x1 + 2.0 * POT_VOSKO_C1) / x1;
+    scalar_type t5 = (POT_VOSKO_B1 * x1 + (scalar_type)2.0 * POT_VOSKO_C1) / x1;
     scalar_type t6 = POT_VOSKO_X0 / Xxo;
     scalar_type vc =
         ec -
         POT_VOSKO_A16 * x1 *
             (t5 / Xx -
-             4.0 * POT_VOSKO_B1 / ((t1 * t1) + (POT_VOSKO_Q * POT_VOSKO_Q2)) *
-                 (1.0 - t6 * (POT_VOSKO_B1 - 2.0 * POT_VOSKO_X0)) -
-             t4 * (2.0 / (x1 - POT_VOSKO_X0) - t1 / Xx));
+             (scalar_type)4.0 * POT_VOSKO_B1 / ((t1 * t1) + (POT_VOSKO_Q * POT_VOSKO_Q2)) *
+                 ((scalar_type)1.0 - t6 * (POT_VOSKO_B1 - (scalar_type)2.0 * POT_VOSKO_X0)) -
+             t4 * ((scalar_type)2.0 / (x1 - POT_VOSKO_X0) - t1 / Xx));
 
     if (iexch == 6) {
       y2a = y2a + vc;
     } else {
       scalar_type rs2 = (rs * rs);
-      scalar_type Cx1 = 0.002568f + POT_ALF * rs + POT_BET * rs2;
-      scalar_type Cx2 = 1.0f + POT_GAM * rs + POT_DEL * rs2 +
-                        1.0e4 * POT_BET * (rs * rs * rs);
-      scalar_type C = 0.001667 + Cx1 / Cx2;
-      scalar_type Cx3 = POT_ALF + 2.0f * POT_BET * rs;
-      scalar_type Cx4 = POT_GAM + 2.0f * POT_DEL * rs + 3.0e4 * POT_BET * rs2;
+      scalar_type Cx1 = (scalar_type)0.002568 + POT_ALF * rs + POT_BET * rs2;
+      scalar_type Cx2 = (scalar_type)1.0 + POT_GAM * rs + POT_DEL * rs2 +
+                        (scalar_type)1.0e4 * POT_BET * (rs * rs * rs);
+      scalar_type C = (scalar_type)0.001667 + Cx1 / Cx2;
+      scalar_type Cx3 = POT_ALF + (scalar_type)2.0 * POT_BET * rs;
+      scalar_type Cx4 = POT_GAM + (scalar_type)2.0 * POT_DEL * rs + (scalar_type)3.0e4 * POT_BET * rs2;
       scalar_type dC = Cx3 / Cx2 - Cx1 / (Cx2 * Cx2) * Cx4;
-      dC = -0.333333333333333f * dC * POT_GL / (y * dens);
+      dC = (scalar_type)-0.333333333333333 * dC * POT_GL / (y * dens);
 
-      scalar_type phi = 0.0008129082f / C * dgrad /
-                        pow((scalar_type)dens, (scalar_type)(7.0f / 6.0f));
+      scalar_type phi = (scalar_type)0.0008129082 / C * dgrad /
+                        pow((scalar_type)dens, (scalar_type)(7.0 / 6.0));
       scalar_type expo = exp(-phi);
       scalar_type ex0 = expo * C;
 
       ec = ec + ex0 * grad2 / (y * dens2);
 
-      scalar_type D1 = (2.0f - phi) * d0 / dens;
+      scalar_type D1 = ((scalar_type)2.0 - phi) * d0 / dens;
       scalar_type phi2 = (phi * phi);
-      scalar_type D2 = 1.33333333333333333f - 3.666666666666666666f * phi +
-                       1.166666666666666f * phi2;
+      scalar_type D2 = (scalar_type)1.33333333333333333 - (scalar_type)3.666666666666666666 * phi +
+                       (scalar_type)1.166666666666666 * phi2;
       D2 = D2 * grad2 / dens2;
-      scalar_type D3 = phi * (phi - 3.0f) * u0 / (dens * dgrad);
-      scalar_type D4 = expo * grad2 / (y * dens) * (phi2 - phi - 1.0f) * dC;
+      scalar_type D3 = phi * (phi - (scalar_type)3.0) * u0 / (dens * dgrad);
+      scalar_type D4 = expo * grad2 / (y * dens) * (phi2 - phi - (scalar_type)1.0) * dC;
 
-      vc = vc - 1.0 * (ex0 / y * (D1 - D2 + D3) - D4);
+      vc = vc - (scalar_type)1.0 * (ex0 / y * (D1 - D2 + D3) - D4);
       y2a = y2a + vc;
     }
   } else if (iexch == 7 ||
              iexch == 8) {  // Correlation - LYP: PRB 37 785 (1988)
     scalar_type rom13 = 1 / cbrt(dens);
-    scalar_type rom53 = cbrt(pow(dens, 5));
+    scalar_type rom53 = cbrt(dens * dens * dens * dens * dens);
     scalar_type ecro = exp(-POT_CLYP * rom13);
-    scalar_type f1 = 1.0f / (1.0f + POT_DLYP * rom13);
-    scalar_type tw = 1.0f / 8.0f * (grad2 / dens - d0);
-    scalar_type term = (tw / 9.0f + d0 / 18.0f) - 2.0f * tw + POT_CF * rom53;
+    scalar_type f1 = (scalar_type)1.0 / ((scalar_type)1.0 + POT_DLYP * rom13);
+    scalar_type tw = (scalar_type)1.0 / (scalar_type)8.0 * (grad2 / dens - d0);
+    scalar_type term = (tw / (scalar_type)9.0 + d0 / (scalar_type)18.0) - (scalar_type)2.0 * tw + POT_CF * rom53;
     term = dens + POT_BLYP * (rom13 * rom13) * ecro * term;
 
     ec = -POT_ALYP * f1 * term / dens;
@@ -236,25 +237,25 @@ __host__ __device__ void calc_ggaCS(scalar_type dens,
     scalar_type g1 = f1 * h1;
     scalar_type tm1 = POT_DLYP3 * (rom13 / dens);
     scalar_type fp1 = tm1 * (f1 * f1);
-    scalar_type tm2 = -1.666666666f + POT_CLYP3 * rom13;
+    scalar_type tm2 = (scalar_type)-1.666666666 + POT_CLYP3 * rom13;
     scalar_type hp1 = h1 * tm2 / dens;
     scalar_type gp1 = fp1 * h1 + hp1 * f1;
-    scalar_type fp2 = tm1 * 2.0f * f1 * (fp1 - 0.6666666666f * f1 / dens);
-    scalar_type tm3 = 1.6666666666f - POT_CLYP3 * 1.3333333333f * rom13;
+    scalar_type fp2 = tm1 * (scalar_type)2.0 * f1 * (fp1 - (scalar_type)0.6666666666 * f1 / dens);
+    scalar_type tm3 = (scalar_type)1.6666666666 - POT_CLYP3 * (scalar_type)1.3333333333 * rom13;
     scalar_type hp2 = hp1 * tm2 / dens + h1 * tm3 / (dens * dens);
-    scalar_type gp2 = fp2 * h1 + 2.0f * fp1 * hp1 + hp2 * f1;
+    scalar_type gp2 = fp2 * h1 + (scalar_type)2.0 * fp1 * hp1 + hp2 * f1;
 
     scalar_type term3 =
         -POT_ALYP * (fp1 * dens + f1) -
-        POT_ALYP * POT_BLYP * POT_CF * (gp1 * dens + 8.0f / 3.0f * g1) * rom53;
+        POT_ALYP * POT_BLYP * POT_CF * (gp1 * dens + (scalar_type)8.0 / (scalar_type)3.0 * g1) * rom53;
     scalar_type term4 =
-        (gp2 * dens * grad2 + gp1 * (3.0f * grad2 + 2.0f * dens * d0) +
-         4.0f * g1 * d0) *
-        POT_ALYP * POT_BLYP / 4.0f;
+        (gp2 * dens * grad2 + gp1 * ((scalar_type)3.0 * grad2 + (scalar_type)2.0 * dens * d0) +
+         (scalar_type)4.0 * g1 * d0) *
+        POT_ALYP * POT_BLYP / (scalar_type)4.0;
     scalar_type term5 =
-        (3.0f * gp2 * dens * grad2 + gp1 * (5.0f * grad2 + 6.0f * dens * d0) +
-         4.0f * g1 * d0) *
-        POT_ALYP * POT_BLYP / 72.0f;
+        ((scalar_type)3.0 * gp2 * dens * grad2 + gp1 * ((scalar_type)5.0 * grad2 + (scalar_type)6.0 * dens * d0) +
+         (scalar_type)4.0 * g1 * d0) *
+        POT_ALYP * POT_BLYP / (scalar_type)72.0;
 
     y2a = y2a + (term3 - term4 - term5);
   }

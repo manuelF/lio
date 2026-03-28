@@ -256,11 +256,11 @@ extern "C" void g2g_timer_clear_(void) {
   }
 }
 
-void print_timer(string indent, string timer_name, Timer& timer, float total,
+void print_timer(string indent, string timer_name, Timer& timer, double total,
                  string parent) {
-  float time = timer.getSec() + (float)(timer.getMicrosec()) / 1000000.0f;
+  double time = timer.getSec() + (double)(timer.getMicrosec()) / 1000000.0;
   printf("%s%-35s%12.6fs (%6.2f%% of %s)\n", indent.c_str(), timer_name.c_str(),
-         time, (100.0f * time / total), parent.c_str());
+         time, (100.0 * time / total), parent.c_str());
   indent.append("  ");
   for (set<string>::iterator it = timer_children[timer_name].begin();
        it != timer_children[timer_name].end(); ++it) {
@@ -271,9 +271,9 @@ void print_timer(string indent, string timer_name, Timer& timer, float total,
 extern "C" void g2g_timer_summary_(void) {
   if (G2G::timer_sum) {
     Timer total_timer = *all_timers["Total"];
-    float total_time = 0.0f;
+    double total_time = 0.0;
     total_time =
-        total_timer.getSec() + (float)(total_timer.getMicrosec()) / 1000000.0f;
+        total_timer.getSec() + (double)(total_timer.getMicrosec()) / 1000000.0;
 
     string indent = "";
     cout << "------------------------------------------------------------------"

@@ -46,12 +46,12 @@ void GlobalMemoryPool::init(double free_global_memory) {
     cudaDeviceSynchronize();
     double free_factor = free_global_memory;
 
-    if (free_factor > 1.0f) free_factor = 1.0f;
-    if (free_factor < 0.0f) free_factor = 0.0f;
+    if (free_factor > 1.0) free_factor = 1.0;
+    if (free_factor < 0.0) free_factor = 0.0;
     _freeFactor = free_factor;
 
     _freeGlobalMemory.push_back(
-        static_cast<size_t>(static_cast<double>(free_memory) * _freeFactor));
+        static_cast<size_t>(static_cast<double>(free_memory) * static_cast<double>(_freeFactor)));
     _totalGlobalMemory.push_back(total_memory);
   }
   cudaSetDevice(previous_device);

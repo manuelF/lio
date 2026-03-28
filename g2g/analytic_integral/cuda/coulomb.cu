@@ -596,7 +596,7 @@ void CoulombIntegral<scalar_type>::calc_fock(double& Es) {
     double Ea2, Eb2;
     os_int.get_fock_output(Ea2, G2G::fortran_vars.rmm_output_a);
     os_int.get_fock_output(Eb2, G2G::fortran_vars.rmm_output_b);
-    Es = Es + ((Ea2 + Eb2) / 2.0f);
+    Es = Es + ((Ea2 + Eb2) / 2.0);
   } else {
     double Ecs;
     os_int.get_fock_output(Ecs, G2G::fortran_vars.rmm_output);

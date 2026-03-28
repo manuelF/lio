@@ -431,9 +431,9 @@ void QMMMIntegral<scalar_type>::get_gradient_output(double* mm_forces,
   for (uint i = 0; i < integral_vars.clatoms; i++) {
     for (uint j = 0; j < partial_out_size; j++) {
       const auto& v = cpu_partial_mm_forces.data[i * w + j];
-      mm_forces[i + 0 * integral_vars.clatoms] += v.x;
-      mm_forces[i + 1 * integral_vars.clatoms] += v.y;
-      mm_forces[i + 2 * integral_vars.clatoms] += v.z;
+      mm_forces[i + 0 * integral_vars.clatoms] += (double)v.x;
+      mm_forces[i + 1 * integral_vars.clatoms] += (double)v.y;
+      mm_forces[i + 2 * integral_vars.clatoms] += (double)v.z;
     }
   }
 
