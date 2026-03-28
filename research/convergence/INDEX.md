@@ -16,6 +16,7 @@ data flows through the SCF loop.
 | [converger_optimizations.md](converger_optimizations.md) | DONE | DGELS → DGELSS fix for rank deficiency; ndiis=30 necessity explained |
 | [scf_optimizations.md](scf_optimizations.md) | REF | SCF loop architecture; Fock construction cost breakdown |
 | [level_shifting_evaluation.md](level_shifting_evaluation.md) | REJECTED | Level shifting tested and ruled out for LIO (minimal benefit) |
+| [scf_loop_profile_2026_03_28.md](scf_loop_profile_2026_03_28.md) | DONE | Full nsys+perf profile: 49% CPU idle, 840ms sync bottleneck, allocation hoisting |
 
 ## Key Constraints (read before touching convergence-sensitive code)
 

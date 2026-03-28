@@ -112,8 +112,6 @@ void PointGroupCPU<scalar_type>::solve_closed(
       }
     }
   } else {
-#pragma omp parallel for num_threads(inner_threads) \
-    reduction(+ : localenergy) schedule(static)
     for (int point = 0; point < npoints; point++) {
       GGADensity<scalar_type> d = cpu_compute_density_gga(
           function_values.row(point),
@@ -172,7 +170,6 @@ void PointGroupCPU<scalar_type>::solve_closed(
     ddx.resize(this->total_nucleii(), 1);
     ddy.resize(this->total_nucleii(), 1);
     ddz.resize(this->total_nucleii(), 1);
-#pragma omp parallel for num_threads(inner_threads)
     for (int point = 0; point < (int)this->points.size(); point++) {
       ddx.zero(); ddy.zero(); ddz.zero();
       cpu_compute_density_derivs(
@@ -189,7 +186,6 @@ void PointGroupCPU<scalar_type>::solve_closed(
     }
     /* accumulate forces for each point */
     if (forces_mat.size() > 0) {
-#pragma omp parallel for num_threads(inner_threads) schedule(static)
       for (int j = 0; j < forces_mat[0].size(); j++) {
         vec_type3 acum(0.f, 0.f, 0.f);
         for (int i = 0; i < forces_mat.size(); i++) {
@@ -199,7 +195,6 @@ void PointGroupCPU<scalar_type>::solve_closed(
       }
     }
 /* accumulate force results for this group */
-#pragma omp parallel for num_threads(inner_threads)
     for (int i = 0; i < this->total_nucleii(); i++) {
       uint global_atom = this->local2global_nuc[i];
       vec_type3 this_force = forces[i];
@@ -214,7 +209,6 @@ void PointGroupCPU<scalar_type>::solve_closed(
   /* accumulate RMM results for this group */
   if (compute_rmm) {
     const int indexes = this->rmm_bigs.size();
-#pragma omp parallel for num_threads(inner_threads) schedule(static)
     for (int i = 0; i < indexes; i++) {
       int bi = this->rmm_bigs[i], row = this->rmm_rows[i],
           col = this->rmm_cols[i];
@@ -297,8 +291,6 @@ void PointGroupCPU<scalar_type>::solve_opened(
   /** density **/
   if (lda) {
   } else {
-#pragma omp parallel for num_threads(inner_threads) \
-    reduction(+ : localenergy) schedule(static)
     for (int point = 0; point < npoints; point++) {
       const scalar_type* fv   = function_values.row(point);
       const scalar_type* gxv  = gX.row(point);
@@ -367,7 +359,6 @@ void PointGroupCPU<scalar_type>::solve_opened(
     ddz_a.resize(this->total_nucleii(), 1);
     ddz_b.resize(this->total_nucleii(), 1);
 
-#pragma omp parallel for num_threads(inner_threads)
     for (int point = 0; point < (int)this->points.size(); point++) {
       ddx_a.zero(); ddy_a.zero(); ddz_a.zero();
       ddx_b.zero(); ddy_b.zero(); ddz_b.zero();
@@ -399,7 +390,6 @@ void PointGroupCPU<scalar_type>::solve_opened(
 
     /* accumulate forces for each point */
     if ((forces_mat_a.size() > 0) && (forces_mat_b.size() > 0)) {
-#pragma omp parallel for num_threads(inner_threads) schedule(static)
       for (int j = 0; j < forces_mat_a[0].size(); j++) {
         vec_type3 acum_a(0.f, 0.f, 0.f);
         vec_type3 acum_b(0.f, 0.f, 0.f);
@@ -413,7 +403,6 @@ void PointGroupCPU<scalar_type>::solve_opened(
     }
 
 /* accumulate force results for this group */
-#pragma omp parallel for num_threads(inner_threads)
     for (int i = 0; i < this->total_nucleii(); i++) {
       uint global_atom = this->local2global_nuc[i];
       vec_type3 this_force = forces_a[i] + forces_b[i];
@@ -428,7 +417,6 @@ void PointGroupCPU<scalar_type>::solve_opened(
   /* accumulate RMM results for this group */
   if (compute_rmm) {
     const int indexes = this->rmm_bigs.size();
-#pragma omp parallel for num_threads(inner_threads) schedule(static)
     for (int i = 0; i < indexes; i++) {
       int bi = this->rmm_bigs[i], row = this->rmm_rows[i],
           col = this->rmm_cols[i];
