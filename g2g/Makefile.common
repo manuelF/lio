@@ -5,7 +5,7 @@ OPTIMIZECPU :=
 
 ifeq ($(intel),0)
   CXX          := g++
-  OPTIMIZECPU  := -O3 -march=native -ffast-math
+  OPTIMIZECPU  := -O3 -march=native -ffast-math -Wconversion
   CXXFLAGS     := $(CXXFLAGS) -Wno-unused-variable -Wno-unused-parameter -Wno-sign-compare
 else
   CXX          := icc

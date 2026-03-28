@@ -34,16 +34,16 @@ using namespace std;
     }                                                \
   } while (0)
 
-Timer::Timer(void) : started(false) { timerspecclear(&res); }
+Timer::Timer(void) noexcept : started(false) { timerspecclear(&res); }
 
-Timer::Timer(const timespec& t) : started(false) { res = t; }
+Timer::Timer(const timespec& t) noexcept : started(false) { res = t; }
 
-void Timer::start(void) {
+void Timer::start(void) noexcept {
   started = true;
   clock_gettime(CLOCK_MONOTONIC, &t0);
 }
 
-void Timer::pause(void) {
+void Timer::pause(void) noexcept {
   clock_gettime(CLOCK_MONOTONIC, &t1);
   timespec partial_res;
   timerspecsub(&t1, &t0, &partial_res);
@@ -51,35 +51,35 @@ void Timer::pause(void) {
   timerspecclear(&t0);
 }
 
-void Timer::stop(void) {
+void Timer::stop(void) noexcept {
   clock_gettime(CLOCK_MONOTONIC, &t1);
   timerspecsub(&t1, &t0, &res);
   timerspecclear(&t0);
   started = false;
 }
 
-void Timer::start_and_sync(void) {
+void Timer::start_and_sync(void) noexcept {
   sync();
   start();
 }
 
-void Timer::stop_and_sync(void) {
+void Timer::stop_and_sync(void) noexcept {
   sync();
   stop();
 }
 
-void Timer::pause_and_sync(void) {
+void Timer::pause_and_sync(void) noexcept {
   sync();
   pause();
 }
 
-bool Timer::isStarted(void) const { return started; }
+bool Timer::isStarted(void) const noexcept { return started; }
 
-unsigned long Timer::getMicrosec(void) const { return res.tv_nsec / 1000; }
+unsigned long Timer::getMicrosec(void) const noexcept { return res.tv_nsec / 1000; }
 
-unsigned long Timer::getSec(void) const { return res.tv_sec; }
+unsigned long Timer::getSec(void) const noexcept { return res.tv_sec; }
 
-double Timer::getTotal(void) const {
+double Timer::getTotal(void) const noexcept {
   return res.tv_nsec + res.tv_sec * 1000.0 * 1000.0 * 1000.0;
 }
 

@@ -83,9 +83,9 @@ class PointGroup {
     return v;
   }
   inline uint total_functions_simple(void) const {
-    return local2global_func.size();
+    return static_cast<uint>(local2global_func.size());
   }  // == s_functions + p_functions + d_functions
-  inline uint total_nucleii(void) const { return local2global_nuc.size(); }
+  inline uint total_nucleii(void) const { return static_cast<uint>(local2global_nuc.size()); }
   inline bool has_nucleii(uint atom) const {
     return (std::find(local2global_nuc.begin(), local2global_nuc.end(), atom) !=
             local2global_nuc.end());

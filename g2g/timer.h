@@ -7,21 +7,21 @@ namespace G2G {
 
 class Timer {
  public:
-  Timer(void);
-  Timer(const timespec& t);
+  Timer(void) noexcept;
+  Timer(const timespec& t) noexcept;
 
-  void start(void);
-  void stop(void);
-  void pause(void);
-  void start_and_sync(void);
-  void stop_and_sync(void);
-  void pause_and_sync(void);
+  void start(void) noexcept;
+  void stop(void) noexcept;
+  void pause(void) noexcept;
+  void start_and_sync(void) noexcept;
+  void stop_and_sync(void) noexcept;
+  void pause_and_sync(void) noexcept;
 
-  unsigned long getMicrosec(void) const;
-  unsigned long getSec(void) const;
-  double getTotal(void) const;
+  unsigned long getMicrosec(void) const noexcept;
+  unsigned long getSec(void) const noexcept;
+  double getTotal(void) const noexcept;
 
-  bool isStarted(void) const;
+  bool isStarted(void) const noexcept;
 
   friend std::ostream& operator<<(std::ostream& o, const Timer& t);
   // to compare stopped timers

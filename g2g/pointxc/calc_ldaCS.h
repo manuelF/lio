@@ -1,5 +1,4 @@
 #include <cassert>
-#include <stdexcept>
 #include "../fix_compile.h"
 
 namespace G2G {
@@ -97,7 +96,7 @@ __host__ __device__ void calc_ldaCS(scalar_type dens, scalar_type& ex,
       y2a = v0 + vc;
     } break;
     default:
-      throw std::runtime_error("Error, invalid iexch");
+      assert(false && "calc_ldaCS: invalid iexch");
   }
 }
 

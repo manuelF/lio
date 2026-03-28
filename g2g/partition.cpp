@@ -86,7 +86,7 @@ void PointGroupGPU<scalar_type>::get_rmm_input(
   // compute_indexes). Fill only the lower triangle for the density kernel:
   // HostMatrix operator()(i,j) = data[j*width+i], so first arg = column,
   // second = row. rmm_input(rows[k], cols[k]) gives col=rows[k] <= row=cols[k].
-  const int indexes = this->rmm_bigs.size();
+  const int indexes = static_cast<int>(this->rmm_bigs.size());
   for (int k = 0; k < indexes; k++) {
     scalar_type val = (scalar_type)source.data[this->rmm_bigs[k]];
     rmm_input(this->rmm_rows[k], this->rmm_cols[k]) = val;
@@ -98,7 +98,7 @@ template <class scalar_type>
 void PointGroupCPU<scalar_type>::get_rmm_input(
     HostMatrix<scalar_type>& rmm_input, FortranMatrix<double>& source) const {
   rmm_input.zero();
-  const int indexes = this->rmm_bigs.size();
+  const int indexes = static_cast<int>(this->rmm_bigs.size());
   for (int i = 0; i < indexes; i++) {
     int ii = this->rmm_rows[i], jj = this->rmm_cols[i], bi = this->rmm_bigs[i];
     rmm_input(ii, jj) = rmm_input(jj, ii) = (scalar_type)source.data[bi];
@@ -470,19 +470,19 @@ void Partition::rebalance(vector<double>& times, vector<double>& finishes) {
       int smallest = 0;
 
       if (device == 0) {
-        largest =
+        largest = static_cast<int>(
             std::max_element(finishes.begin(), finishes.end() - gpu_threads) -
-            finishes.begin();
-        smallest =
+            finishes.begin());
+        smallest = static_cast<int>(
             std::min_element(finishes.begin(), finishes.end() - gpu_threads) -
-            finishes.begin();
+            finishes.begin());
       } else {
-        largest =
+        largest = static_cast<int>(
             std::max_element(finishes.begin() + cpu_threads, finishes.end()) -
-            finishes.begin();
-        smallest =
+            finishes.begin());
+        smallest = static_cast<int>(
             std::min_element(finishes.begin() + cpu_threads, finishes.end()) -
-            finishes.begin();
+            finishes.begin());
       }
 
       double diff = finishes[largest] - finishes[smallest];
@@ -646,9 +646,9 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
       if (next[i] > max_cpu) max_cpu = next[i];
     double gpu_time = next[cpu_threads];
     int cpu_groups = 0, gpu_groups = 0;
-    for (int i = 0; i < cpu_threads; i++) cpu_groups += work[i].size();
+    for (int i = 0; i < cpu_threads; i++) cpu_groups += static_cast<int>(work[i].size());
     for (int i = cpu_threads; i < cpu_threads + gpu_threads; i++)
-      gpu_groups += work[i].size();
+      gpu_groups += static_cast<int>(work[i].size());
     printf("  [balance] CPU max=%.1fms (%d groups/%d threads)  "
            "GPU=%.1fms (%d groups/%d threads)  "
            "idle=%.1fms (%s waits)\n",
@@ -670,7 +670,7 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
              cubes[i]->cost(), timeforgroup[i] / 1e3);
     }
     for (uint i = 0; i < spheres.size(); i++) {
-      uint idx = i + cubes.size();
+      uint idx = i + static_cast<uint>(cubes.size());
       printf("  [perfmodel] %u,%s,%u,%u,%lld,%.1f\n",
              idx, spheres[i]->is_big_group() ? "GPU" : "CPU",
              spheres[i]->number_of_points, spheres[i]->total_functions(),

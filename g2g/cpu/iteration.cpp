@@ -43,7 +43,7 @@ void PointGroupCPU<scalar_type>::solve_closed(
     bool compute_energy, double& energy, HostMatrix<double>& fort_forces,
     int inner_threads, HostMatrix<double>& rmm_global_output) {
   const uint group_m = this->total_functions();
-  const int npoints = this->points.size();
+  const int npoints = static_cast<int>(this->points.size());
 
   //printf("solve_closed(...)\n");
 
@@ -76,7 +76,7 @@ void PointGroupCPU<scalar_type>::solve_closed(
   vector<std::vector<vec_type3> > forces_mat;
   HostMatrix<scalar_type> factors_rmm;
 
-  if (compute_rmm || compute_forces) factors_rmm.resize(this->points.size(), 1);
+  if (compute_rmm || compute_forces) factors_rmm.resize(static_cast<uint>(this->points.size()), 1);
 
   if (compute_forces) {
     forces.resize(this->total_nucleii(), vec_type3(0.f, 0.f, 0.f));
@@ -208,7 +208,7 @@ void PointGroupCPU<scalar_type>::solve_closed(
   timers.rmm.start();
   /* accumulate RMM results for this group */
   if (compute_rmm) {
-    const int indexes = this->rmm_bigs.size();
+    const int indexes = static_cast<int>(this->rmm_bigs.size());
     for (int i = 0; i < indexes; i++) {
       int bi = this->rmm_bigs[i], row = this->rmm_rows[i],
           col = this->rmm_cols[i];
@@ -248,7 +248,7 @@ void PointGroupCPU<scalar_type>::solve_opened(
   //   std::exit(0);
   int inner_threads = 1;
   const uint group_m = this->total_functions();
-  const int npoints = this->points.size();
+  const int npoints = static_cast<int>(this->points.size());
 
 #if CPU_RECOMPUTE or !GPU_KERNELS
   /** Compute functions **/
@@ -271,8 +271,8 @@ void PointGroupCPU<scalar_type>::solve_opened(
   HostMatrix<scalar_type> factors_rmm_a, factors_rmm_b;
 
   if (compute_rmm || compute_forces) {
-    factors_rmm_a.resize(this->points.size(), 1);
-    factors_rmm_b.resize(this->points.size(), 1);
+    factors_rmm_a.resize(static_cast<uint>(this->points.size()), 1);
+    factors_rmm_b.resize(static_cast<uint>(this->points.size()), 1);
   }
 
   if (compute_forces) {
@@ -416,7 +416,7 @@ void PointGroupCPU<scalar_type>::solve_opened(
   timers.rmm.start();
   /* accumulate RMM results for this group */
   if (compute_rmm) {
-    const int indexes = this->rmm_bigs.size();
+    const int indexes = static_cast<int>(this->rmm_bigs.size());
     for (int i = 0; i < indexes; i++) {
       int bi = this->rmm_bigs[i], row = this->rmm_rows[i],
           col = this->rmm_cols[i];
