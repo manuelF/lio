@@ -78,6 +78,7 @@ subroutine SCF(E)
    real*8  :: DAMP0
    real*8  :: DAMP
    integer :: igpu
+   double precision, external :: DDOT
 
 !  The following two variables are in a part of the code that is never
 !  used. Check if these must be taken out...
@@ -140,8 +141,7 @@ subroutine SCF(E)
 
 
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
-! TODO : Variables to eliminate...
-   real*8, allocatable :: xnano(:,:)
+   real*8 :: rho_new
    integer :: MM, MM2, MMd, Md2
    integer :: M1, M2
 
@@ -176,6 +176,7 @@ subroutine SCF(E)
 
    allocate(fock_a(M_f,M_f), rho_a(M_f,M_f))
    allocate(morb_energy(M_f), morb_coefat(M_f,M_f))
+   allocate(morb_coefon(M_f,M_f))
    if (OPEN) then
       allocate(fock_b(M_f,M_f), rho_b(M_f,M_f))
    end if
@@ -511,17 +512,8 @@ subroutine SCF(E)
            if (field) call field_setup_old(1.0D0, 0, fx, fy, fz)
            call field_calc(E1, 0.0D0, Pmat_vec(1:MM), Fmat_vec2, Fmat_vec, &
                            r, d, Iz, natom, ntatom, open)
-
-           do kk=1,MM
-               E1 = E1 + Pmat_vec(kk) * Hmat_vec(kk)
-           enddo
-        else
-!          E1 includes solvent 1 electron contributions
-           do kk=1,MM
-              E1 = E1 + Pmat_vec(kk) * Hmat_vec(kk)
-           enddo
-
         endif
+        E1 = E1 + DDOT(MM, Pmat_vec, 1, Hmat_vec, 1)
         call g2g_timer_sum_pause('Fock integrals')
 
 !------------------------------------------------------------------------------!
@@ -596,8 +588,6 @@ subroutine SCF(E)
         call g2g_timer_sum_pause('SCF acceleration')
 !------------------------------------------------------------------------------!
 !  Fock(ON) diagonalization
-        if ( allocated(morb_coefon) ) deallocate(morb_coefon)
-        allocate( morb_coefon(M_f,M_f) )
         call g2g_timer_sum_start('SCF - Fock Diagonalization (sum)')
         call fock_aop%Diagon_datamat( morb_coefon, morb_energy )
         call g2g_timer_sum_pause('SCF - Fock Diagonalization (sum)')
@@ -616,14 +606,13 @@ subroutine SCF(E)
         call standard_coefs( morb_coefat )
         call g2g_timer_sum_pause('SCF - MOC base change (sum)')
 
-        if ( allocated(morb_coefon) ) deallocate(morb_coefon)
         call rho_aop%Dens_build(M_f, NCOa_f, ocupF, morb_coefat)
         call rho_aop%Gets_data_AO(rho_a)
         call messup_densmat( rho_a )
 
         Eorbs      = morb_energy
         MO_coef_at = morb_coefat
-        
+
     if (OPEN) then
 !%%%%%%%%%%%%%%%%%%%%
 !OPEN SHELL OPTION  |
@@ -641,9 +630,6 @@ subroutine SCF(E)
 
 !------------------------------------------------------------------------------!
 !  Fock(ON) diagonalization
-        if ( allocated(morb_coefon) ) deallocate(morb_coefon)
-        allocate( morb_coefon(M_f,M_f) )
-
         call g2g_timer_sum_start('SCF - Fock Diagonalization (sum)')
         call fock_bop%Diagon_datamat( morb_coefon, morb_energy )
         call g2g_timer_sum_pause('SCF - Fock Diagonalization (sum)')
@@ -662,7 +648,6 @@ subroutine SCF(E)
         call standard_coefs( morb_coefat )
         call g2g_timer_sum_pause('SCF - MOC base change (sum)')
 
-        if ( allocated(morb_coefon) ) deallocate(morb_coefon)
         call rho_bop%Dens_build(M_f, NCOb_f, ocupF, morb_coefat)
         call rho_bop%Gets_data_AO(rho_b)
         call messup_densmat( rho_b )
@@ -690,11 +675,7 @@ subroutine SCF(E)
 !------------------------------------------------------------------------------!
 ! carlos: added to separate from rho the DFT part
 !
-! TODO: again, this should be handled differently...
-! TODO: make xnano go away...only remains here
-!
-        allocate ( xnano(M,M) )
-
+! TBDFT: extract DFT part and repack for open shell
         if (tbdft_calc) then
           rhoa_TBDFT = rho_a
           call extract_rhoDFT(M, rho_a, rho_a0)
@@ -704,9 +685,6 @@ subroutine SCF(E)
               call extract_rhoDFT(M, rho_b, rho_b0)
               call sprepack('L',M,rhoalpha,rho_a0)
               call sprepack('L',M,rhobeta,rho_b0)
-              xnano=rho_a0+rho_b0
-          else
-              xnano=rho_a0
           end if
 
         else
@@ -714,24 +692,38 @@ subroutine SCF(E)
           if (OPEN) then
              call sprepack('L',M,rhoalpha,rho_a)
              call sprepack('L',M,rhobeta,rho_b)
-             xnano=rho_a+rho_b
-          else
-              xnano=rho_a
           end if
         end if
 !------------------------------------------------------------------------------!
-! TODO: convergence criteria should be a separated subroutine...
+! Convergence metric: compute RMS density difference directly without xnano.
+! The density source depends on TBDFT and open-shell flags:
+!   non-TBDFT closed: rho_a
+!   non-TBDFT open:   rho_a + rho_b
+!   TBDFT closed:     rho_a0
+!   TBDFT open:       rho_a0 + rho_b0
         good = 0.0d0
         do jj=1,M
         do kk=jj,M
-          del=xnano(jj,kk)-(Pmat_vec(kk+(M2-jj)*(jj-1)/2))
+          if (tbdft_calc) then
+             if (OPEN) then
+                rho_new = rho_a0(jj,kk) + rho_b0(jj,kk)
+             else
+                rho_new = rho_a0(jj,kk)
+             end if
+          else
+             if (OPEN) then
+                rho_new = rho_a(jj,kk) + rho_b(jj,kk)
+             else
+                rho_new = rho_a(jj,kk)
+             end if
+          end if
+          del = rho_new - Pmat_vec(kk+(M2-jj)*(jj-1)/2)
           if (kk.gt.jj) del=del*sq2
           good=good+del**2
-          Pmat_vec(kk+(M2-jj)*(jj-1)/2)=xnano(jj,kk)
+          Pmat_vec(kk+(M2-jj)*(jj-1)/2) = rho_new
         enddo
         enddo
         good=sqrt(good)/float(M)
-        deallocate ( xnano )
 !------------------------------------------------------------------------------!
 ! TODO: finalization of the loop is a little bit messy. Also: "999 continue"??
 !       I think it is time we regularized this loop...

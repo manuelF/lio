@@ -11,7 +11,8 @@ subroutine converger_init( M_in, ndiis_in, factor_in, do_diis, do_hybrid, OPshel
                              hagodiis, damping_factor, bcoef, ndiis, EMAT2, &
                              head_idx, &
                              fock00_w, fock_w, rho_w, suma_w, &
-                             scratch1_w, scratch2_w, work_w
+                             scratch1_w, scratch2_w, work_w, &
+                             EMAT_w, sv_w
 
    implicit none
    double precision, intent(in) :: factor_in
@@ -68,6 +69,8 @@ subroutine converger_init( M_in, ndiis_in, factor_in, do_diis, do_hybrid, OPshel
       if (.not. allocated(suma_w))     allocate(suma_w(M_in, M_in))
       if (.not. allocated(scratch1_w)) allocate(scratch1_w(M_in, M_in))
       if (.not. allocated(scratch2_w)) allocate(scratch2_w(M_in, M_in))
+      if (.not. allocated(EMAT_w))     allocate(EMAT_w(ndiis+1, ndiis+1))
+      if (.not. allocated(sv_w))       allocate(sv_w(ndiis+1))
    endif
 end subroutine converger_init
 
@@ -81,7 +84,8 @@ end subroutine converger_init
                                fock_damped, bcoef, EMAT2, conver_criter, &
                                head_idx, &
                                fock00_w, fock_w, rho_w, suma_w, &
-                               scratch1_w, scratch2_w, work_w
+                               scratch1_w, scratch2_w, work_w, &
+                               EMAT_w, sv_w
    use typedef_operator, only: operator
    use fileio_data     , only: verbose
 
@@ -100,8 +104,6 @@ end subroutine converger_init
    integer          :: ndiist, ii, jj, kk, lwork, info
    integer          :: slot_i, slot_j, slot_k
    integer          :: diis_rank
-   double precision, allocatable :: EMAT(:,:)
-   double precision, allocatable :: sv(:)
    double precision :: rcond_diis, bcoef_max
    double precision, external :: DDOT
 
@@ -225,24 +227,24 @@ end subroutine converger_init
       endif
    endif
 
-   ! DIIS: build B-matrix (EMAT), solve for coefficients, extrapolate Fock.
+   ! DIIS: build B-matrix (EMAT_w), solve for coefficients, extrapolate Fock.
    if (conver_criter /= 1) then
-      allocate(EMAT(ndiist+1,ndiist+1))
 
       ! Read cached EMAT2 entries using circular buffer physical slot mapping.
       ! Unified logic for both niter <= ndiis and niter > ndiis cases.
-      EMAT = 0.0D0
+      ! Zero only the (ndiist+1) subblock of the persistent EMAT_w workspace.
+      EMAT_w(1:ndiist+1, 1:ndiist+1) = 0.0D0
       if (niter .gt. 1) then
          do jj = 1, ndiist-1
             slot_j = circ_slot(jj, head_idx(spin), ndiist, ndiis)
          do ii = 1, ndiist-1
             slot_i = circ_slot(ii, head_idx(spin), ndiist, ndiis)
-            EMAT(ii,jj) = EMAT2(slot_i, slot_j, spin)
+            EMAT_w(ii,jj) = EMAT2(slot_i, slot_j, spin)
          enddo
          enddo
       endif
 
-      ! Compute newest row/column of EMAT (the head entry vs all entries).
+      ! Compute newest row/column of EMAT_w (the head entry vs all entries).
       ! Since commutators [F',P'] are antisymmetric, Tr(A·B) for antisymmetric
       ! A,B equals -sum(A(i,j)*B(i,j)) = -DDOT(M², A, B). This replaces the
       ! trace_product double loop with a single BLAS call and avoids copying
@@ -250,25 +252,25 @@ end subroutine converger_init
       do kk = 1, ndiist
          slot_k = circ_slot(kk, head_idx(spin), ndiist, ndiis)
 
-         EMAT(ndiist,kk) = -DDOT(M_in*M_in, &
+         EMAT_w(ndiist,kk) = -DDOT(M_in*M_in, &
                                   FP_PFm(1,1,head_idx(spin),spin), 1, &
                                   FP_PFm(1,1,slot_k,spin), 1)
-         if (kk.ne.ndiist) EMAT(kk,ndiist) = EMAT(ndiist,kk)
+         if (kk.ne.ndiist) EMAT_w(kk,ndiist) = EMAT_w(ndiist,kk)
       enddo
 
       ! Lagrange multiplier row/column
       do kk = 1, ndiist
-         EMAT(kk,ndiist+1) = -1.0d0
-         EMAT(ndiist+1,kk) = -1.0d0
+         EMAT_w(kk,ndiist+1) = -1.0d0
+         EMAT_w(ndiist+1,kk) = -1.0d0
       enddo
-      EMAT(ndiist+1, ndiist+1)= 0.0d0
+      EMAT_w(ndiist+1, ndiist+1)= 0.0d0
 
-      ! Save EMAT entries to EMAT2 using physical slot indices
+      ! Save EMAT_w entries to EMAT2 using physical slot indices
       do jj = 1, ndiist
          slot_j = circ_slot(jj, head_idx(spin), ndiist, ndiis)
       do ii = 1, ndiist
          slot_i = circ_slot(ii, head_idx(spin), ndiist, ndiis)
-         EMAT2(slot_i, slot_j, spin) = EMAT(ii,jj)
+         EMAT2(slot_i, slot_j, spin) = EMAT_w(ii,jj)
       enddo
       enddo
 
@@ -295,19 +297,17 @@ end subroutine converger_init
          ! making EMAT nearly singular. DGELS ignores this and produces wild
          ! coefficients (|c_k| ~ 1e6+), amplifying float32 GPU noise. DGELSS
          ! truncates near-zero singular values and returns bounded coefficients.
-         allocate(sv(ndiist+1))
          rcond_diis = -1.0d0  ! Use machine epsilon as rank threshold
 
          LWORK = -1
-         CALL DGELSS( ndiist+1, ndiist+1, 1, EMAT, ndiist+1, &
-                      bcoef(:,spin), ndiist+1, sv, rcond_diis, &
+         CALL DGELSS( ndiist+1, ndiist+1, 1, EMAT_w, ndiis+1, &
+                      bcoef(:,spin), ndiis+1, sv_w, rcond_diis, &
                       diis_rank, work_w, LWORK, INFO )
 
          LWORK = MIN( 1000, INT( work_w( 1 ) ) )
-         CALL DGELSS( ndiist+1, ndiist+1, 1, EMAT, ndiist+1, &
-                      bcoef(:,spin), ndiist+1, sv, rcond_diis, &
+         CALL DGELSS( ndiist+1, ndiist+1, 1, EMAT_w, ndiis+1, &
+                      bcoef(:,spin), ndiis+1, sv_w, rcond_diis, &
                       diis_rank, work_w, LWORK, INFO )
-         deallocate(sv)
 
          ! Safety check: if coefficients are still too large despite SVD
          ! regularization, fall back to using only the current Fock (newest).

@@ -27,5 +27,9 @@ module converger_data
    real*8, allocatable :: scratch1_w(:,:), scratch2_w(:,:)
    real*8, allocatable :: work_w(:)
 
+   ! Persistent DIIS workspace (avoid per-call allocations)
+   real*8, allocatable :: EMAT_w(:,:)
+   real*8, allocatable :: sv_w(:)
+
 end module converger_data
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
