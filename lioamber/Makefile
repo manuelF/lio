@@ -78,6 +78,11 @@ $(OBJPATH)/%.o :  %.f90 $(MAKEFILES) | $(OBJPATH)
 liblio-g2g.so : $(OBJECTS:%.o=$(OBJPATH)/%.o)
 	$(LC) $^ $(LFLAGS) $(LIBS) -o $@
 
+# Split targets for parallel top-level build (compile all .o, then link .so)
+.PHONY: compile link
+compile: $(OBJECTS:%.o=$(OBJPATH)/%.o)
+link: liblio-g2g.so
+
 .PHONY: .FORCE
 .FORCE:
 

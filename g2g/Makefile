@@ -91,6 +91,11 @@ LIBRARY=libg2g.so
 ## Targets
 all: $(LIBRARY)
 
+# Split targets for parallel top-level build (compile all .o, then link .so)
+.PHONY: compile link
+compile: $(OBJ)
+link: $(LIBRARY)
+
 include Makefile.depends
 
 depend:
