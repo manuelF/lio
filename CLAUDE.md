@@ -16,7 +16,7 @@ The `nvcc` in PATH resolves to CUDA 12.0 and correctly supports SM 6.1 (GTX 1080
 GPU arch flags must include **both** PTX and cubin entries so the binary is
 usable across driver versions. The detection pattern is in `g2g/Makefile.cuda`.
 
-Current hardware: **GTX 1080, SM 6.1 (Pascal)**, CUDA 12.0 on PATH.
+Current hardware: **RTX 3080 Ti, SM 8.6 (Ampere)**, CUDA 13.1 on PATH.
 
 ---
 

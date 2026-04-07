@@ -152,6 +152,11 @@ GENCODE_SM61    += -gencode arch=compute_61,code=sm_61
 # Turing, CUDA >= 10
 GENCODE_SM75    := -gencode arch=compute_75,code=compute_75
 GENCODE_SM75    += -gencode arch=compute_75,code=sm_75
+# Ampere, CUDA >= 11.1
+GENCODE_SM80    := -gencode arch=compute_80,code=compute_80
+GENCODE_SM80    += -gencode arch=compute_80,code=sm_80
+GENCODE_SM86    := -gencode arch=compute_86,code=compute_86
+GENCODE_SM86    += -gencode arch=compute_86,code=sm_86
 
 
 # If specific architecture is active, then compile for that.
@@ -179,6 +184,12 @@ endif
 ifeq ($(sm75),1)
   GENCODE_FLAGS   += $(GENCODE_SM75)
 endif
+ifeq ($(sm80),1)
+  GENCODE_FLAGS   += $(GENCODE_SM80)
+endif
+ifeq ($(sm86),1)
+  GENCODE_FLAGS   += $(GENCODE_SM86)
+endif
 
 # If no specific architecture is set, try to detect the GPU
 ifeq ($(GENCODE_FLAGS),)
@@ -194,7 +205,7 @@ CUDA_OLD := $(shell echo "`nvcc --version | tail -n 1 | awk -F',' '{ print $$2 }
 ifeq ($(CUDA_OLD),1)
   GENCODE_FLAGS ?= $(GENCODE_SM30)
 else
-  GENCODE_FLAGS ?= $(GENCODE_SM50) $(GENCODE_SM52) $(GENCODE_SM60) $(GENCODE_SM61) $(GENCODE_SM75)
+  GENCODE_FLAGS ?= $(GENCODE_SM50) $(GENCODE_SM52) $(GENCODE_SM60) $(GENCODE_SM61) $(GENCODE_SM75) $(GENCODE_SM80) $(GENCODE_SM86)
 endif
 
 NVCCFLAGS     += $(GENCODE_FLAGS)
