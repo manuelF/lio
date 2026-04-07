@@ -289,7 +289,7 @@ sub print_gradient_inner {
   }
   $str = "$str dens[$dens1_ind];\n";
   for $grad_ind (0..2) {
-    $str = "$str${indent}//START INDEX igrad=$grad_ind\n";
+    $str = "$str${indent}// START INDEX igrad=$grad_ind\n";
     $str = "$str${indent}\{\n";
     my $int_str = &print_integral(@first_req);
     my @m_p1 = &inc_m(@first_req);
@@ -380,10 +380,10 @@ sub print_gradient_inner {
     }
     $str = "$str$indent  scalar_type B_force_term = PmB[$grad_ind] * $int_str + A_force_term;\n";
     $str = "$str$indent  A_force_term += PmA[$grad_ind] * $int_str;\n";
-    $str = "$str$indent  A_force_term *= 2.0 * ai;\n";
-    $str = "$str$indent  B_force_term *= 2.0 * aj;\n";
+    $str = "$str$indent  A_force_term *= scalar_type(2.0) * ai;\n";
+    $str = "$str$indent  B_force_term *= scalar_type(2.0) * aj;\n";
     if ($INDICES == 3) {
-      $str = "$str$indent  C_force_term *= 2.0 * ac_val_dens_sh[j].x;\n";
+      $str = "$str$indent  C_force_term *= scalar_type(2.0) * ac_val_dens_sh[j].x;\n";
     }
     for (1..$l) {
       my @skip = ($_);
@@ -401,8 +401,8 @@ sub print_gradient_inner {
         }
       }
     }
-    $str = "$str$indent  A_force[$grad_ind]      += preterm * A_force_term;\n";
-    $str = "$str$indent  B_force[$grad_ind]      += preterm * B_force_term;\n";
+    $str = "$str$indent  A_force[$grad_ind] += preterm * A_force_term;\n";
+    $str = "$str$indent  B_force[$grad_ind] += preterm * B_force_term;\n";
     $str = "$str$indent  C_force[$grad_ind][tid] += preterm * C_force_term;\n";
     $str = "$str$indent\}\n";
   }
@@ -541,14 +541,14 @@ sub OS_level {
       }
     }
 
-    $str = "$str${indent}//START INDEX i$level=$this_ind, CENTER $INDEX_MAP[$level-1]\n";
+    $str = "$str${indent}// START INDEX i$level=$this_ind, CENTER $INDEX_MAP[$level-1]\n";
     $str = "$str${indent}\{\n";
     for my $integral (@calc) {
       my $one_ind_rule = &print_one_ind_rule($integral,$level,$this_ind);
       $str = "$str$indent  $one_ind_rule\n";
     }
     for my $ind2 (1..$level-1) {
-      $str = "$str$indent  scalar_type norm$level = 1.0;\n" if $NORM_INDICES[$level-1] and $ind2 == $level-1;
+      $str = "$str$indent  scalar_type norm$level = scalar_type(1.0);\n" if $NORM_INDICES[$level-1] and $ind2 == $level-1;
       #$str = "$str$indent    bool del_${ind2}${level} = i$ind2 == i$level;\n";
       if ($ind_vals[$level-1] == $ind_vals[$ind2-1]) {
         #$str = "$str$indent  \{\n";
