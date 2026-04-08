@@ -2,7 +2,12 @@
 
 Research and implementation notes for CUDA kernel performance.
 Current hardware: RTX 3080 Ti (SM 8.6 Ampere). Previous: GTX 1080 (SM 6.1 Pascal).
-The density kernel (`gpu_compute_density`) dominates at 45% of GPU time — start there.
+
+**2026-04-08 status:** On RTX 3080 Ti, g2g solve (all GPU+CPU kernels) is only
+**11% of wall time** (0.39s / 3.63s on fosfatoQMMM). The bottleneck has shifted
+to Fortran-side CPU work (converger, int3lu, DIIS). GPU kernel optimizations now
+have diminishing returns for this system — a 2× density speedup saves ~3% wall.
+Larger molecular systems will still benefit from GPU kernel work.
 
 ## Status Legend
 
@@ -27,11 +32,11 @@ The density kernel (`gpu_compute_density`) dominates at 45% of GPU time — star
 
 | File | Impact | Summary |
 |------|--------|---------|
-| [async_execution.md](async_execution.md) | DIMINISHED | Phases 1-2 DONE; remaining syncs are post-SCF only (~5.5ms/3.22s = 0.2%), not worth pursuing |
-| [optimize_open_shell_registers.md](optimize_open_shell_registers.md) | HIGH | Open-shell GGA: 93 regs → 56 regs (34% → 56% occupancy) by splitting into 2 closed-shell calls |
-| [stream_sharding.md](stream_sharding.md) | NOT WORTH IT | CPU launch overhead 60µs/group vs 700µs kernel; GPU never starved with fgm=-1 |
-| [optimize_density_gemm.md](optimize_density_gemm.md) | HIGH | Only remaining >10% opportunity for density kernel; eliminates texture+divergence; FP-order risk |
-| [optimize_rmm.md](optimize_rmm.md) | MEDIUM | Replace custom RMM SYRK with cuBLAS `cublasSsyrk` |
+| [async_execution.md](async_execution.md) | CLOSED | Phases 1-2 DONE; remaining syncs are post-SCF only (~5.5ms = 0.2%), not worth pursuing |
+| [optimize_open_shell_registers.md](optimize_open_shell_registers.md) | HIGH (open-shell only) | 93 regs → 56 regs (34% → 56% occ) by splitting into 2 closed-shell calls; no effect on closed-shell |
+| [stream_sharding.md](stream_sharding.md) | CLOSED | CPU launch overhead 60µs/group vs 700µs kernel; GPU never starved with fgm=-1 |
+| [optimize_density_gemm.md](optimize_density_gemm.md) | MEDIUM (was HIGH) | ~3% wall on fosfatoQMMM/3080Ti (g2g is only 11% of wall); larger impact on bigger systems |
+| [optimize_rmm.md](optimize_rmm.md) | LOW (was MEDIUM) | cuBLAS SYRK; diminished by g2g being 11% of wall |
 
 ### Open — Lower Impact / Speculative
 

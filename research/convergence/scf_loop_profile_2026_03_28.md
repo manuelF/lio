@@ -4,6 +4,12 @@
 **Impact:** Informational (guides next optimization)
 **System:** fosfatoQMMM, 34 QM atoms, M=86, closed-shell GGA, GTX 1080 SM 6.1
 
+**2026-04-08 update:** RTX 3080 Ti profiling shows a completely different bottleneck
+distribution. g2g solve dropped from 42% to 11% of wall (0.39s/3.63s). The dominant
+costs are now Fortran per-iter overhead (0.94s, 26%), int3mem+int3lu (0.75s, 21%),
+and partition auto-tune (0.50s, 14%). CPU idle dropped from 49% to ~22% (4ms/iter
+idle out of 18ms). See `research/INDEX.md` for the full RTX 3080 Ti time breakdown.
+
 ## Timing Summary
 
 - **Wall time:** 4.09-4.14s (5 runs)

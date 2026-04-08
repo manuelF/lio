@@ -1,9 +1,16 @@
 # Roofline Analysis: `gpu_compute_density<float, false>` (GGA, closed-shell)
 
 **Status:** REF — analysis complete, opportunities re-evaluated against tested dead ends
-**Last updated:** 2026-03-28
+**Last updated:** 2026-03-28 (profiled on GTX 1080; see note below)
 **Hardware:** GTX 1080 (SM 6.1, Pascal), CUDA 12.0
 **Test case:** fosfatoQMMM (34 QM atoms, 25 SCF iterations)
+
+**2026-04-08 note:** On RTX 3080 Ti, g2g solve is only 11% of wall time (0.39s/3.63s).
+The density kernel is ~half of that (~5% wall). Even a 2× kernel speedup saves ~3%.
+This roofline analysis remains valid for the kernel in isolation, but the system-level
+impact of kernel optimizations is much smaller than when this was profiled on GTX 1080
+(where g2g was 42% of wall). Re-profile on 3080 Ti with `ncu` (SM 8.6 supports it)
+for updated metrics.
 
 ## Hardware Ceilings (GTX 1080)
 

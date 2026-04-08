@@ -1,7 +1,7 @@
 # Optimization: Async Execution and CPU-GPU Overlap
 
-**Status:** MOSTLY DONE — Phases 1-2 implemented; remaining phases have negligible ROI
-**Last updated:** 2026-03-28
+**Status:** CLOSED — Phases 1-2 implemented; remaining phases have negligible ROI (0.2% wall)
+**Last updated:** 2026-04-08
 
 ## What Was Done
 
