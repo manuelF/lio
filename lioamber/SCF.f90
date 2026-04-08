@@ -577,6 +577,10 @@ subroutine SCF(E)
 !%%%%%%%%%%%%%%%%%%%%
 !CLOSE SHELL OPTION |
 !%%%%%%%%%%%%%%%%%%%%
+        if (OPEN) then
+!          Open-shell: morb_coefon is shared by alpha/beta, so the previous
+!          iteration's alpha eigenvectors are overwritten by beta diag.
+!          Fall back to Y^T*P*Y for the density base change.
 #       ifdef CUBLAS
            call conver(niter, good, good_cut, M_f, rho_aop, fock_aop,         &
                        dev_Xmat, dev_Ymat, 1)
@@ -584,6 +588,17 @@ subroutine SCF(E)
            call conver(niter, good, good_cut, M_f, rho_aop, fock_aop, Xmat,   &
                        Ymat, 1)
 #       endif
+        else
+!          Closed-shell: morb_coefon holds previous iter's eigenvectors.
+!          Build P'_ON = ocupF * C_ON * C_ON^T directly (saves 2 DGEMMs).
+#       ifdef CUBLAS
+           call conver(niter, good, good_cut, M_f, rho_aop, fock_aop,         &
+                       dev_Xmat, dev_Ymat, 1, morb_coefon, NCOa_f, ocupF)
+#       else
+           call conver(niter, good, good_cut, M_f, rho_aop, fock_aop, Xmat,   &
+                       Ymat, 1, morb_coefon, NCOa_f, ocupF)
+#       endif
+        endif
 
         call g2g_timer_sum_pause('SCF acceleration')
 !------------------------------------------------------------------------------!

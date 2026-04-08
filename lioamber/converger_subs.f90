@@ -76,9 +76,9 @@ end subroutine converger_init
 
    subroutine conver (niter, good, good_cut, M_in, rho_op, fock_op, &
 #ifdef CUBLAS
-                      devPtrX, devPtrY, spin)
+                      devPtrX, devPtrY, spin, coef_ON, NCO_in, ocup_in)
 #else
-                      Xmat, Ymat, spin)
+                      Xmat, Ymat, spin, coef_ON, NCO_in, ocup_in)
 #endif
    use converger_data  , only: damping_factor, hagodiis, fockm, FP_PFm, ndiis, &
                                fock_damped, bcoef, EMAT2, conver_criter, &
@@ -101,12 +101,22 @@ end subroutine converger_init
    double precision, intent(in) :: Xmat(M_in,M_in), Ymat(M_in,M_in)
 #endif
 
+   ! Optional: ON-basis eigenvectors from previous diagonalization, used to
+   ! build P'_ON = ocup * C_ON(:,1:NCO) * C_ON(:,1:NCO)^T directly,
+   ! eliminating 2 DGEMMs (Y^T * P * Y base change).
+   double precision, intent(in), optional :: coef_ON(M_in,M_in)
+   integer         , intent(in), optional :: NCO_in
+   double precision, intent(in), optional :: ocup_in
+
    integer          :: ndiist, ii, jj, kk, lwork, info
    integer          :: slot_i, slot_j, slot_k
    integer          :: diis_rank
+   logical          :: have_coef_ON
    double precision :: rcond_diis, bcoef_max
    double precision, external :: DDOT
 
+   have_coef_ON = present(coef_ON) .and. present(NCO_in) .and. &
+                  present(ocup_in)
 
 ! INITIALIZATION
 ! If DIIS is turned on, update fockm with the current transformed F' (into ON
@@ -132,30 +142,37 @@ end subroutine converger_init
       FP_PFm(:,:,head_idx(spin),spin) = scratch1_w(:,:)
       call fock_op%Gets_data_ON( fockm(:,:,head_idx(spin),spin) )
 #else
-      ! CPU path: inline base changes + 1-DGEMM commutator.
-      ! Eliminates all per-call heap allocations (was 12 M×M arrays per call)
-      ! and replaces 2 MATMUL calls with 1 DGEMM using symmetric commutator
-      ! identity: [F',P'] = F'P' - (F'P')^T (since F' and P' are symmetric).
-
-      ! Step 1: F' = X^T · F · X  (Fock base change, 2 DGEMMs)
-      call DGEMM('T','N',M_in,M_in,M_in,1.0D0,Xmat,M_in,fock00_w,M_in, &
+      ! Step 1: F' = X^T · F · X  (Fock AO→ON base change)
+      ! DSYMM exploits F symmetry (reads only lower triangle, halves traffic).
+      call DSYMM('L','L',M_in,M_in,1.0D0,fock00_w,M_in,Xmat,M_in, &
                  0.0D0,scratch1_w,M_in)
-      call DGEMM('N','N',M_in,M_in,M_in,1.0D0,scratch1_w,M_in,Xmat,M_in, &
+      call DGEMM('T','N',M_in,M_in,M_in,1.0D0,Xmat,M_in,scratch1_w,M_in, &
                  0.0D0,fock_w,M_in)
       fockm(:,:,head_idx(spin),spin) = fock_w
 
-      ! Step 2: P' = Y^T · P · Y  (density base change, 2 DGEMMs)
-      call DGEMM('T','N',M_in,M_in,M_in,1.0D0,Ymat,M_in,rho_w,M_in, &
-                 0.0D0,scratch1_w,M_in)
-      call DGEMM('N','N',M_in,M_in,M_in,1.0D0,scratch1_w,M_in,Ymat,M_in, &
-                 0.0D0,scratch2_w,M_in)
-      ! P' is now in scratch2_w
+      ! Step 2: P'_ON — build ON-basis density for commutator.
+      ! If C_ON eigenvectors from previous diag are available, compute
+      ! P'_ON = ocup * C_ON(:,1:NCO) * C_ON(:,1:NCO)^T directly.
+      ! This eliminates the 2-DGEMM base change Y^T * P * Y.
+      ! Math: P_AO = ocup * (X*C_ON) * (X*C_ON)^T, so
+      !   P'_ON = Y^T * P_AO * Y = ocup * (Y^T*X) * C_ON * C_ON^T * (X^T*Y)
+      !         = ocup * I * C_ON * C_ON^T * I  (since Y^T*X = S^{1/2}*S^{-1/2} = I)
+      if (have_coef_ON .and. niter > 1) then
+         call DGEMM('N','T',M_in,M_in,NCO_in,ocup_in, &
+                    coef_ON,M_in,coef_ON,M_in, &
+                    0.0D0,scratch2_w,M_in)
+      else
+         ! Fallback: Y^T · P · Y base change (2 DGEMMs)
+         call DGEMM('T','N',M_in,M_in,M_in,1.0D0,Ymat,M_in,rho_w,M_in, &
+                    0.0D0,scratch1_w,M_in)
+         call DGEMM('N','N',M_in,M_in,M_in,1.0D0,scratch1_w,M_in,Ymat,M_in, &
+                    0.0D0,scratch2_w,M_in)
+      endif
+      ! P'_ON is now in scratch2_w
 
-      ! Step 3: [F',P'] = F'P' - (F'P')^T  (1 DGEMM + O(M²) antisymmetric fill)
-      ! Since F' and P' are symmetric: (F'P')^T = P'^T F'^T = P'F' = BA
-      ! So AB - BA = AB - (AB)^T — only one matrix multiply needed.
-      call DGEMM('N','N',M_in,M_in,M_in,1.0D0,fock_w,M_in,scratch2_w,M_in, &
-                 0.0D0,scratch1_w,M_in)
+      ! Step 3: [F',P'] = F'P' - (F'P')^T  (1 DGEMM + O(M²) antisymmetric)
+      call DGEMM('N','N',M_in,M_in,M_in,1.0D0,fock_w,M_in, &
+                 scratch2_w,M_in,0.0D0,scratch1_w,M_in)
       do jj = 1, M_in
       do ii = 1, M_in
          FP_PFm(ii,jj,head_idx(spin),spin) = &
