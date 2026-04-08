@@ -210,10 +210,9 @@ See `../research/gpu/optimize_memory_pool.md` for details.
 2. ~~**Reduce GlobalMemoryPool churn**~~ — **SOLVED** (2026-03-20). Auto-detect caching
    (`fgm=-1`) eliminates 89% of malloc/free calls. See "GPU memory caching" section above.
    Remaining 1,240 calls are from first-iter setup and AINT.
-3. **Replace tex2D with `__ldg`** — Was REJECTED on Pascal SM 6.1 (36% regression due to
-   loss of 2D spatial locality, 82.85% → 76.48% L1 hit rate). Hardware is now RTX 3080 Ti
-   (SM 8.6 Ampere) — **worth re-evaluating**. Ampere has a different L1/texture cache
-   architecture. See `../research/gpu/optimize_density_texture.md` and `cuda/CLAUDE.md`.
+3. ~~**Replace tex2D with `__ldg`**~~ — **REJECTED** on both Pascal SM 6.1 (36% regression,
+   cache hit loss) and Ampere SM 8.6 (2.5× regression, address computation overhead in
+   tight inner loop). Dead end. See `../research/gpu/optimize_density_texture.md`.
 4. ~~**Eliminate forces cudaStreamSynchronize**~~ — **NOT WORTH IT** (2026-03-28).
    Analysis shows 837ms/151 calls breaks down as: 25 structural Fock syncs (675ms of
    real GPU work, unavoidable) + 126 post-SCF syncs (5.5ms pipeline overhead, 0.2% wall).

@@ -28,17 +28,16 @@ relevant sub-index before diving into individual files.
 
 ---
 
-## Current Priorities (as of 2026-03-23)
+## Current Priorities (as of 2026-04-08)
 
-Ranked by expected wall-time impact on the fosfatoQMMM benchmark (3.22s baseline).
+Ranked by expected wall-time impact on the fosfatoQMMM benchmark.
 
 | # | Optimization | Area | Expected Impact | File |
 |---|---|---|---|---|
-| 1 | Eliminate forces cudaStreamSynchronize | GPU | ~10-20% wall time | [gpu/async_execution.md](gpu/async_execution.md) |
+| 1 | Density as GEMM | GPU | Reduce O(M²) to O(M) reads | [gpu/optimize_density_gemm.md](gpu/optimize_density_gemm.md) |
 | 2 | Open-shell GGA register reduction | GPU | 93→56 regs, 34%→56% occ | [gpu/optimize_open_shell_registers.md](gpu/optimize_open_shell_registers.md) |
-| 3 | Multi-stream pipeline | GPU | Diminishing with fgm=-1 | [gpu/stream_sharding.md](gpu/stream_sharding.md) |
+| 3 | CPU-GPU Fock overlap | GPU/Fortran | ~250ms barrier idle recovery | _(no research doc yet)_ |
 | 4 | Dynamic OpenMP tasks | CPU | Better load balancing | [cpu/optimize_cpu_threading.md](cpu/optimize_cpu_threading.md) |
-| 5 | Density as GEMM | GPU | Reduce O(M²) to O(M) reads | [gpu/optimize_density_gemm.md](gpu/optimize_density_gemm.md) |
 
 ## Key Completed Work
 
@@ -57,7 +56,7 @@ Don't re-investigate these without reading the analysis first.
 
 | Investigation | Why Rejected | File |
 |---|---|---|
-| tex2D → `__ldg` | 36% regression on Pascal SM 6.1 | [gpu/optimize_density_texture.md](gpu/optimize_density_texture.md) |
+| tex2D → `__ldg` | 36% on Pascal (cache miss), 2.5× on Ampere (address compute overhead) | [gpu/optimize_density_texture.md](gpu/optimize_density_texture.md) |
 | FP16 / TF32 mixed precision | No Tensor Cores on Pascal | [gpu/optimize_mixed_precision.md](gpu/optimize_mixed_precision.md) |
 | Kahan compensated summation | Disrupts DIIS convergence trajectory | [convergence/INDEX.md](convergence/INDEX.md) |
 | Level shifting | Minimal benefit for LIO's systems | [convergence/level_shifting_evaluation.md](convergence/level_shifting_evaluation.md) |

@@ -1,6 +1,7 @@
 # GPU Kernel Optimizations
 
-Research and implementation notes for CUDA kernel performance on SM 6.1 (GTX 1080).
+Research and implementation notes for CUDA kernel performance.
+Current hardware: RTX 3080 Ti (SM 8.6 Ampere). Previous: GTX 1080 (SM 6.1 Pascal).
 The density kernel (`gpu_compute_density`) dominates at 45% of GPU time — start there.
 
 ## Status Legend
@@ -19,7 +20,7 @@ The density kernel (`gpu_compute_density`) dominates at 45% of GPU time — star
 | [optimize_memory_pool.md](optimize_memory_pool.md) | DONE | `fgm=-1` auto-caching: 34% wall time speedup, 89% fewer malloc/free |
 | [optimize_rmm_gather_gpu.md](optimize_rmm_gather_gpu.md) | DONE | GPU-side RMM gather/scatter: eliminated per-group CPU sync, 5% speedup |
 | [fgm_correctness_bug.md](fgm_correctness_bug.md) | FIXED | Weights buffer reuse bug in `compute_weights` (1-line fix) |
-| [optimize_density_texture.md](optimize_density_texture.md) | REJECTED | tex2D vs `__ldg`: 36% regression on Pascal. **Do not re-attempt on SM 6.x** |
+| [optimize_density_texture.md](optimize_density_texture.md) | REJECTED | tex2D vs `__ldg`: 36% regression on Pascal, 2.5× on Ampere (different root causes). Dead end. |
 | [optimize_mixed_precision.md](optimize_mixed_precision.md) | REJECTED | FP16/TF32 not viable on Pascal (no Tensor Cores) |
 
 ### Open — High Impact

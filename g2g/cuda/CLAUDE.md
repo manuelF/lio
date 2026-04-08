@@ -43,15 +43,19 @@ Separate SCF kernels (called per iteration × 25) from post-SCF kernels
 
 ## Architecture-Specific Notes
 
-### tex2D vs `__ldg` on Pascal SM 6.1 — DO NOT replace textures
+### tex2D vs `__ldg` — DO NOT replace textures (dead end)
 
-**Investigated 2026-03-20.** Replacing `tex2D` with `__ldg` in the density kernels caused
-a **36% regression** in `gpu_compute_density` (1047ms → 1438ms, fosfatoQMMM).
+Tested on **Pascal SM 6.1** (2026-03-20) and **Ampere SM 8.6** (2026-04-07).
+Both show regressions for different architectural reasons:
 
-The root cause is that `tex2D` uses the texture unit's 2D spatial locality (Morton/Z-order
-tiling), which gives 82.85% L1 cache hit rate for the RMM access pattern
-`data[col * stride + row]`. `__ldg` uses linear addressing on the same physical cache,
-achieving only 76.48% — the 6.4 pp drop causes 9.5 pp more memory stall cycles.
+- **Pascal**: 36% regression. `__ldg` loses 6.4 pp L1 hit rate vs tex2D's 2D Morton tiling.
+- **Ampere**: 2.5× regression. L1 hit rate *improved* (+9.5 pp) but software address
+  computation (`row * stride + col`) in the tight inner loop collapses compute throughput
+  from 94% to 60%. The ~14 FP ops per fetch cannot absorb 2 extra integer ops per fetch.
 
-**Keep tex2D for all RMM reads on Pascal.** May be revisitable on Volta+ (SM 7.0+).
-See `../../research/gpu/optimize_density_texture.md` for full metrics.
+**Exception**: `gpu_compute_density_derivs` improved 55% with `__ldg` on Ampere (cooperative
+shared memory loads decouple address computation from compute), but at 5.6% of GPU time
+it's not worth a mixed approach.
+
+**Keep tex2D for all RMM reads.** See `../../research/gpu/optimize_density_texture.md`
+for full ncu metrics on both architectures.
