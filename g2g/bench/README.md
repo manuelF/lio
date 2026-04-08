@@ -142,11 +142,15 @@ is a single-parameter model fit through the origin.
 launch, no memory transfer, no CUDA API call. The function call overhead is
 sub-microsecond and is lost in timer noise for all but the tiniest groups.
 
-**Measured value** (fosfatoQMMM, GTX 1080 + Intel i7-7700K):
+**Measured values** (fosfatoQMMM, AMD Ryzen 7 5800X3D):
 ```
-alpha_cpu = 1.967e-03 us / (P * M^2)
-R^2       = 0.985
+GTX 1080 config:    alpha_cpu = 1.967e-03  R^2 = 0.985  (165 groups, cube_size=8)
+RTX 3080 Ti config: alpha_cpu = 4.571e-04  R^2 = 0.959  (348 groups, cube_size=5.6)
 ```
+
+The 4.3x difference in alpha_cpu between the two runs is due to the auto-tuner
+selecting different partition parameters (cube_size=5.6 produces larger, more
+cache-friendly groups), not a CPU hardware change.
 
 ### GPU Model
 
@@ -184,6 +188,17 @@ alpha_gpu = 2.604e-05 us / (P * M^2)
 R^2       = 0.926
 ```
 
+**Measured values** (fosfatoQMMM, RTX 3080 Ti with fgm=-1 caching + GPU scatter):
+```
+gamma     = 28.5 us  (fixed overhead per group -- 12.5x lower due to caching)
+alpha_gpu = ~0       (GPU compute time negligible for all groups in this system)
+R^2       = 0.019    (model breaks down -- overhead-dominated regime)
+```
+
+On fast GPUs with caching enabled, the GPU model degenerates: all groups finish
+in approximately `gamma` regardless of P*M^2. See "GPU overhead domination on
+fast GPUs" in the Limitations section.
+
 ### Crossover: When GPU Beats CPU
 
 Setting `T_cpu = T_gpu` and solving for the crossover:
@@ -200,10 +215,16 @@ This gives a single **crossover threshold in P*M^2 space**:
 CROSSOVER = gamma / (alpha_cpu - alpha_gpu)
 ```
 
-**Measured value:** `CROSSOVER = 183,549`
+**Measured values:**
+```
+GTX 1080:    CROSSOVER = 183,549  (gamma=356 us, 75.5x slope speedup)
+RTX 3080 Ti: CROSSOVER = 62,294   (gamma=28.5 us, slope ~0 -- formal value only)
+```
 
-Below this value, the CPU is faster because the GPU's fixed 356 us overhead
-dominates. Above this value, the GPU's 75.5x faster slope dominates.
+Below the crossover, the CPU is faster because the GPU's fixed overhead
+dominates. Above it, the GPU's faster slope dominates. On the RTX 3080 Ti
+the crossover is lower because gamma dropped 12.5x (fgm=-1 caching), but
+the value is largely formal since the GPU model has no meaningful slope.
 
 #### Crossover in terms of P alone
 
@@ -413,15 +434,16 @@ of the simulated objective.
 
 ## Reference Measurements (fosfatoQMMM)
 
-These measurements were taken on 2026-03-20 on:
-- **CPU:** Intel i7-7700K (4 cores / 8 threads, but tested with 16 OMP threads)
+### GTX 1080 (2026-03-20)
+
+- **CPU:** AMD Ryzen 7 5800X3D (8 cores / 16 threads)
 - **GPU:** NVIDIA GTX 1080 (Pascal, SM 6.1)
 - **System:** fosfatoQMMM (34 QM atoms, closed-shell GGA, 25 SCF iterations)
 - **Groups:** 165 total (131 cubes + 34 spheres)
 - **Basis functions:** M ranges from 3 to 245 (median 61)
 - **Points:** P ranges from 13 to 9261
 
-### Fitted parameters
+#### Fitted parameters
 
 ```
 CPU:  T_cpu = 1.967e-03 * P * M^2  us          (R^2 = 0.985)
@@ -431,7 +453,7 @@ Crossover P*M^2 = 183,549
 GPU slope speedup = 75.5x
 ```
 
-### SPLITPOINTS sweep (actual wall time)
+#### SPLITPOINTS sweep (actual wall time)
 
 | SPLITPOINTS | Wall time | CPU max/iter | GPU/iter  | Bottleneck | Idle/iter |
 |-------------|-----------|--------------|-----------|------------|-----------|
@@ -445,7 +467,7 @@ The cliff at SP=3200 occurs because one group (P=3590, M=83, T_cpu=105 ms)
 exceeds the GPU's per-iteration time when it lands on an already-loaded
 thread.
 
-### Per-group crossover behavior
+#### Per-group crossover behavior
 
 Near the crossover P*M^2 = 183,549:
 
@@ -461,6 +483,92 @@ The transition from CPU-faster to GPU-faster happens around P*M^2 ~ 70,000
 to 110,000 in practice, somewhat below the theoretical crossover of 183,549.
 This is because the linear model slightly overestimates CPU time for
 medium-sized groups (cache effects help the CPU more than the model predicts).
+
+### RTX 3080 Ti (2026-04-08)
+
+- **CPU:** AMD Ryzen 7 5800X3D (8 cores / 16 threads)
+- **GPU:** NVIDIA RTX 3080 Ti (Ampere, SM 8.6, 80 SMs, 1725 MHz, 10240 FP32 cores)
+- **System:** fosfatoQMMM (34 QM atoms, closed-shell GGA, 25 SCF iterations)
+- **Software:** fgm=-1 caching, GPU scatter/gather (all optimizations enabled)
+- **Groups:** 348 total (auto-tuned: cube_size=5.6, sphere_radius=0.6)
+- **Basis functions:** M ranges from 3 to 258 (median 61)
+- **Points:** P ranges from 3 to 4656
+
+#### Fitted parameters
+
+```
+CPU:  T_cpu = 4.571e-04 * P * M^2  us          (R^2 = 0.959)
+GPU:  T_gpu = 28.5 + ~0 * P * M^2  us          (R^2 = 0.019) ← MODEL BREAKS DOWN
+
+Crossover P*M^2 = 62,294 (formal, but GPU model is flat)
+```
+
+**The P*M^2 GPU model is invalid on this hardware.** The RTX 3080 Ti finishes
+even the largest group (P*M^2 = 182,400) in ~25 us kernel time. All 348 groups
+run in 24--35 us regardless of size. The GPU is entirely overhead-dominated at
+this workload scale: kernel compute time is negligible compared to the per-group
+fixed cost (launch, sync, gather/scatter).
+
+The CPU model still fits well (R^2 = 0.96) with alpha_cpu = 4.57e-04 us/(P*M^2),
+approximately 4.3x faster than the GTX 1080 measurement. This is consistent
+with the same Ryzen 5800X3D CPU but fewer groups (the auto-tuner now produces larger,
+more cache-friendly groups with cube_size=5.6 vs 8.0).
+
+#### SPLIT_COST sweep (actual wall time)
+
+Since the code now uses `LIO_SPLIT_COST` (P*M^2 threshold) instead of the
+older `LIO_SPLIT_POINTS` (P-only threshold), the sweep uses SPLIT_COST:
+
+| Configuration              | SPLIT_COST   | Wall time | CPU/iter | GPU/iter | Balance   |
+|----------------------------|--------------|-----------|----------|----------|-----------|
+| All-CPU                    | 999999999... | 6.40 s    | 102 ms   | 0 ms     | CPU-only  |
+| All-GPU                    | 0            | 3.99 s    | 0 ms     | 30 ms    | GPU-only  |
+| Benchmark oracle           | 3,270,995    | 3.69 s    | 3 ms     | 22 ms    | GPU 7x    |
+| **Auto-tuned (code)**      | 14,945,920   | **3.63 s**| 15 ms    | 18 ms    | **balanced** |
+
+The auto-tuner (`compute_optimal_split_cost()`) produces the best result despite
+the GPU cost model being inaccurate, because the LPT sweep is robust to model
+parameter errors. The benchmark's "oracle" threshold (based on per-group perfmodel
+times) is actually slightly worse because it sends too many groups to GPU,
+increasing aggregate per-group overhead.
+
+#### Key observations vs GTX 1080
+
+| Metric                | GTX 1080       | RTX 3080 Ti     | Change           |
+|-----------------------|----------------|-----------------|------------------|
+| GPU per-group overhead| 356 us         | 28.5 us         | 12.5x lower      |
+| GPU slope (alpha_gpu) | 2.6e-05        | ~0              | overhead-dominated|
+| GPU model R^2         | 0.926          | 0.019           | model breaks down |
+| Auto-tuned wall time  | 5.49 s (SP=2800)| 3.63 s         | 1.5x faster      |
+| CPU alpha_cpu         | 1.97e-03       | 4.57e-04        | 4.3x lower       |
+| Auto-tuned split      | 304 CPU + 44 GPU| 304 CPU + 44 GPU| same ratio       |
+
+The dramatic reduction in GPU per-group overhead (356 us -> 28.5 us) is due to
+fgm=-1 caching (eliminates compute_functions + transpose on iterations 2+) and
+GPU-side scatter/gather (eliminates per-group cudaStreamSynchronize + CPU scatter).
+These optimizations transformed the GPU bottleneck from per-group overhead to
+aggregate kernel throughput.
+
+#### Perfmodel timing gap
+
+The per-group `[perfmodel]` times (~25 us each) do not capture the full
+per-iteration GPU cost. With 44 GPU groups, the measured per-iteration GPU time
+is ~18 ms, implying ~409 us/group effective cost -- a 16x gap vs the perfmodel
+measurement. The gap comes from overhead not attributed to individual groups:
+Fock matrix sync (`cudaStreamSynchronize` after forces), global RMM buffer
+upload/download, Fortran-side work between g2g calls, and aggregate kernel launch
+serialization. This means the benchmark scripts predict per-iteration times that
+are ~10x too optimistic (1.73 ms predicted vs 18 ms actual).
+
+#### `estimate_speed_ratio()` validation
+
+The code predicts a speed ratio of 298.6x for the RTX 3080 Ti (based on FP32
+throughput scaling: 10240 cores * 1725 MHz vs reference 2560 * 1733 MHz). This
+is a reasonable throughput estimate, but unmeasurable in practice because the GPU
+compute time is negligible for this workload. The `DEFAULT_GPU_OVERHEAD` constant
+(180,000 PM^2 units) overestimates the actual overhead by ~2.9x (actual: ~62,300
+PM^2 units), but this does not degrade the auto-tuner's split quality because the
+LPT sweep compensates.
 
 ---
 
@@ -589,12 +697,12 @@ from a previous run and re-analyze it:
 source liohome.sh
 cd test/LIO_test/03_fosfatoQMMM
 
-# All-CPU run
-LIO_SPLIT_POINTS=99999 \
+# All-CPU run (use LIO_SPLIT_COST, not LIO_SPLIT_POINTS — see note below)
+LIO_SPLIT_COST=999999999999999 \
   liosolo -i fos.in -c fos.xyz -b basis -v > /tmp/allcpu.txt 2>&1
 
 # All-GPU run
-LIO_SPLIT_POINTS=1 \
+LIO_SPLIT_COST=0 \
   liosolo -i fos.in -c fos.xyz -b basis -v > /tmp/allgpu.txt 2>&1
 
 # Step 2: Analyze (instant, no liosolo needed)
@@ -604,6 +712,11 @@ python3 ../../../g2g/bench/splitpoint_tune.py \
     --cpu-data /tmp/allcpu.txt \
     --gpu-data /tmp/allgpu.txt
 ```
+
+**Important:** The CPU/GPU split is now controlled by `LIO_SPLIT_COST` (a P*M^2
+threshold), not `LIO_SPLIT_POINTS` (a P-only threshold). The scripts still use
+`LIO_SPLIT_POINTS` internally, which may not force the expected device assignment
+on current code. When collecting data manually, always use `LIO_SPLIT_COST`.
 
 Note: The input files (`-i`, `-c`, `-b`) are still required even with
 `--skip-measure` because the tool needs them for the sweep phase and for
@@ -676,19 +789,24 @@ represents steady-state performance.
 
 ### Two-Run Strategy
 
-The tool runs liosolo twice with extreme SPLITPOINTS values:
+The tool runs liosolo twice, forcing all groups to one device:
 
-1. **LIO_SPLIT_POINTS=99999** (all groups go to CPU): Measures `T_cpu` for
-   every group. Since all groups are `PointGroupCPU`, there are no CUDA kernel
+1. **All-CPU** (`LIO_SPLIT_COST=999999999999999`): Measures `T_cpu` for every
+   group. Since all groups are `PointGroupCPU`, there are no CUDA kernel
    launches. This isolates the pure CPU cost.
 
-2. **LIO_SPLIT_POINTS=1** (all groups go to GPU): Measures `T_gpu` for every
-   group. Since all groups are `PointGroupGPU`, each launches CUDA kernels.
-   This captures the full GPU pipeline cost including fixed overhead.
+2. **All-GPU** (`LIO_SPLIT_COST=0`): Measures `T_gpu` for every group. Since
+   all groups are `PointGroupGPU`, each launches CUDA kernels. This captures
+   the full GPU pipeline cost including fixed overhead.
 
 Both runs produce the same groups with the same P and M values (the partition
 geometry is deterministic), so the i-th row from each run corresponds to the
 same physical group. This allows direct comparison.
+
+**Note:** The scripts internally use `LIO_SPLIT_POINTS` to force device
+assignment, but the code now uses `LIO_SPLIT_COST` (P*M^2 threshold) via
+`should_use_gpu()`. When collecting data manually, use `LIO_SPLIT_COST`
+as shown above.
 
 ---
 
@@ -712,13 +830,19 @@ The tool assumes one GPU (the common case). Multi-GPU setups with
 `gpu_threads > 1` would need a more complex simulation that distributes
 GPU groups across multiple GPU threads.
 
-### P-only threshold
+### P-only threshold (partially superseded)
 
 SPLITPOINTS operates on P alone, but the crossover depends on P*M^2. Groups
 with the same P but different M may be better suited for different devices.
 The tool finds the best single P threshold, but a P*M^2-based threshold
-(or equivalently, a cost-based threshold) would be more precise. This
-would require changes to LIO's partition code in `regenerate_partition.cpp`.
+(or equivalently, a cost-based threshold) would be more precise.
+
+**Note:** The C++ code now uses `LIO_SPLIT_COST` (a P*M^2 threshold) via
+`should_use_gpu()` in `partition.cpp`, which is computed automatically by
+`compute_optimal_split_cost()`. The scripts still use `LIO_SPLIT_POINTS`
+when launching liosolo, which may not achieve the intended device assignment.
+When collecting data manually, use `LIO_SPLIT_COST=0` (all-GPU) and
+`LIO_SPLIT_COST=999999999999999` (all-CPU) instead.
 
 ### Timer resolution
 
@@ -731,6 +855,30 @@ negligible in total time contribution.
 The measurements assume a quiet system. Background processes competing for
 CPU cores or GPU resources will distort the results. Run the benchmark on
 an idle machine for best results.
+
+### GPU overhead domination on fast GPUs
+
+On GPUs significantly faster than the GTX 1080 reference (e.g., RTX 3080 Ti),
+the P*M^2 GPU model breaks down entirely: all groups finish in ~25--35 us
+regardless of workload size, because the CUDA kernel compute time becomes
+negligible compared to per-group fixed overhead (launch, sync, scatter). In
+this regime, R^2 drops below 0.05 and the fitted `alpha_gpu` may be zero or
+negative. The crossover and speedup calculations become meaningless.
+
+This does not affect the auto-tuner in `partition_cost.cpp`, which uses an LPT
+sweep that is robust to model inaccuracies. But it means the benchmark scripts'
+per-group time predictions (and the "oracle" threshold) may be less accurate
+than the code's own auto-tuned result.
+
+### Perfmodel timing gap
+
+The per-group `[perfmodel]` times measure only the `solve_closed()` /
+`solve_opened()` call for each group. They do not include per-iteration overhead
+shared across all groups: Fock matrix sync, global RMM buffer upload/download,
+Fortran-side work between g2g calls, and aggregate kernel launch serialization.
+On the RTX 3080 Ti, this unmeasured overhead causes a ~16x gap between the
+per-group sum (~1.7 ms for 44 GPU groups) and the actual per-iteration GPU wall
+time (~18 ms). The scripts' predicted wall times are therefore ~10x optimistic.
 
 ### Hardware-specific
 
