@@ -51,7 +51,7 @@ speedup saves only ~0.1s (3% wall). The highest-impact work is now Fortran-side.
 | # | Optimization | Area | Expected Impact | File |
 |---|---|---|---|---|
 | 1 | int3lu GPU offload or overlap | Fortran/GPU | 0.33s (9% wall) — run Coulomb integrals concurrently with g2g | _(no research doc yet)_ |
-| 2 | Fortran per-iter overhead reduction | Fortran | 0.94s (26% wall) — profile and optimize converger, DIIS, Fock build | [fortran/blas_optimization.md](fortran/blas_optimization.md) |
+| 2 | Fortran per-iter overhead reduction | Fortran | BLAS-bound at M=364; allocation hoisting done; algorithmic changes needed for further gains | [fortran/blas_optimization.md](fortran/blas_optimization.md) |
 | 3 | Partition auto-tune caching | Infrastructure | ~0.50s (14% wall) — cache partition across MD steps when geometry changes are small | _(no research doc yet)_ |
 | 4 | Open-shell GGA register reduction | GPU | 1.3-1.8× for open-shell systems only | [gpu/optimize_open_shell_registers.md](gpu/optimize_open_shell_registers.md) |
 | 5 | Density as GEMM | GPU | ~0.1s (3% wall) on fosfatoQMMM; larger impact on bigger systems | [gpu/optimize_density_gemm.md](gpu/optimize_density_gemm.md) |
@@ -66,6 +66,7 @@ speedup saves only ~0.1s (3% wall). The highest-impact work is now Fortran-side.
 | AINT float precision | 15% wall time | _(commit 627e32b5, no research doc)_ |
 | DGELSS solver (DIIS fix) | Robust to float32 noise | [convergence/converger_optimizations.md](convergence/converger_optimizations.md) |
 | Pinned host memory | cudaMemcpyAsync 218x faster | [infrastructure/optimize_pinned_memory.md](infrastructure/optimize_pinned_memory.md) |
+| Fortran allocation hoisting | Eliminated per-iter heap churn in Dens_build, DSYEVD, int3lu | [fortran/blas_optimization.md](fortran/blas_optimization.md) |
 
 ## Rejected / Dead Ends / Diminished Returns
 

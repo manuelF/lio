@@ -51,6 +51,18 @@
 ! Optimized with BLAS:                    Claude/Manuel Mar/2026               !
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 module subm_int3lu
+   implicit none
+   private
+   public :: int3lu
+
+   ! Persistent work arrays — allocated once on first MEMO call, reused every
+   ! iteration. Avoids 25 × 8 allocate/deallocate pairs per SCF run.
+   double precision, allocatable, save :: Rc_w(:), aux_w(:)
+   double precision, allocatable, save :: rho_gathered_w(:), terms_d_w(:)
+   real            , allocatable, save :: rho_s_w(:), Rc_s_w(:)
+   real            , allocatable, save :: af_s_w(:), terms_s_w(:)
+   integer, save :: saved_Md = 0, saved_kknumd = 0, saved_kknums = 0
+
 contains
 subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo)
    use basis_data, only: M, Md, cool, cools, kkind, kkinds, kknumd, kknums, &
@@ -61,29 +73,12 @@ subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo)
    double precision, intent(in) :: rho(:), Gmat(:), Ginv(:), Hmat(:)
    double precision, intent(inout) :: E2, Fmat_b(:), Fmat(:)
 
-   ! Rc: contracted density in the fitting basis, Rc(k) = sum_kk t(k,kk)*rho_kk
-   ! aux: temporary for DSPMV result (Gmat * af)
-   double precision, allocatable :: Rc(:), aux(:)
-
-   ! Temporaries for BLAS gather/scatter pattern:
-   ! rho_gathered: contiguous copy of scattered rho values for DGEMV input
-   ! terms_d: DGEMV output (one dot product per basis pair), double precision
-   double precision, allocatable :: rho_gathered(:), terms_d(:)
-
-   ! Single-precision temporaries for SGEMV on the cools array:
-   ! rho_s: rho values converted to single for SGEMV input
-   ! Rc_s: single-precision SGEMV output, accumulated into double Rc
-   ! af_s: af converted to single for the Fock update SGEMV
-   ! terms_s: single-precision SGEMV output for Fock scatter
-   real            , allocatable :: rho_s(:), Rc_s(:), af_s(:), terms_s(:)
-
    double precision :: Ea, Eb
    integer          :: ll(3), k_ind, kk_ind, m_ind
 
    ! BLAS function declarations
    double precision, external :: ddot
 
-   allocate(Rc(Md), aux(Md))
    Ea = 0.D0 ; Eb = 0.D0
 
    MM = M * (M + 1) / 2
@@ -92,6 +87,28 @@ subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo)
    if (MEMO) then
       call g2g_timer_start('int3lu - start')
 
+      ! Reallocate persistent work arrays only when sizes change (first call
+      ! or if basis changes between SCF runs in MD).
+      if (Md /= saved_Md .or. kknumd /= saved_kknumd .or. &
+          kknums /= saved_kknums) then
+         if (allocated(Rc_w))           deallocate(Rc_w)
+         if (allocated(aux_w))          deallocate(aux_w)
+         if (allocated(rho_gathered_w)) deallocate(rho_gathered_w)
+         if (allocated(terms_d_w))      deallocate(terms_d_w)
+         if (allocated(rho_s_w))        deallocate(rho_s_w)
+         if (allocated(Rc_s_w))         deallocate(Rc_s_w)
+         if (allocated(af_s_w))         deallocate(af_s_w)
+         if (allocated(terms_s_w))      deallocate(terms_s_w)
+
+         allocate(Rc_w(Md), aux_w(Md))
+         if (kknumd > 0) allocate(rho_gathered_w(kknumd), terms_d_w(kknumd))
+         if (kknums > 0) allocate(rho_s_w(kknums), Rc_s_w(Md), &
+                                  af_s_w(Md), terms_s_w(kknums))
+         saved_Md = Md
+         saved_kknumd = kknumd
+         saved_kknums = kknums
+      endif
+
       do k_ind = 1, 3
          Ll(k_ind) = k_ind * (k_ind - 1) / 2
       enddo
@@ -99,48 +116,34 @@ subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo)
       !--------------------------------------------------------------------
       ! STEP 1: Rc accumulation
       !   Rc(k) = sum over basis pairs kk of: rho(kkind(kk)) * cool(k, kk)
-      !
-      !   cool is laid out as a (Md x kknumd) column-major matrix, so this
-      !   is a standard matrix-vector product Rc = cool * rho_gathered.
-      !   We first gather the scattered rho values into a contiguous array,
-      !   then call DGEMV (double) or SGEMV (single).
       !--------------------------------------------------------------------
 
       ! Double-precision integrals: Rc = cool(Md, kknumd) * rho_gathered
-      Rc = 0.0D0
+      Rc_w = 0.0D0
       if (kknumd > 0) then
-         allocate(rho_gathered(kknumd))
          do kk_ind = 1, kknumd
-            rho_gathered(kk_ind) = rho(kkind(kk_ind))
+            rho_gathered_w(kk_ind) = rho(kkind(kk_ind))
          enddo
-         call dgemv('N', Md, kknumd, 1.0D0, cool, Md, rho_gathered, 1, &
-                    0.0D0, Rc, 1)
-         deallocate(rho_gathered)
+         call dgemv('N', Md, kknumd, 1.0D0, cool, Md, rho_gathered_w, 1, &
+                    0.0D0, Rc_w, 1)
       endif
 
       ! Single-precision integrals: Rc += cools(Md, kknums) * rho_s
-      ! Computed in single precision via SGEMV, then promoted to double.
-      ! Precision loss is negligible since cools values are already single.
       if (kknums > 0) then
-         allocate(rho_s(kknums), Rc_s(Md))
          do kk_ind = 1, kknums
-            rho_s(kk_ind) = real(rho(kkinds(kk_ind)))
+            rho_s_w(kk_ind) = real(rho(kkinds(kk_ind)))
          enddo
-         call sgemv('N', Md, kknums, 1.0, cools, Md, rho_s, 1, 0.0, Rc_s, 1)
+         call sgemv('N', Md, kknums, 1.0, cools, Md, rho_s_w, 1, &
+                    0.0, Rc_s_w, 1)
          do k_ind = 1, Md
-            Rc(k_ind) = Rc(k_ind) + dble(Rc_s(k_ind))
+            Rc_w(k_ind) = Rc_w(k_ind) + dble(Rc_s_w(k_ind))
          enddo
-         deallocate(rho_s, Rc_s)
       endif
 
       !--------------------------------------------------------------------
       ! STEP 2: Fitting coefficients  af = Ginv * Rc
-      !
-      !   Ginv is a symmetric matrix stored in LAPACK packed lower-triangular
-      !   format: Ginv(i + (2*Md - j)*(j-1)/2) = Ginv_full(i, j) for i >= j.
-      !   DSPMV('L') performs the symmetric matrix-vector product.
       !--------------------------------------------------------------------
-      call dspmv('L', Md, 1.0D0, Ginv, Rc, 1, 0.0D0, af, 1)
+      call dspmv('L', Md, 1.0D0, Ginv, Rc_w, 1, 0.0D0, af, 1)
 
       ! Initialize Fock matrix from one-electron integrals
       Fmat(1:MM) = Hmat(1:MM)
@@ -148,93 +151,68 @@ subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo)
 
       !--------------------------------------------------------------------
       ! STEP 3: Two-electron Coulomb energy
-      !   Ea = af . Rc          (direct Coulomb)
-      !   Eb = af^T * Gmat * af (self-interaction correction)
-      !   E2 = Ea - Eb/2
-      !
-      !   aux is used as temp storage for Gmat * af.
       !--------------------------------------------------------------------
-      Ea = ddot(Md, af, 1, Rc, 1)
-      call dspmv('L', Md, 1.0D0, Gmat, af, 1, 0.0D0, aux, 1)
-      Eb = ddot(Md, af, 1, aux, 1)
+      Ea = ddot(Md, af, 1, Rc_w, 1)
+      call dspmv('L', Md, 1.0D0, Gmat, af, 1, 0.0D0, aux_w, 1)
+      Eb = ddot(Md, af, 1, aux_w, 1)
 
       call g2g_timer_stop('int3lu - start')
       call g2g_timer_start('int3lu')
 
       !--------------------------------------------------------------------
       ! STEP 4: Fock matrix update (Coulomb contribution)
-      !   Fmat(kkind(kk)) += sum_k af(k) * cool(k, kk)
-      !
-      !   This is the transpose of step 1: terms = cool^T * af gives a
-      !   dot product per basis pair, then we scatter-add into Fmat.
-      !   Note: multiple kkind entries may map to the same Fmat element
-      !   (duplicate indices), which is handled correctly by the scatter loop.
-      !
-      !   For open-shell, both Fmat (alpha) and Fmat_b (beta) receive the
-      !   same Coulomb contribution.
       !--------------------------------------------------------------------
       if (open_shell) then
          ! Double-precision Fock update (open-shell)
          if (kknumd > 0) then
-            allocate(terms_d(kknumd))
             call dgemv('T', Md, kknumd, 1.0D0, cool, Md, af, 1, &
-                       0.0D0, terms_d, 1)
+                       0.0D0, terms_d_w, 1)
             do kk_ind = 1, kknumd
-               Fmat(kkind(kk_ind))   = Fmat(kkind(kk_ind))   + terms_d(kk_ind)
-               Fmat_b(kkind(kk_ind)) = Fmat_b(kkind(kk_ind)) + terms_d(kk_ind)
+               Fmat(kkind(kk_ind))   = Fmat(kkind(kk_ind))   + terms_d_w(kk_ind)
+               Fmat_b(kkind(kk_ind)) = Fmat_b(kkind(kk_ind)) + terms_d_w(kk_ind)
             enddo
-            deallocate(terms_d)
          endif
 
          ! Single-precision Fock update (open-shell)
-         ! Convert af to single, SGEMV for dot products, scatter as double.
          if (kknums > 0) then
-            allocate(af_s(Md), terms_s(kknums))
             do k_ind = 1, Md
-               af_s(k_ind) = real(af(k_ind))
+               af_s_w(k_ind) = real(af(k_ind))
             enddo
-            call sgemv('T', Md, kknums, 1.0, cools, Md, af_s, 1, &
-                       0.0, terms_s, 1)
+            call sgemv('T', Md, kknums, 1.0, cools, Md, af_s_w, 1, &
+                       0.0, terms_s_w, 1)
             do kk_ind = 1, kknums
                Fmat(kkinds(kk_ind))   = Fmat(kkinds(kk_ind))   + &
-                                        dble(terms_s(kk_ind))
+                                        dble(terms_s_w(kk_ind))
                Fmat_b(kkinds(kk_ind)) = Fmat_b(kkinds(kk_ind)) + &
-                                        dble(terms_s(kk_ind))
+                                        dble(terms_s_w(kk_ind))
             enddo
-            deallocate(af_s, terms_s)
          endif
       else
          ! Double-precision Fock update (closed-shell)
          if (kknumd > 0) then
-            allocate(terms_d(kknumd))
             call dgemv('T', Md, kknumd, 1.0D0, cool, Md, af, 1, &
-                       0.0D0, terms_d, 1)
+                       0.0D0, terms_d_w, 1)
             do kk_ind = 1, kknumd
-               Fmat(kkind(kk_ind)) = Fmat(kkind(kk_ind)) + terms_d(kk_ind)
+               Fmat(kkind(kk_ind)) = Fmat(kkind(kk_ind)) + terms_d_w(kk_ind)
             enddo
-            deallocate(terms_d)
          endif
 
          ! Single-precision Fock update (closed-shell)
          if (kknums > 0) then
-            allocate(af_s(Md), terms_s(kknums))
             do k_ind = 1, Md
-               af_s(k_ind) = real(af(k_ind))
+               af_s_w(k_ind) = real(af(k_ind))
             enddo
-            call sgemv('T', Md, kknums, 1.0, cools, Md, af_s, 1, &
-                       0.0, terms_s, 1)
+            call sgemv('T', Md, kknums, 1.0, cools, Md, af_s_w, 1, &
+                       0.0, terms_s_w, 1)
             do kk_ind = 1, kknums
                Fmat(kkinds(kk_ind)) = Fmat(kkinds(kk_ind)) + &
-                                      dble(terms_s(kk_ind))
+                                      dble(terms_s_w(kk_ind))
             enddo
-            deallocate(af_s, terms_s)
          endif
       endif
       call g2g_timer_stop('int3lu')
    else
       ! Non-MEMO path: recompute integrals on the fly via GPU analytic code.
-      ! Only the energy computation (Eb) is done here; Ea and af are set
-      ! inside aint_coulomb_fock.
       do k_ind = 1, MM
          Fmat(k_ind) = Hmat(k_ind)
          if (open_shell) Fmat_b(k_ind) = Hmat(k_ind)
@@ -254,7 +232,6 @@ subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo)
    endif
 
    E2 = Ea - Eb / 2.D0
-   deallocate(Rc, aux)
    return
 end subroutine int3lu
 end module subm_int3lu

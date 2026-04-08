@@ -1,7 +1,38 @@
 # BLAS Optimization Opportunities
 
+**Status:** MOSTLY DONE — all hot-path operations use BLAS. Allocation hoisting done.
+**Last updated:** 2026-04-08
+
 Audit of Fortran code for operations that can be replaced with optimized BLAS calls.
 With OpenBLAS installed, these replacements gain AVX2 vectorization + OpenMP threading.
+
+## 2026-04-08 Profiling Results (fosfatoQMMM, M=364, RTX 3080 Ti)
+
+Detailed per-iteration profiling of the SCF hot loop (25 iters, 3.77s wall):
+
+| Component | Avg/iter | % Wall | Dominant BLAS |
+|-----------|----------|--------|---------------|
+| int3lu | 23.7ms | 12.5% | DGEMV(804×15K), SGEMV(804×21K), DSPMV(804) |
+| g2g_solve | 22.3ms | 11.8% | (GPU+CPU partition) |
+| diag+base | 13.2ms | 7.0% | DSYEVD(364), DGEMM(364³) |
+| converger | 10.5ms | 5.5% | 5× DGEMM(364³), DDOT, DGELSS |
+| unpack+copy | 0.9ms | 0.5% | (array copy) |
+| int3mem | 437ms | 9.2% | (once, pre-loop) |
+
+**Key finding:** At M=364, the Fortran SCF loop is **BLAS/LAPACK-bound**. The perf profile
+shows `dgemv_kernel_4x4` (9.4%), `dgemm_kernel_ZEN` (3.9%), `sgemv_kernel` (4.4%) as the
+top non-idle CPU symbols. Allocation hoisting (Dens_build, Diagon_datamat, DSYEVD workspace,
+int3lu temporaries) eliminates heap churn but doesn't measurably affect wall time at this
+system size. Benefits grow with M.
+
+### Allocation hoisting (DONE, 2026-04-08)
+
+| File | Change |
+|------|--------|
+| `Dens_build.f90` | Eliminated coef_occ copy + dens_mat temp; DGEMM writes directly to data_AO |
+| `Diagon_datamat.f90` | Eliminated per-call M×M Dmat allocation |
+| `matrix_diagon_dsyevd.f90` | Persistent DSYEVD workspace (SAVE); removed M² NaN check loop |
+| `subm_int3lu.f90` | Persistent work arrays (Rc, aux, rho_gathered, terms_d/s, etc.) |
 
 ## CRITICAL (in SCF hot path, called every iteration)
 
