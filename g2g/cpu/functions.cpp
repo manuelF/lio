@@ -81,16 +81,18 @@ void PointGroupCPU<scalar_type>::compute_functions(bool forces, bool gga) {
       // Output arrays on the stack (max 6 functions per simple shell)
       scalar_type val[6], gx[6], gy[6], gz[6];
       scalar_type hpx[6], hpy[6], hpz[6], hix[6], hiy[6], hiz[6];
+      bool compute_grad = forces || gga;
+      bool compute_hess = gga;
 
       int nf = cpu_eval_gto_shell<scalar_type>(
           v.x, v.y, v.z, dist2,
           alphas, coeffs, (int)nc,
           shell_type, norm,
-          forces || gga, gga,
+          compute_grad, compute_hess,
           val,
-          forces || gga ? gx : nullptr, forces || gga ? gy : nullptr, forces || gga ? gz : nullptr,
-          gga ? hpx : nullptr, gga ? hpy : nullptr, gga ? hpz : nullptr,
-          gga ? hix : nullptr, gga ? hiy : nullptr, gga ? hiz : nullptr);
+          compute_grad ? gx : nullptr, compute_grad ? gy : nullptr, compute_grad ? gz : nullptr,
+          compute_hess ? hpx : nullptr, compute_hess ? hpy : nullptr, compute_hess ? hpz : nullptr,
+          compute_hess ? hix : nullptr, compute_hess ? hiy : nullptr, compute_hess ? hiz : nullptr);
 
       // Write outputs into the group matrices
       for (int k = 0; k < nf; ++k) {

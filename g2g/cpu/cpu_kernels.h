@@ -154,13 +154,13 @@ inline double cpu_becke_weight_for_point(
 template <class scalar_type>
 int cpu_eval_gto_shell(
     scalar_type vx, scalar_type vy, scalar_type vz, scalar_type dist2,
-    const scalar_type* alphas, const scalar_type* coeffs, int nc,
+    const scalar_type* __restrict__ alphas, const scalar_type* __restrict__ coeffs, int nc,
     int shell_type, scalar_type norm,
     bool compute_grad, bool compute_hess,
-    scalar_type* val,
-    scalar_type* gx,  scalar_type* gy,  scalar_type* gz,
-    scalar_type* hpx, scalar_type* hpy, scalar_type* hpz,
-    scalar_type* hix, scalar_type* hiy, scalar_type* hiz) {
+    scalar_type* __restrict__ val,
+    scalar_type* __restrict__ gx,  scalar_type* __restrict__ gy,  scalar_type* __restrict__ gz,
+    scalar_type* __restrict__ hpx, scalar_type* __restrict__ hpy, scalar_type* __restrict__ hpz,
+    scalar_type* __restrict__ hix, scalar_type* __restrict__ hiy, scalar_type* __restrict__ hiz) {
 
   // Radial contraction — identical exponent cutoff to functions.cpp
   scalar_type t = 0, tg = 0, th = 0;
