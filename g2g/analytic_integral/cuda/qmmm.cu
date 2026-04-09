@@ -80,8 +80,11 @@ bool QMMMIntegral<scalar_type>::alloc_output(void) {
   //    << " MB" << endl;
 
   // Forces: output is partial forces
+  // Zero-initialize so the COALESCED_DIMENSION padding columns (never written
+  // by the kernel) don't cause initcheck warnings on the cudaMemcpy in
+  // get_gradient_output.
   partial_mm_forces_dev.resize(COALESCED_DIMENSION(partial_out_size),
-                               integral_vars.clatoms);
+                               integral_vars.clatoms).zero();
 
   cudaAssertNoError("QMMMIntegral::alloc_output");
 

@@ -1084,21 +1084,23 @@ void PointGroupGPU<scalar_type>::compute_functions(bool forces, bool gga) {
   contractions_gpu = contractions_cpu;
 
   /** Compute Functions **/
+  // Zero-initialize so the COALESCED_DIMENSION padding columns (never written
+  // by gpu_compute_functions) don't carry garbage into the transpose output.
   function_values.resize(COALESCED_DIMENSION(this->number_of_points),
-                         group_functions.w);
+                         group_functions.w).zero();
   function_values_transposed.resize(
       group_m, COALESCED_DIMENSION(this->number_of_points));
 
   if (fortran_vars.do_forces || fortran_vars.gga) {
     gradient_values.resize(COALESCED_DIMENSION(this->number_of_points),
-                           group_functions.w);
+                           group_functions.w).zero();
     gradient_values_transposed.resize(
         group_m, COALESCED_DIMENSION(this->number_of_points));
   }
 
   if (fortran_vars.gga)
     hessian_values.resize(COALESCED_DIMENSION(this->number_of_points),
-                          (group_functions.w) * 2);
+                          (group_functions.w) * 2).zero();
 
   dim3 threads(this->number_of_points);
   dim3 threadBlock(FUNCTIONS_BLOCK_SIZE);
