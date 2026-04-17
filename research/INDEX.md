@@ -45,11 +45,19 @@ Ranked by expected wall-time impact on the fosfatoQMMM benchmark.
 
 | # | Optimization | Area | Expected Impact | File |
 |---|---|---|---|---|
+| 0 | **Enable cuda=2 build** | Build | 50-90ms estimated (free; activates existing `cublasmath/` paths) | [fortran/full_scf_port_evaluation.md](fortran/full_scf_port_evaluation.md) |
 | 1 | Overlap int3lu ↔ g2g solve | Fortran/GPU | 150-270ms (6-15% wall) | [fortran/overlap_int3lu_g2g.md](fortran/overlap_int3lu_g2g.md) |
 | 2 | GPU arena allocator | Infrastructure | ~90ms (5% wall); 1298 cudaMalloc+Free pairs | [infrastructure/optimize_gpu_allocator.md](infrastructure/optimize_gpu_allocator.md) |
 | 3 | Density as GEMM | GPU | 100-200ms (5-10% wall); density is ~46% of GPU time | [gpu/optimize_density_gemm.md](gpu/optimize_density_gemm.md) |
 | 4 | Partition auto-tune caching | Infrastructure | High for MD runs (one-time for single-point) | _(no research doc yet)_ |
 | 5 | Open-shell GGA register reduction | GPU | Open-shell systems only (zero effect on fosfato) | [gpu/optimize_open_shell_registers.md](gpu/optimize_open_shell_registers.md) |
+
+**Iteration reduction is not a lever on this workload** — LIO's 25-iter
+convergence is near the float32 DIIS floor. See
+[convergence/initial_guess_evaluation.md](convergence/initial_guess_evaluation.md).
+
+**int3lu GPU offload** and **full SCF port to g2g** both evaluated and
+rejected/deferred — see rejected table below for the decision rationale.
 
 ## Key Completed Work
 
@@ -80,3 +88,6 @@ Don't re-investigate these without reading the analysis first.
 | Forces cudaStreamSync elimination | 837ms is real GPU work, only 5.5ms eliminable (0.2% wall) | [gpu/async_execution.md](gpu/async_execution.md) |
 | Multi-stream GPU pipeline | CPU launch 60µs vs 700µs kernel; GPU never starved | [gpu/stream_sharding.md](gpu/stream_sharding.md) |
 | Dynamic OpenMP tasks | CPU threads already balanced (13ms vs 18ms GPU); idle only 4ms/iter | [cpu/optimize_cpu_threading.md](cpu/optimize_cpu_threading.md) |
+| Aufbau initial guess | 26-27 iters vs baseline 25; slower despite better starting energy. LIO 1-e guess + DIIS already tuned | [convergence/initial_guess_evaluation.md](convergence/initial_guess_evaluation.md) |
+| int3lu GPU offload | Same ceiling as CPU/GPU overlap (267ms) at 3-5× the implementation cost. Dominated by overlap | [fortran/int3lu_gpu_offload_evaluation.md](fortran/int3lu_gpu_offload_evaluation.md) |
+| Full SCF port to g2g | High absolute ceiling (440-565ms) but poor ROI (11-14 weeks); incremental stack delivers similar savings in 4-6 weeks. Revisit at M≥1500 or MD throughput | [fortran/full_scf_port_evaluation.md](fortran/full_scf_port_evaluation.md) |

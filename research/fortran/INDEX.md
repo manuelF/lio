@@ -21,6 +21,8 @@ OpenBLAS dgemv/dgemm 20%, int3mem outlined OpenMP fns ~1.8%.
 | File | Status | Summary |
 |------|--------|---------|
 | [overlap_int3lu_g2g.md](overlap_int3lu_g2g.md) | OPEN (top priority) | Overlap int3lu CPU-only BLAS with g2g solve GPU work; est. 150-270ms save (6-15% wall) |
+| [int3lu_gpu_offload_evaluation.md](int3lu_gpu_offload_evaluation.md) | REJECTED | Same ceiling as CPU/GPU overlap, 3-5× the effort; revisit at M≥1500 |
+| [full_scf_port_evaluation.md](full_scf_port_evaluation.md) | DEFERRED | 440-565ms ceiling but 11-14 weeks effort; revisit at M≥1500 or MD throughput. First step: try `cuda=2` build |
 | [blas_optimization.md](blas_optimization.md) | DONE | BLAS replacements + allocation hoisting; SCF loop is BLAS-bound at M=364 |
 | [fortran_modernization.md](fortran_modernization.md) | OPEN | Replace global mutable state, improve allocatable arrays, remove pre-F90 patterns |
 | [unit_testing_strategy.md](unit_testing_strategy.md) | REF | Unit test infrastructure audit; 4 existing test programs |
