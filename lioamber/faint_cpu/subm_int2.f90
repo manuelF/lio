@@ -46,10 +46,7 @@ subroutine int2(Gmat, Ginv, r, d, ntatom)
    integer          :: i_ind, j_ind, k_ind, ifunct, jfunct, nci, ncj, nsd, npd,&
                        ndd, l12, l34, l1, l2, l3, l4, lij, lk, Md2
    ! Variables for Lapack
-   integer                       :: LA_WORK_SIZE, LA_INFO
-   integer         , allocatable :: LA_IWORK(:)
-   double precision, allocatable :: LA_WORK(:)
-   double precision              :: LA_U(1), LA_VT(1)
+   integer                       :: LA_INFO
 
    sq3 = 1.D0
    if (NORM) sq3 = sqrt(3.D0)
@@ -415,36 +412,19 @@ subroutine int2(Gmat, Ginv, r, d, ntatom)
    enddo
    enddo
 
-   allocate(LA_IWORK(8*Md))
-   call g2g_timer_sum_start('G condition')
-   allocate(LA_WORK(1))
-   call dgesdd('N', Md, Md, aux_mat, Md, Ginv, LA_U, 1, LA_VT, 1, LA_WORK, -1, &
-               LA_IWORK, LA_INFO)
-   LA_WORK_SIZE = int(LA_WORK(1)); deallocate(LA_WORK)
-   allocate(LA_WORK(LA_WORK_SIZE))
-   call dgesdd('N', Md, Md, aux_mat, Md, Ginv, LA_U, 1, LA_VT, 1, LA_WORK, &
-               LA_WORK_SIZE, LA_IWORK, LA_INFO)
-   deallocate(LA_WORK)
-   call g2g_timer_sum_stop('G condition')
-
-   ! Inversion of G matrix, kept in Gm
+   ! Inversion of G matrix via Cholesky (G is symmetric positive definite).
+   ! aux_mat already holds the full symmetric G from the unpack at line ~401.
    call g2g_timer_sum_start('G invert')
-   do ifunct = 1, Md
-   do jfunct = 1, ifunct
-      k_ind = ifunct + (Md*2-jfunct)*(jfunct-1)/2
-      aux_mat(ifunct,jfunct) = Gmat(k_ind)
-      aux_mat(jfunct,ifunct) = aux_mat(ifunct,jfunct)
-   enddo
-   enddo
-
-   allocate(LA_WORK(1))
-   call dsytrf('U', Md, aux_mat, Md, LA_IWORK, LA_WORK, -1, LA_INFO)
-   LA_WORK_SIZE = int(LA_WORK(1)); deallocate(LA_WORK)
-   allocate(LA_WORK(LA_WORK_SIZE))
-   call dsytrf('U', Md, aux_mat, Md, LA_IWORK, LA_WORK, LA_WORK_SIZE, LA_INFO)
-   deallocate(LA_WORK); allocate(LA_WORK(Md));
-   call dsytri('U', Md, aux_mat, Md, LA_IWORK, LA_WORK, LA_INFO)
-   deallocate(LA_WORK)
+   call dpotrf('U', Md, aux_mat, Md, LA_INFO)
+   if (LA_INFO /= 0) then
+      write(*,*) 'int2: Cholesky factorization of G failed, INFO=', LA_INFO
+      stop 1
+   endif
+   call dpotri('U', Md, aux_mat, Md, LA_INFO)
+   if (LA_INFO /= 0) then
+      write(*,*) 'int2: inverse from Cholesky factor failed, INFO=', LA_INFO
+      stop 1
+   endif
 
    do ifunct = 1, Md
    do jfunct = 1, ifunct
@@ -454,7 +434,7 @@ subroutine int2(Gmat, Ginv, r, d, ntatom)
    enddo
 
    call g2g_timer_sum_stop('G invert')
-   deallocate(aux_mat, LA_IWORK)
+   deallocate(aux_mat)
    return
 end subroutine
 end module subm_int2
