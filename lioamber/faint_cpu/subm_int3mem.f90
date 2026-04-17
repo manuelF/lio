@@ -59,13 +59,17 @@ subroutine int3mem(r, d, natom, ntatom)
    use basis_data  , only: cool, cools, kkind, kkinds, Nuc, Nucd, a, c,        &
                            ad, cd, natomc, nns, nnp, nnd, nnps, nnpp, nnpd,    &
                            jatc, ncont, ncontd, nshell, nshelld, M, Md, rmax,  &
-                           rmaxs, NORM, kknums, kknumd
+                           rmaxs, NORM,                                        &
+                           kknums_mod => kknums, kknumd_mod => kknumd
    use constants_mod, only: pi52
 
    implicit none
    integer         , intent(in) :: natom, ntatom
    LIODBLE, intent(in) :: r(ntatom,3), d(natom,natom)
 
+   integer                            :: kknumd, kknums
+   integer                            :: total_d, total_s
+   integer, dimension(:,:), allocatable :: start_d, start_s
    integer, dimension(:), allocatable :: Jx
    LIODBLE  :: Q(3), W(3)
    LIODBLE  :: ccoef, f1, f2, f3, rexp, sq3, term, uf, Z2, Z2a, Zc, Zij
@@ -86,13 +90,16 @@ subroutine int3mem(r, d, natom, ntatom)
                         d2pk, d3s, d3pk, d4s, ds, ds1p, dspl, dp, dpc, dpk,    &
                         dp1p, ddp, dijplp, dijpkp
 
-   integer           :: ns, nsd, nd, ndd, np, npd, kknan, knan, kknumsmax, lk, &
+   integer           :: ns, nsd, nd, ndd, np, npd, kknan, knan, lk,            &
                         lij, l1, l2, l3, l4, l5, l6, l12, l23, l34, l45, l56,  &
                         ifunct, jfunct, kfunct, nci, ncj, nck, lcount,         &
                         cool_ind, Ll(3)
    logical           :: done_sp, done_dp
 
    allocate (Jx(M))
+   allocate (start_d(6, M), start_s(6, M))
+   start_d = 0
+   start_s = 0
    ns  = nshell(0) ; np  = nshell(1) ; nd  = nshell(2)
    nsd = nshelld(0); npd = nshelld(1); ndd = nshelld(2)
 
@@ -111,6 +118,8 @@ subroutine int3mem(r, d, natom, ntatom)
 
    ! Search for the dimensions of cool/cools.
    do ifunct = 1, ns
+   start_d(1, ifunct) = kknumd
+   start_s(1, ifunct) = kknums
    do knan   = 1, natomc(Nuc(ifunct))
       jfunct = nnps(jatc(knan, Nuc(ifunct))) -1
 
@@ -147,6 +156,8 @@ subroutine int3mem(r, d, natom, ntatom)
    enddo
 
    do ifunct = ns+1, ns+np, 3
+   start_d(2, ifunct) = kknumd
+   start_s(2, ifunct) = kknums
    do knan = 1, natomc(Nuc(ifunct))
       jfunct = nnps(jatc(knan, Nuc(ifunct))) -1
 
@@ -184,6 +195,8 @@ subroutine int3mem(r, d, natom, ntatom)
    enddo
 
    do ifunct = ns+1, ns+np, 3
+   start_d(3, ifunct) = kknumd
+   start_s(3, ifunct) = kknums
    do knan = 1, natomc(Nuc(ifunct))
       jfunct = nnpp(jatc(knan,Nuc(ifunct))) -3
 
@@ -244,6 +257,8 @@ subroutine int3mem(r, d, natom, ntatom)
    enddo
 
    do ifunct = ns+np+1, M, 6
+   start_d(4, ifunct) = kknumd
+   start_s(4, ifunct) = kknums
    do knan   = 1, natomc(Nuc(ifunct))
       jfunct = nnps(jatc(knan, Nuc(ifunct))) -1
       do kknan = 1, nns(jatc(knan, Nuc(ifunct)))
@@ -280,6 +295,8 @@ subroutine int3mem(r, d, natom, ntatom)
    enddo
 
    do ifunct = ns+np+1, M, 6
+   start_d(5, ifunct) = kknumd
+   start_s(5, ifunct) = kknums
    do knan = 1, natomc(Nuc(ifunct))
       jfunct = nnpp(jatc(knan,Nuc(ifunct))) -3
 
@@ -321,6 +338,8 @@ subroutine int3mem(r, d, natom, ntatom)
    enddo
 
    do ifunct = ns+np+1, M, 6
+   start_d(6, ifunct) = kknumd
+   start_s(6, ifunct) = kknums
    do knan = 1, natomc(Nuc(ifunct))
       jfunct = nnpd(jatc(knan,Nuc(ifunct))) -6
 
@@ -388,13 +407,19 @@ subroutine int3mem(r, d, natom, ntatom)
    allocate(kkind(kknumd)  , kkinds(kknums))
    ! End of cool dimensions
 
-   kknumsmax = kknums
+   total_d = kknumd
+   total_s = kknums
    cool   = 0.0D0; cools  = 0.0
-   kknumd = 0    ; kknums = 0
 
    ! Start of integrals.
    ! (ss|X) terms (X = s,p,d)
+   !$omp parallel do default(firstprivate) &
+   !$omp             shared(cool, cools, kkind, kkinds, start_d, start_s, &
+   !$omp                    Jx, Ll) &
+   !$omp             schedule(dynamic)
    do ifunct = 1, ns
+      kknumd = start_d(1, ifunct)
+      kknums = start_s(1, ifunct)
    do knan   = 1, natomc(Nuc(ifunct))
       jfunct = nnps(jatc(knan, Nuc(ifunct))) -1
 
@@ -545,8 +570,16 @@ subroutine int3mem(r, d, natom, ntatom)
    enddo
    enddo
 
+   !$omp end parallel do
+
    ! (ps|X)
+   !$omp parallel do default(firstprivate) &
+   !$omp             shared(cool, cools, kkind, kkinds, start_d, start_s, &
+   !$omp                    Jx, Ll) &
+   !$omp             schedule(dynamic)
    do ifunct = ns+1, ns+np, 3
+      kknumd = start_d(2, ifunct)
+      kknums = start_s(2, ifunct)
    do knan   = 1   , natomc(Nuc(ifunct))
       jfunct = nnps(jatc(knan, Nuc(ifunct))) -1
 
@@ -747,8 +780,16 @@ subroutine int3mem(r, d, natom, ntatom)
    enddo
    enddo
 
+   !$omp end parallel do
+
    ! (pp|X)
+   !$omp parallel do default(firstprivate) &
+   !$omp             shared(cool, cools, kkind, kkinds, start_d, start_s, &
+   !$omp                    Jx, Ll) &
+   !$omp             schedule(dynamic)
    do ifunct = ns+1, ns+np, 3
+      kknumd = start_d(3, ifunct)
+      kknums = start_s(3, ifunct)
    do knan = 1, natomc(Nuc(ifunct))
       jfunct = nnpp(jatc(knan,Nuc(ifunct))) -3
 
@@ -1095,8 +1136,16 @@ subroutine int3mem(r, d, natom, ntatom)
    enddo
    enddo
 
+   !$omp end parallel do
+
    ! (ds|X)
+   !$omp parallel do default(firstprivate) &
+   !$omp             shared(cool, cools, kkind, kkinds, start_d, start_s, &
+   !$omp                    Jx, Ll) &
+   !$omp             schedule(dynamic)
    do ifunct = ns+np+1, M, 6
+      kknumd = start_d(4, ifunct)
+      kknums = start_s(4, ifunct)
    do knan   = 1, natomc(Nuc(ifunct))
       jfunct = nnps(jatc(knan, Nuc(ifunct))) -1
 
@@ -1374,8 +1423,16 @@ subroutine int3mem(r, d, natom, ntatom)
    enddo
    enddo
 
+   !$omp end parallel do
+
    ! (dp|X)
+   !$omp parallel do default(firstprivate) &
+   !$omp             shared(cool, cools, kkind, kkinds, start_d, start_s, &
+   !$omp                    Jx, Ll) &
+   !$omp             schedule(dynamic)
    do ifunct = ns+np+1, M, 6
+      kknumd = start_d(5, ifunct)
+      kknums = start_s(5, ifunct)
    do knan   = 1, natomc(Nuc(ifunct))
       jfunct = nnpp(jatc(knan,Nuc(ifunct))) -3
 
@@ -1751,8 +1808,16 @@ subroutine int3mem(r, d, natom, ntatom)
    enddo
    enddo
 
-   ! (dd|s)
+   !$omp end parallel do
+
+   ! (dd|X)
+   !$omp parallel do default(firstprivate) &
+   !$omp             shared(cool, cools, kkind, kkinds, start_d, start_s, &
+   !$omp                    Jx, Ll) &
+   !$omp             schedule(dynamic)
    do ifunct = ns+np+1, M, 6
+      kknumd = start_d(6, ifunct)
+      kknums = start_s(6, ifunct)
    do knan   = 1, natomc(Nuc(ifunct))
       jfunct = nnpd(jatc(knan,Nuc(ifunct))) -6
 
@@ -2418,7 +2483,13 @@ subroutine int3mem(r, d, natom, ntatom)
    enddo
    enddo
 
+   !$omp end parallel do
+
+   kknumd_mod = total_d
+   kknums_mod = total_s
+
    deallocate (Jx)
+   deallocate (start_d, start_s)
    return
 end subroutine int3mem
 end module subm_int3mem

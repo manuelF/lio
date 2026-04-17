@@ -99,9 +99,9 @@ endif
 ifeq ($(intel),0)
   FC      = gfortran
   LC      = gfortran
-  FFLAGS += -cpp -I$(OBJPATH) -J$(OBJPATH)
+  FFLAGS += -cpp -fopenmp -I$(OBJPATH) -J$(OBJPATH)
   FFLAGS += -fallow-argument-mismatch
-  LFLAGS += -L/usr/lib
+  LFLAGS += -L/usr/lib -fopenmp
   LIBS   += -lblas -llapack
 
   DEBUG01 = -g -Wtabs -fcheck=all
