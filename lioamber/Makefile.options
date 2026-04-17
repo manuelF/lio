@@ -94,8 +94,8 @@ endif
 ifeq ($(intel),0)
   FC      = gfortran
   LC      = gfortran
-  FFLAGS += -cpp -I$(OBJPATH) -J$(OBJPATH)
-  LFLAGS += -L/usr/lib
+  FFLAGS += -cpp -fopenmp -I$(OBJPATH) -J$(OBJPATH)
+  LFLAGS += -L/usr/lib -fopenmp
   LIBS   += -lblas -llapack
 
   DEBUG01 = -g -Wtabs -fcheck=all
