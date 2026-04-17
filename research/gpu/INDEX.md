@@ -3,11 +3,12 @@
 Research and implementation notes for CUDA kernel performance.
 Current hardware: RTX 3080 Ti (SM 8.6 Ampere). Previous: GTX 1080 (SM 6.1 Pascal).
 
-**2026-04-08 status:** On RTX 3080 Ti, g2g solve (all GPU+CPU kernels) is only
-**11% of wall time** (0.39s / 3.63s on fosfatoQMMM). The bottleneck has shifted
-to Fortran-side CPU work (converger, int3lu, DIIS). GPU kernel optimizations now
-have diminishing returns for this system — a 2× density speedup saves ~3% wall.
-Larger molecular systems will still benefit from GPU kernel work.
+**2026-04-17 status:** After int3mem parallelization, Cholesky G-matrix, and
+converger DGEMM elimination, warm wall dropped from 3.63s → **~1.84s**. g2g
+solve is now roughly **27% of wall** (~498ms across 25 iters), so GPU work is
+a larger relative share again. `gpu_compute_density` is still ~46% of GPU
+time — density-as-GEMM re-enters the top-5 priorities. Larger molecular
+systems benefit proportionally more.
 
 ## Status Legend
 
@@ -35,7 +36,7 @@ Larger molecular systems will still benefit from GPU kernel work.
 | [async_execution.md](async_execution.md) | CLOSED | Phases 1-2 DONE; remaining syncs are post-SCF only (~5.5ms = 0.2%), not worth pursuing |
 | [optimize_open_shell_registers.md](optimize_open_shell_registers.md) | HIGH (open-shell only) | 93 regs → 56 regs (34% → 56% occ) by splitting into 2 closed-shell calls; no effect on closed-shell |
 | [stream_sharding.md](stream_sharding.md) | CLOSED | CPU launch overhead 60µs/group vs 700µs kernel; GPU never starved with fgm=-1 |
-| [optimize_density_gemm.md](optimize_density_gemm.md) | MEDIUM (was HIGH) | ~3% wall on fosfatoQMMM/3080Ti (g2g is only 11% of wall); larger impact on bigger systems |
+| [optimize_density_gemm.md](optimize_density_gemm.md) | HIGH (re-elevated 2026-04-17) | Post Fortran opts, g2g back to ~27% of wall; density is ~46% of GPU. 100-200ms estimated save on fosfato |
 | [optimize_rmm.md](optimize_rmm.md) | LOW (was MEDIUM) | cuBLAS SYRK; diminished by g2g being 11% of wall |
 
 ### Open — Lower Impact / Speculative

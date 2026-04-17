@@ -28,33 +28,28 @@ relevant sub-index before diving into individual files.
 
 ---
 
-## Current Priorities (as of 2026-04-08)
+## Current Priorities (as of 2026-04-17)
 
 Ranked by expected wall-time impact on the fosfatoQMMM benchmark.
 
-**Critical context change:** With the RTX 3080 Ti, all prior GPU optimizations
-have shifted the bottleneck to Fortran-side CPU work. Profiling breakdown
-(fosfatoQMMM, 3.63s wall):
+**Profiling breakdown** (fosfatoQMMM, RTX 3080 Ti, warm wall **~1.84s**, internal 1.72s, 25 SCF iters):
 
 | Phase | Time | % Wall | Notes |
 |-------|------|--------|-------|
-| Fortran per-iter overhead | 0.94s | 26% | converger, DIIS, matrix ops |
-| int3mem + int3lu (Coulomb) | 0.75s | 21% | 0.42s init + 0.33s per-iter |
-| Partition auto-tune | ~0.50s | 14% | 80 configs; one-time per MD step |
-| **g2g solve (GPU+CPU kernels)** | **0.39s** | **11%** | was 42% on GTX 1080 |
-| Post-SCF forces | 0.13s | 3% | AINT float + int3G |
-| Other (init, guess, I/O) | 0.92s | 25% | |
+| Iteration × 25 (Fock+Diag+DIIS) | 1.19s | 65% | 47.6ms/iter; int3lu (268ms) + g2g solve (498ms) sequential |
+| Initialize SCF | 0.44s | 24% | int3mem 132ms, XC grid 147ms, guess 55ms, 1-e Fock 31ms, G matrix 9ms |
+| Forces | 0.12s | 7% | |
+| Other (I/O, finalize) | ~0.09s | 5% | |
 
-GPU kernel optimizations now have diminishing returns: even a 2× density kernel
-speedup saves only ~0.1s (3% wall). The highest-impact work is now Fortran-side.
+**Top per-iter cost**: `int3lu` (10.7ms/iter CPU) → `g2g solve` (~20ms/iter GPU+CPU partition) is **strictly sequential**. Running int3lu concurrent with g2g's GPU portion is the largest remaining lever.
 
 | # | Optimization | Area | Expected Impact | File |
 |---|---|---|---|---|
-| 1 | int3lu GPU offload or overlap | Fortran/GPU | 0.33s (9% wall) — run Coulomb integrals concurrently with g2g | _(no research doc yet)_ |
-| 2 | Fortran per-iter overhead reduction | Fortran | BLAS-bound at M=364; allocation hoisting done; algorithmic changes needed for further gains | [fortran/blas_optimization.md](fortran/blas_optimization.md) |
-| 3 | Partition auto-tune caching | Infrastructure | ~0.50s (14% wall) — cache partition across MD steps when geometry changes are small | _(no research doc yet)_ |
-| 4 | Open-shell GGA register reduction | GPU | 1.3-1.8× for open-shell systems only | [gpu/optimize_open_shell_registers.md](gpu/optimize_open_shell_registers.md) |
-| 5 | Density as GEMM | GPU | ~0.1s (3% wall) on fosfatoQMMM; larger impact on bigger systems | [gpu/optimize_density_gemm.md](gpu/optimize_density_gemm.md) |
+| 1 | Overlap int3lu ↔ g2g solve | Fortran/GPU | 150-270ms (6-15% wall) | [fortran/overlap_int3lu_g2g.md](fortran/overlap_int3lu_g2g.md) |
+| 2 | GPU arena allocator | Infrastructure | ~90ms (5% wall); 1298 cudaMalloc+Free pairs | [infrastructure/optimize_gpu_allocator.md](infrastructure/optimize_gpu_allocator.md) |
+| 3 | Density as GEMM | GPU | 100-200ms (5-10% wall); density is ~46% of GPU time | [gpu/optimize_density_gemm.md](gpu/optimize_density_gemm.md) |
+| 4 | Partition auto-tune caching | Infrastructure | High for MD runs (one-time for single-point) | _(no research doc yet)_ |
+| 5 | Open-shell GGA register reduction | GPU | Open-shell systems only (zero effect on fosfato) | [gpu/optimize_open_shell_registers.md](gpu/optimize_open_shell_registers.md) |
 
 ## Key Completed Work
 
@@ -67,6 +62,9 @@ speedup saves only ~0.1s (3% wall). The highest-impact work is now Fortran-side.
 | DGELSS solver (DIIS fix) | Robust to float32 noise | [convergence/converger_optimizations.md](convergence/converger_optimizations.md) |
 | Pinned host memory | cudaMemcpyAsync 218x faster | [infrastructure/optimize_pinned_memory.md](infrastructure/optimize_pinned_memory.md) |
 | Fortran allocation hoisting | Eliminated per-iter heap churn in Dens_build, DSYEVD, int3lu | [fortran/blas_optimization.md](fortran/blas_optimization.md) |
+| Converger direct P'_ON from eigenvectors | Eliminated 2 DGEMMs/iter in converger (commit 7325eeb3) | _(commit only)_ |
+| int3mem OpenMP parallelization | Coulomb precalc 418ms → 132ms (286ms saved, commit 7229cad3) | _(commit only)_ |
+| Cholesky for G matrix | dgesdd+dsytrf/i → dpotrf/i; 125ms → 9ms (commit de2d2f21) | _(commit only)_ |
 
 ## Rejected / Dead Ends / Diminished Returns
 

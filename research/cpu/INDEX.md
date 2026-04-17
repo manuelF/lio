@@ -5,8 +5,11 @@ CPU threads handle 304 small groups in ~13ms/iter (fosfatoQMMM, RTX 3080 Ti),
 well within the GPU thread's ~18ms. These are low priority — the CPU/GPU
 balance is good (4ms idle/iter).
 
-**Note (2026-04-08):** The much larger Fortran-side CPU bottleneck (converger,
-int3lu = 35% of wall) is tracked in `research/fortran/`, not here.
+**Note (2026-04-17):** After Fortran optimizations (int3mem parallel,
+Cholesky G, converger direct P'_ON), int3lu remains the dominant Fortran
+per-iter cost (~15% wall). Its top lever is **not** internal to CPU kernels
+but overlapping it with g2g_solve_groups — see
+[fortran/overlap_int3lu_g2g.md](../fortran/overlap_int3lu_g2g.md).
 
 ## Files
 
