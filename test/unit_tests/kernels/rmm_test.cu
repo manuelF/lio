@@ -31,7 +31,9 @@
 #include <cuda_runtime.h>
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <vector>
 
 #include "../../../g2g/common.h"  // RMM_BLOCK_SIZE_XY, DENSITY_*
@@ -316,6 +318,72 @@ static bool test_precision(int m, int points, float tol, const char* label) {
   return max_rel_err < tol;
 }
 
+// ---------------------------------------------------------------------------
+// Bit-exact reproducibility: dump FNV-1a hash of the raw GPU output bytes
+// for a representative kernel run. A kernel modification that is truly
+// FP-neutral (e.g. an algebraic no-op refactor) must produce the identical
+// hash. Print the hash so it can be compared across code versions.
+// ---------------------------------------------------------------------------
+template <bool check_pos>
+static void dump_bit_hash(int m, int points, const char* label) {
+  int cdim_p = COALESCED_DIMENSION(points);
+  int cdim_m = COALESCED_DIMENSION(m);
+
+  std::vector<float> h_factors(points);
+  std::vector<float> h_fv(m * cdim_p, 0.0f);
+  std::vector<float> h_rmm(cdim_m * m, 0.0f);
+
+  for (int p = 0; p < points; ++p)
+    h_factors[p] = 0.01f + 0.1f * (p % 7);
+  for (int fi = 0; fi < m; ++fi)
+    for (int p = 0; p < points; ++p)
+      h_fv[fi * cdim_p + p] = 0.1f + 0.05f * ((fi + p) % 11);
+
+  float *df, *dfv, *drmm;
+  CUDA_CHECK(cudaMalloc(&df, points * sizeof(float)));
+  CUDA_CHECK(cudaMalloc(&dfv, m * cdim_p * sizeof(float)));
+  CUDA_CHECK(cudaMalloc(&drmm, cdim_m * m * sizeof(float)));
+  CUDA_CHECK(cudaMemcpy(df, h_factors.data(), points * sizeof(float),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(dfv, h_fv.data(), m * cdim_p * sizeof(float),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemset(drmm, 0, cdim_m * m * sizeof(float)));
+
+  dim3 block(RMM_BLOCK_SIZE_XY, RMM_BLOCK_SIZE_XY);
+  if (check_pos) {
+    int n_tiles = (m + RMM_BLOCK_SIZE_XY - 1) / RMM_BLOCK_SIZE_XY;
+    int n_blocks = n_tiles * (n_tiles + 1) / 2;
+    G2G::gpu_update_rmm<float, true>
+        <<<dim3(n_blocks, 1), block>>>(df, points, drmm, dfv, m);
+  } else {
+    int tiles = (m + RMM_BLOCK_SIZE_XY - 1) / RMM_BLOCK_SIZE_XY;
+    G2G::gpu_update_rmm<float, false>
+        <<<dim3(tiles, tiles), block>>>(df, points, drmm, dfv, m);
+  }
+  CUDA_CHECK(cudaGetLastError());
+  CUDA_CHECK(cudaDeviceSynchronize());
+  CUDA_CHECK(cudaMemcpy(h_rmm.data(), drmm, cdim_m * m * sizeof(float),
+                        cudaMemcpyDeviceToHost));
+  cudaFree(df);
+  cudaFree(dfv);
+  cudaFree(drmm);
+
+  // Hash only the lower-triangle cells (the kernel may leave upper undefined)
+  uint64_t h = 1469598103934665603ULL;  // FNV offset
+  for (int j = 0; j < m; ++j) {
+    for (int i = 0; i <= j; ++i) {
+      uint32_t bits;
+      std::memcpy(&bits, &h_rmm[j * cdim_m + i], 4);
+      for (int b = 0; b < 4; ++b) {
+        h ^= (bits >> (8 * b)) & 0xFF;
+        h *= 1099511628211ULL;
+      }
+    }
+  }
+  printf("    bit-hash %s  m=%d pts=%d  0x%016lx\n", label, m, points,
+         (unsigned long)h);
+}
+
 int main() {
   int dev = 0;
   cudaDeviceProp prop{};
@@ -371,6 +439,16 @@ int main() {
                "float precision m=16 pts=500 (rel_err < 1e-5)");
   runner.check(test_precision<true>(16, 500, 1e-5f, "m=16 pts=500 check_pos"),
                "float precision m=16 pts=500 check_pos (rel_err < 1e-5)");
+
+  printf("\n[ bit-exact reproducibility hashes ]\n");
+  dump_bit_hash<false>(16, 500, "check_pos=false");
+  dump_bit_hash<true>(16, 500, "check_pos=true ");
+  dump_bit_hash<false>(33, 97, "check_pos=false");  // non-multiple-of-16
+  dump_bit_hash<true>(33, 97, "check_pos=true ");
+  dump_bit_hash<false>(64, 500, "check_pos=false");
+  dump_bit_hash<true>(64, 500, "check_pos=true ");
+  dump_bit_hash<false>(128, 1000, "check_pos=false");
+  dump_bit_hash<true>(128, 1000, "check_pos=true ");
 
   return runner.summary();
 }

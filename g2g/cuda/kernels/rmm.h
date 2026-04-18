@@ -81,21 +81,29 @@ __global__ void gpu_update_rmm(const scalar_type* __restrict__ factors,
             (point + threadIdx.x);
         int factor_local_fi_index = (point - point_base) + threadIdx.x;
 
-        /* on blocks with some invalid threads, the computation contributes 0 to
-         * rmm_local (
-         * this avoids instruction serialization).
-         * We avoid if-elses using the boolean predicates of those if to
-         * multiply by 0 or 1 if needed.
-         * We also do it on the array subindeces to avoid segfaulting.
+        /* Invalid threads must contribute 0 to rmm_local. Branch rather than
+         * predicated-multiply: multiplying the index by 0 forces an address
+         * computation before the load, which serializes on the LSU; an
+         * explicit if lets the compiler skip the load entirely for masked
+         * lanes and the shared-memory store for the 0 result is a single
+         * immediate, not a dependent multiply.
          */
-        scalar_type fi_times_factor = 
-          function_values[validFi*function_values_fi_index] *
-          factor_local[validFi*factor_local_fi_index];
+        scalar_type fi_val;
+        if (validFi) {
+          fi_val = function_values[function_values_fi_index] *
+                   factor_local[factor_local_fi_index];
+        } else {
+          fi_val = scalar_type(0);
+        }
+        functions_i_local[threadIdx.x][threadIdx.y] = fi_val;
 
-        functions_i_local[threadIdx.x][threadIdx.y] = validFi*fi_times_factor;
-
-        functions_j_local[threadIdx.x][threadIdx.y] =
-            validFj*function_values[validFj*function_values_fj_index];
+        scalar_type fj_val;
+        if (validFj) {
+          fj_val = function_values[function_values_fj_index];
+        } else {
+          fj_val = scalar_type(0);
+        }
+        functions_j_local[threadIdx.x][threadIdx.y] = fj_val;
 
         __syncthreads();
         for (int point_sub = 0; point_sub < RMM_BLOCK_SIZE_XY; point_sub++) {
