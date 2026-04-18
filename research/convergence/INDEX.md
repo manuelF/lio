@@ -18,6 +18,7 @@ data flows through the SCF loop.
 | [level_shifting_evaluation.md](level_shifting_evaluation.md) | REJECTED | Level shifting tested and ruled out for LIO (minimal benefit) |
 | [initial_guess_evaluation.md](initial_guess_evaluation.md) | REJECTED | Aufbau guess is slower than 1-e default on fosfato (26-27 vs 25 iters); iteration reduction not a lever |
 | [scf_loop_profile_2026_03_28.md](scf_loop_profile_2026_03_28.md) | DONE | Full nsys+perf profile: 49% CPU idle, 840ms sync bottleneck, allocation hoisting |
+| [numerical_stability_investigation_2026_04_17.md](numerical_stability_investigation_2026_04_17.md) | DONE | Variance characterization; FULL_DOUBLE build broken (6.6 mHa offset); initcheck clean |
 
 ## Key Constraints (read before touching convergence-sensitive code)
 
@@ -27,3 +28,4 @@ data flows through the SCF loop.
 4. **Kahan summation is harmful** — changes float32 bit patterns, disrupts DIIS trajectory
 5. **`__launch_bounds__` changes FP results** — different register allocation reorders FMA instructions
 6. **Warp shuffle reductions are safe** IF summation order matches the original volatile pattern
+7. **`full_double=1` build is broken** (2026-04-17): converges to wrong energy (6.6 mHa off) — cannot be used as a no-noise reference until root-caused
