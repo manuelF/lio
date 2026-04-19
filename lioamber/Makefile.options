@@ -101,6 +101,10 @@ ifeq ($(intel),0)
   LC      = gfortran
   FFLAGS += -cpp -fopenmp -I$(OBJPATH) -J$(OBJPATH)
   FFLAGS += -fallow-argument-mismatch
+  FFLAGS += -fno-math-errno -fno-trapping-math
+  FFLAGS += -fprefetch-loop-arrays
+  FFLAGS += -fipa-pta
+  FFLAGS += -fgraphite-identity -floop-nest-optimize
   LFLAGS += -L/usr/lib -fopenmp
   LIBS   += -lblas -llapack
 
