@@ -93,11 +93,11 @@ template<class T> HostMatrix<T>::HostMatrix(unsigned int _width, unsigned _heigh
   resize(_width, _height);
 }
 
-template<class T> HostMatrix<T>::HostMatrix(const CudaMatrix<T>& c) noexcept : Matrix<T>(), pinned(false), stride(0) {
+template<class T> HostMatrix<T>::HostMatrix(const CudaMatrix<T>& c) noexcept : Matrix<T>(), stride(0), pinned(false) {
 	*this = c;
 }
 
-template<class T> HostMatrix<T>::HostMatrix(const HostMatrix<T>& m) noexcept : Matrix<T>(), pinned(m.pinned), stride(0) {
+template<class T> HostMatrix<T>::HostMatrix(const HostMatrix<T>& m) noexcept : Matrix<T>(), stride(0), pinned(m.pinned) {
 	if (m.data) {
 		this->width = m.width; this->height = m.height;
 		stride = compute_stride(this->width);
@@ -136,7 +136,7 @@ template<class T> HostMatrix<T>& HostMatrix<T>::shrink(unsigned int _width, unsi
 }
 
 template<class T> HostMatrix<T>& HostMatrix<T>::zero(void) noexcept {
-  memset(this->data, 0, alloc_bytes());
+  std::fill(this->data, this->data + stride * this->height, T{});
 	return *this;
 }
 
@@ -389,13 +389,13 @@ template<class T> CudaMatrix<T>& CudaMatrix<T>::operator=(const std::vector<T>& 
 		if (this->data) {
 			if (this->elements() != v.size()) {
 				cudaFree(this->data);
-				this->width = v.size(); this->height = 1;
+				this->width = static_cast<unsigned int>(v.size()); this->height = 1;
 				cudaMalloc(&ptr, this->bytes());
 				this->data = static_cast<T*>(ptr);
 			}
 		}
 		else {
-			this->width = v.size(); this->height = 1;
+			this->width = static_cast<unsigned int>(v.size()); this->height = 1;
 			cudaMalloc(&ptr, this->bytes());
 			this->data = static_cast<T*>(ptr);
 		}

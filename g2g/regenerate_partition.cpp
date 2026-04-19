@@ -76,12 +76,12 @@ int split_bins(const vector<pair<long long, int> >& costs,
       if (capacity < costs[i].second) {
         return INT_MAX;
       }
-      next_bin = workloads.size();
+      next_bin = (int)workloads.size();
       workloads.push_back(vector<int>());
     }
     workloads[next_bin].push_back(i);
   }
-  return workloads.size();
+  return (int)workloads.size();
 }
 
 void Partition::compute_work_partition() {
@@ -91,7 +91,7 @@ void Partition::compute_work_partition() {
     if (!cubes[i]->is_big_group())
       costs.push_back(make_pair(cubes[i]->cost(), i));
 
-  const uint ncubes = cubes.size();
+  const uint ncubes = (uint)cubes.size();
   for (uint i = 0; i < spheres.size(); i++)
     if (!spheres[i]->is_big_group())
       costs.push_back(make_pair(spheres[i]->cost(), ncubes + i));
@@ -119,7 +119,7 @@ void Partition::compute_work_partition() {
   split_bins(costs, work, max_cost);
   for (uint i = 0; i < work.size(); i++) sort(work[i].begin(), work[i].end());
 
-  double maxp = 0, minp = total_costs(cubes) + total_costs(spheres) + 1;
+  double maxp = 0.0, minp = (double)(total_costs(cubes) + total_costs(spheres) + 1);
   for (uint i = 0; i < work.size(); i++) {
     long long total = 0;
     for (uint j = 0; j < work[i].size(); j++) {
@@ -127,8 +127,8 @@ void Partition::compute_work_partition() {
       work[i][j] = costs[work[i][j]].second;
       total += c;
     }
-    if (minp > total) minp = total;
-    if (maxp < total) maxp = total;
+    if (minp > (double)total) minp = (double)total;
+    if (maxp < (double)total) maxp = (double)total;
     if (verbose > 4) printf("  Partition %d: %lld\n", i, total);
   }
   if (verbose > 4) printf("  MAX/MIN ratio: %lf\n", maxp / minp);
@@ -137,7 +137,7 @@ void Partition::compute_work_partition() {
 int getintenv(const char* str, int default_value) {
   char* v = getenv(str);
   if (v == NULL) return default_value;
-  int ret = strtol(v, NULL, 10);
+  int ret = (int)strtol(v, NULL, 10);
   return ret;
 }
 
@@ -486,7 +486,7 @@ void Partition::regenerate(void) {
         printf("  [sphere-decomp] cost: original=%lld decomposed=%lld "
                "reduction=%.1f%%\n",
                cost_orig, cost_decomp,
-               cost_orig > 0 ? 100.0 * (1.0 - (double)cost_decomp / cost_orig) : 0.0);
+               cost_orig > 0 ? 100.0 * (1.0 - (double)cost_decomp / (double)cost_orig) : 0.0);
     }
   }
 
@@ -626,7 +626,7 @@ void Partition::regenerate(void) {
     // Reserve headroom for per-group temporaries (partial_densities, dxyz, dd1,
     // dd2, factors, rmm_output, textures, etc.) and system overhead.
     // Empirical: ~20% of free memory or at least 200 MB.
-    size_t headroom = max((size_t)(free_mem * 0.2), (size_t)(200 * 1024 * 1024));
+    size_t headroom = max(static_cast<size_t>(static_cast<double>(free_mem) * 0.2), static_cast<size_t>(200 * 1024 * 1024));
 
     if (free_mem > headroom && total_cache_need > 0) {
       size_t cache_budget = free_mem - headroom;
@@ -647,9 +647,9 @@ void Partition::regenerate(void) {
       printf("  Auto-detected fgm=%.3f (cache need: %.1f MB, free: %.1f MB, "
              "headroom: %.1f MB, %u GPU groups)\n",
              effective_fgm,
-             total_cache_need / (1024.0 * 1024.0),
-             free_mem / (1024.0 * 1024.0),
-             headroom / (1024.0 * 1024.0),
+             static_cast<double>(total_cache_need) / (1024.0 * 1024.0),
+             static_cast<double>(free_mem) / (1024.0 * 1024.0),
+             static_cast<double>(headroom) / (1024.0 * 1024.0),
              gpu_group_count);
     }
   }
@@ -733,7 +733,7 @@ void Partition::regenerate(void) {
     }
   }
   int current_gpu = 0;
-  for (int i = work.size(); i < G2G::cpu_threads + G2G::gpu_threads; i++)
+  for (int i = (int)work.size(); i < G2G::cpu_threads + G2G::gpu_threads; i++)
     work.push_back(vector<int>());
 
   for (uint i = 0; i < cubes.size(); i++)
@@ -744,7 +744,7 @@ void Partition::regenerate(void) {
 
   for (uint i = 0; i < spheres.size(); i++)
     if (spheres[i]->is_big_group()) {
-      work[G2G::cpu_threads + current_gpu].push_back(i + cubes.size());
+      work[G2G::cpu_threads + current_gpu].push_back((int)(i + cubes.size()));
       current_gpu = (current_gpu + 1) % G2G::gpu_threads;
     }
   if (verbose > 4) diagnostic();

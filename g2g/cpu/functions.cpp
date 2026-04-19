@@ -49,9 +49,7 @@ void PointGroupCPU<scalar_type>::compute_functions(bool forces, bool gga) {
 
 #pragma omp parallel for schedule(static)
   for (int point = 0; point < (int)this->points.size(); point++) {
-    vec_type3 point_position = vec_type3(this->points[point].position.x,
-                                         this->points[point].position.y,
-                                         this->points[point].position.z);
+    vec_type3 point_position = vec_type3(this->points[point].position);
 
     for (uint i = 0, ii = 0; i < this->total_functions_simple(); i++) {
       // Determine shell type: 0=S, 1=P, 2=D
@@ -72,8 +70,8 @@ void PointGroupCPU<scalar_type>::compute_functions(bool forces, bool gga) {
       // alphas and coeffs as stack arrays (MAX_CONTRACTIONS is small, ~13)
       scalar_type alphas[MAX_CONTRACTIONS], coeffs[MAX_CONTRACTIONS];
       for (uint c = 0; c < nc; ++c) {
-        alphas[c] = fortran_vars.a_values(global_func, c);
-        coeffs[c] = fortran_vars.c_values(global_func, c);
+        alphas[c] = (scalar_type)fortran_vars.a_values(global_func, c);
+        coeffs[c] = (scalar_type)fortran_vars.c_values(global_func, c);
       }
 
       scalar_type norm = fortran_vars.normalization_factor;

@@ -101,7 +101,7 @@ extern "C" void g2g_parameter_init_(
   fortran_vars.do_forces = (nopt == 2);
   fortran_vars.normalize = norm;
   fortran_vars.normalization_factor =
-      (fortran_vars.normalize ? (1.0 / sqrt(3)) : 1.0);
+      (fortran_vars.normalize ? 1.0f / sqrtf(3.0f) : 1.0f);
 
 #ifdef _DEBUG
   // trap floating point exceptions on debug
@@ -306,7 +306,7 @@ extern "C" void g2g_reload_atom_positions_(const unsigned int& grid_type) {
                                fortran_vars.atom_positions_pointer(i, 1),
                                fortran_vars.atom_positions_pointer(i, 2));
     fortran_vars.atom_positions(i) = pos;
-    atom_positions(i) = make_float3(pos.x, pos.y, pos.z);
+    atom_positions(i) = make_float3((float)pos.x, (float)pos.y, (float)pos.z);
   }
 
 #if GPU_KERNELS

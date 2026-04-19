@@ -77,9 +77,9 @@ void PointGroup<scalar_type>::compute_nucleii_maps(void) {
     for (uint i = 0; i < total_functions_simple(); i++) {
       uint global_atom = func2global_nuc(i);
       uint local_atom =
-          std::distance(local2global_nuc.begin(),
-                        std::find(local2global_nuc.begin(),
-                                  local2global_nuc.end(), global_atom));
+          (uint)std::distance(local2global_nuc.begin(),
+                              std::find(local2global_nuc.begin(),
+                                        local2global_nuc.end(), global_atom));
       uint inc = small_function_type(i);
       for (uint k = 0; k < inc; k++, ii++) func2local_nuc(ii) = local_atom;
     }

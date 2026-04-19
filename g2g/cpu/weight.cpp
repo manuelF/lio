@@ -56,7 +56,7 @@ void PointGroupCPU<scalar_type>::compute_weights(void) {
         filteredPoints.push_back(this->points[point]);
     }
     this->points.swap(filteredPoints);
-    this->number_of_points = this->points.size();
+    this->number_of_points = (uint)this->points.size();
   }
 }
 #if FULL_DOUBLE

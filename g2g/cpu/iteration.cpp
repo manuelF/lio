@@ -142,7 +142,7 @@ void PointGroupCPU<scalar_type>::solve_closed(
       calc_ggaCS_in<scalar_type, 3>(pd, dxyz, dd1, dd2, exc, corr, y2a, iexch);
 #endif
 
-      const scalar_type wp = this->points[point].weight;
+      const scalar_type wp = (scalar_type)this->points[point].weight;
 
       if (compute_energy) {
         localenergy += (double)(pd * wp) * (double)(exc + corr);
@@ -186,16 +186,16 @@ void PointGroupCPU<scalar_type>::solve_closed(
     }
     /* accumulate forces for each point */
     if (forces_mat.size() > 0) {
-      for (int j = 0; j < forces_mat[0].size(); j++) {
+      for (size_t j = 0; j < forces_mat[0].size(); j++) {
         vec_type3 acum(0.f, 0.f, 0.f);
-        for (int i = 0; i < forces_mat.size(); i++) {
+        for (size_t i = 0; i < forces_mat.size(); i++) {
           acum += forces_mat[i][j];
         }
         forces[j] = acum;
       }
     }
 /* accumulate force results for this group */
-    for (int i = 0; i < this->total_nucleii(); i++) {
+    for (uint i = 0; i < this->total_nucleii(); i++) {
       uint global_atom = this->local2global_nuc[i];
       vec_type3 this_force = forces[i];
       fort_forces(global_atom, 0) += (double)this_force.x;
@@ -325,7 +325,7 @@ void PointGroupCPU<scalar_type>::solve_opened(
                                  dd2_a, dd2_b, exc_corr, exc, corr, corr1,
                                  corr2, y2a, y2b, 9);
 
-      const scalar_type wp = this->points[point].weight;
+      const scalar_type wp = (scalar_type)this->points[point].weight;
 
       if (compute_energy) {
         localenergy += (double)((pd_a + pd_b) * wp) * (double)(exc + corr);
@@ -390,10 +390,10 @@ void PointGroupCPU<scalar_type>::solve_opened(
 
     /* accumulate forces for each point */
     if ((forces_mat_a.size() > 0) && (forces_mat_b.size() > 0)) {
-      for (int j = 0; j < forces_mat_a[0].size(); j++) {
+      for (size_t j = 0; j < forces_mat_a[0].size(); j++) {
         vec_type3 acum_a(0.f, 0.f, 0.f);
         vec_type3 acum_b(0.f, 0.f, 0.f);
-        for (int i = 0; i < forces_mat_a.size(); i++) {
+        for (size_t i = 0; i < forces_mat_a.size(); i++) {
           acum_a += forces_mat_a[i][j];
           acum_b += forces_mat_b[i][j];
         }
@@ -403,7 +403,7 @@ void PointGroupCPU<scalar_type>::solve_opened(
     }
 
 /* accumulate force results for this group */
-    for (int i = 0; i < this->total_nucleii(); i++) {
+    for (uint i = 0; i < this->total_nucleii(); i++) {
       uint global_atom = this->local2global_nuc[i];
       vec_type3 this_force = forces_a[i] + forces_b[i];
       fort_forces(global_atom, 0) += (double)this_force.x;

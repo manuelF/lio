@@ -86,8 +86,8 @@ __host__ __device__ void pbeOS_corr(scalar_type rho, scalar_type rs,
   //  scalar_type ALFC = -ALFM;
   scalar_type Z2 = zet * zet;
   scalar_type Z4 = Z2 * Z2;
-  scalar_type ZET1 = cbrt(pow((scalar_type)(1.0f + zet), 4));
-  scalar_type ZET2 = cbrt(pow((scalar_type)(1.0f - zet), 4));
+  scalar_type ZET1 = cbrt(pow((scalar_type)(1.0f + zet), (scalar_type)4));
+  scalar_type ZET2 = cbrt(pow((scalar_type)(1.0f - zet), (scalar_type)4));
   scalar_type GAM =
       pow((scalar_type)(2.0f), (scalar_type)4.0f / 3.0f) - (scalar_type)2.0f;
 
@@ -135,10 +135,10 @@ __host__ __device__ void pbeOS_corr(scalar_type rho, scalar_type rs,
   // G=((1.d0+ZET)**thrd2+(1.d0-ZET)**thrd2)/2.d0
   // G3 = G**3
   // PON=-EC/(G3*gama)
-  scalar_type ZET5 = cbrt(pow((scalar_type)(1.0f + zet), 2));
-  scalar_type ZET6 = cbrt(pow((scalar_type)(1.0f - zet), 2));
+  scalar_type ZET5 = cbrt(pow((scalar_type)(1.0f + zet), (scalar_type)2));
+  scalar_type ZET6 = cbrt(pow((scalar_type)(1.0f - zet), (scalar_type)2));
   scalar_type G = (ZET5 + ZET6) / (scalar_type)2.0f;
-  scalar_type G3 = pow(G, 3);
+  scalar_type G3 = G * G * G;
   scalar_type PON = -ec / (G3 * EASYPBE_GAMMA);
 
   // B = DELT/(DEXP(PON)-1.D0)
@@ -157,7 +157,7 @@ __host__ __device__ void pbeOS_corr(scalar_type rho, scalar_type rs,
   // Q4 = 1.D0+B*T2
   // Q5 = 1.D0+B*T2+B2*T4
   // H = G3*(BET/DELT)*DLOG(1.D0+DELT*Q4*T2/Q5)
-  scalar_type RS2 = pow(rs, 2);
+  scalar_type RS2 = rs * rs;
   scalar_type Q4 = (scalar_type)1.0f + B * T2;
   scalar_type Q5 = (scalar_type)1.0f + B * T2 + B2 * T4;
   h = G3 * (scalar_type)(EASYPBE_BETA / EASYPBE_DELTA) *
@@ -177,8 +177,8 @@ __host__ __device__ void pbeOS_corr(scalar_type rho, scalar_type rs,
   scalar_type rsthrd = rs / (scalar_type)3.0f;
 
   // GZ=(((1.d0+zet)**2+eta)**sixthm-((1.d0-zet)**2+eta)**sixthm)/3.d0
-  scalar_type ZET7 = pow((scalar_type)(1.0f + zet), 2);
-  scalar_type ZET8 = pow((scalar_type)(1.0f - zet), 2);
+  scalar_type ZET7 = (scalar_type)(1.0f + zet) * (scalar_type)(1.0f + zet);
+  scalar_type ZET8 = (scalar_type)(1.0f - zet) * (scalar_type)(1.0f - zet);
   scalar_type GZ1 = pow((ZET7 + EASYPBE_ETA), (scalar_type)(-1.0f / 6.0f));
   scalar_type GZ2 = pow((ZET8 + EASYPBE_ETA), (scalar_type)(-1.0f / 6.0f));
   scalar_type GZ = (GZ1 - GZ2) / (scalar_type)3.0f;

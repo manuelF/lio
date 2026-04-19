@@ -255,13 +255,14 @@ bool PointGroup<scalar_type>::is_significative(FunctionType type,
   switch (type) {
     case FUNCTION_S:
       return (exponent * d2 <
-              max_function_exponent - log(pow((2. * exponent / M_PI), 3)) / 4);
+              max_function_exponent - log(2. * exponent / M_PI) * 3.0 / 4.0);
       break;
     default: {
       double x = 1;
       double delta;
       double e = 0.1;
-      double factor = pow((2.0 * exponent / M_PI), 3);
+      double t = 2.0 * exponent / M_PI;
+      double factor = t * t * t;
       factor = sqrt(factor * 4.0 * exponent);
       double norm = (type == FUNCTION_P ? sqrt(factor) : abs(factor));
       do {
@@ -558,7 +559,7 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
   for (uint i = 0; i < work.size(); i++) {
 #if GPU_KERNELS
     bool gpu_thread = false;
-    if (i >= cpu_threads) {
+    if (i >= (uint)cpu_threads) {
       gpu_thread = true;
       cudaSetDevice(i - cpu_threads);
     }
@@ -584,7 +585,7 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
       Timer element;
       element.start();
       if (OPEN) {
-        if (ind >= cubes.size()) {
+        if ((size_t)ind >= cubes.size()) {
           spheres[ind - cubes.size()]->solve_opened(
               ts, compute_rmm, lda, compute_forces, compute_energy,
               local_energy, spheres_energy_i, spheres_energy_c,
@@ -598,7 +599,7 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
               rmm_outputs_a[i], rmm_outputs_b[i]);
         }
       } else {
-        if (ind >= cubes.size()) {
+        if ((size_t)ind >= cubes.size()) {
           spheres[ind - cubes.size()]->solve_closed(
               ts, compute_rmm, lda, compute_forces, compute_energy,
               local_energy, fort_forces_ms[i], 1, rmm_outputs[i]);
@@ -687,7 +688,7 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
     const int force_elems = fortran_vars.atoms * 3;
     std::vector<double> force_comp(force_elems, 0.0);
     for (uint k = 0; k < fort_forces_ms.size(); k++) {
-      for (int i = 0; i < fortran_vars.atoms; i++) {
+      for (int i = 0; i < (int)fortran_vars.atoms; i++) {
         for (int j = 0; j < 3; j++) {
           int idx = i * 3 + j;
           double y = fort_forces_ms[k](i, j) - force_comp[idx];

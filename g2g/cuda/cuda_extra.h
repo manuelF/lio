@@ -108,7 +108,7 @@ inline __device__ __host__ float3 operator-(const float3 a, const float b) {
 }
 
 inline __device__ __host__ float3 operator+(const uint3 a, const float3 b) {
-  return make_float3(a.x + b.x, a.y + b.y, a.z + b.z);
+  return make_float3((float)a.x + b.x, (float)a.y + b.y, (float)a.z + b.z);
 }
 
 inline __device__ __host__ uint3 operator*(const uint3 a, const uint3 b) {
@@ -383,7 +383,7 @@ inline __device__ __host__ double3 to_double3(const float3& f) {
 }
 
 inline __device__ __host__ float3 to_float3(const double3& f) {
-  return make_float3(f.x, f.y, f.z);
+  return make_float3((float)f.x, (float)f.y, (float)f.z);
 }
 
 inline __device__ __host__ float3 to_float3(const float3& f) { return f; }
@@ -425,9 +425,9 @@ inline void cudaPrintMemoryInfo(void) {
 #if GPU_KERNELS
   size_t free = 0, total = 0;
   cudaGetMemoryInfo(free, total);
-  std::cout << "mem_used: " << (total - free) / (1024.0 * 1024.0)
+  std::cout << "mem_used: " << static_cast<double>(total - free) / (1024.0 * 1024.0)
             << "MB | mem_perc: "
-            << ((double)(total - free) / (double)total) * 100.0 << "%"
+            << (static_cast<double>(total - free) / static_cast<double>(total)) * 100.0 << "%"
             << std::endl;
 #endif
 }

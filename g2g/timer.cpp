@@ -80,7 +80,7 @@ unsigned long Timer::getMicrosec(void) const noexcept { return res.tv_nsec / 100
 unsigned long Timer::getSec(void) const noexcept { return res.tv_sec; }
 
 double Timer::getTotal(void) const noexcept {
-  return res.tv_nsec + res.tv_sec * 1000.0 * 1000.0 * 1000.0;
+  return (double)res.tv_nsec + (double)res.tv_sec * 1000.0 * 1000.0 * 1000.0;
 }
 
 bool Timer::operator<(const Timer& other) const {
@@ -258,7 +258,7 @@ extern "C" void g2g_timer_clear_(void) {
 
 void print_timer(string indent, string timer_name, Timer& timer, double total,
                  string parent) {
-  double time = timer.getSec() + (double)(timer.getMicrosec()) / 1000000.0;
+  double time = (double)timer.getSec() + (double)(timer.getMicrosec()) / 1000000.0;
   printf("%s%-35s%12.6fs (%6.2f%% of %s)\n", indent.c_str(), timer_name.c_str(),
          time, (100.0 * time / total), parent.c_str());
   indent.append("  ");
@@ -273,7 +273,7 @@ extern "C" void g2g_timer_summary_(void) {
     Timer total_timer = *all_timers["Total"];
     double total_time = 0.0;
     total_time =
-        total_timer.getSec() + (double)(total_timer.getMicrosec()) / 1000000.0;
+        (double)total_timer.getSec() + (double)(total_timer.getMicrosec()) / 1000000.0;
 
     string indent = "";
     cout << "------------------------------------------------------------------"

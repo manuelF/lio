@@ -48,7 +48,7 @@ void GlobalMemoryPool::init(double free_global_memory) {
 
     if (free_factor > 1.0) free_factor = 1.0;
     if (free_factor < 0.0) free_factor = 0.0;
-    _freeFactor = free_factor;
+    _freeFactor = static_cast<float>(free_factor);
 
     _freeGlobalMemory.push_back(
         static_cast<size_t>(static_cast<double>(free_memory) * static_cast<double>(_freeFactor)));
@@ -76,5 +76,5 @@ size_t GlobalMemoryPool::getFreeMemory() {
 
 std::vector<size_t> GlobalMemoryPool::_freeGlobalMemory;
 std::vector<size_t> GlobalMemoryPool::_totalGlobalMemory;
-float GlobalMemoryPool::_freeFactor = 0.8;
+float GlobalMemoryPool::_freeFactor = 0.8f;
 bool GlobalMemoryPool::_init = false;

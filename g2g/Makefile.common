@@ -1,12 +1,12 @@
 # -*- mode: make -*-
 
-CXXFLAGS+= -fopenmp -fPIC -Wall -Wextra -Wshadow -Wdouble-promotion -I. -I$(CUDAHOME)/include
+CXXFLAGS+= -fopenmp -fPIC -Wall -Wextra -Wshadow -Wdouble-promotion -Wnull-dereference -Wlogical-op -Wrestrict -I. -I$(CUDAHOME)/include
 OPTIMIZECPU :=
 
 ifeq ($(intel),0)
   CXX          := g++
-  OPTIMIZECPU  := -O3 -march=native -ffast-math -Wconversion
-  CXXFLAGS     := $(CXXFLAGS) -Wno-unused-variable -Wno-unused-parameter -Wno-sign-compare
+  OPTIMIZECPU  := -O3 -march=native -ffast-math -fno-semantic-interposition -Wconversion
+  CXXFLAGS     := $(CXXFLAGS) -Wno-unused-variable -Wno-unused-parameter
 else
   CXX          := icc
   OPTIMIZECPU  := -Ofast -xHost -no-prec-div -ipo

@@ -27,7 +27,7 @@ class vec_type<float, 3> {
 
   vec_type(void) {}
   vec_type(const float3& other) : x(other.x), y(other.y), z(other.z) {}
-  vec_type(const double3& other) : x(other.x), y(other.y), z(other.z) {}
+  vec_type(const double3& other) : x((float)other.x), y((float)other.y), z((float)other.z) {}
   vec_type(float _x, float _y, float _z) : x(_x), y(_y), z(_z) {}
 
   inline float length2() const { return x * x + y * y + z * z; }
@@ -107,9 +107,9 @@ class vec_type<float, 3> : public float3 {
     float3::z = other.z;
   }
   __device__ __host__ explicit vec_type(const double3& other) {
-    float3::x = other.x;
-    float3::y = other.y;
-    float3::z = other.z;
+    float3::x = static_cast<float>(other.x);
+    float3::y = static_cast<float>(other.y);
+    float3::z = static_cast<float>(other.z);
   }
   __device__ __host__ vec_type(float _x, float _y, float _z) {
     float3::x = _x;
