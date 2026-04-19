@@ -35,7 +35,7 @@ namespace G2G {
 
 /* methods */
 //===========================================================================================
-extern "C" void g2g_init_(void) {
+extern "C" G2G_EXPORT void g2g_init_(void) {
 #if GPU_KERNELS
   if (verbose > 3) cout << "G2G initialisation." << endl;
   cuInit(0);
@@ -81,7 +81,7 @@ template <class T>
 void gpu_set_atom_positions(const HostMatrix<T>& m);
 }
 //==========================================================================================
-extern "C" void g2g_parameter_init_(
+extern "C" G2G_EXPORT void g2g_parameter_init_(
     const unsigned int& norm, const unsigned int& natom,
     const unsigned int& max_atoms,
     const unsigned int& ngaussians,  // const unsigned int& ngaussiansd,
@@ -233,7 +233,7 @@ extern "C" void g2g_parameter_init_(
 #endif
 }
 //============================================================================================================
-extern "C" void g2g_deinit_(void) {
+extern "C" G2G_EXPORT void g2g_deinit_(void) {
   if (verbose > 3) cout << "G2G Deinitialisation." << endl;
 #if USE_LIBXC
   if (fortran_vars.use_libxc) {
@@ -294,7 +294,7 @@ void compute_new_grid(const unsigned int grid_type) {
 #endif
 }
 //==============================================================================================================
-extern "C" void g2g_reload_atom_positions_(const unsigned int& grid_type) {
+extern "C" G2G_EXPORT void g2g_reload_atom_positions_(const unsigned int& grid_type) {
   //	cout  << "<======= GPU Reload Atom Positions (" << grid_type <<
   //")========>" << endl;
 
@@ -320,7 +320,7 @@ extern "C" void g2g_reload_atom_positions_(const unsigned int& grid_type) {
   compute_new_grid(grid_type);
 }
 //==============================================================================================================
-extern "C" void g2g_new_grid_(const unsigned int& grid_type) {
+extern "C" G2G_EXPORT void g2g_new_grid_(const unsigned int& grid_type) {
   //	cout << "<======= GPU New Grid (" << grid_type << ")========>" << endl;
   if (grid_type == (uint)fortran_vars.grid_type)
     ;
@@ -344,7 +344,7 @@ void g2g_iteration(bool compute_energy, double* fort_energy_ptr,
 }
 
 //===============================================================================================================
-extern "C" void g2g_solve_groups_(const uint& computation_type,
+extern "C" G2G_EXPORT void g2g_solve_groups_(const uint& computation_type,
                                   double* fort_energy_ptr,
                                   double* fort_forces_ptr) {
   // COMPUTE_RMM             0
@@ -422,7 +422,7 @@ uint verbose = 0;
 }
 
 //=================================================================================================================
-extern "C" void g2g_set_options_(double* fort_fgm, double* fort_lcs,
+extern "C" G2G_EXPORT void g2g_set_options_(double* fort_fgm, double* fort_lcs,
                                  double* fort_sr, bool* fort_aaf,
                                  bool* fort_eai, bool* fort_rzw,
                                  uint& fort_mppc, uint& fort_mfe,

@@ -4,6 +4,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include "common.h"
 #include "init.h"
 #include "timer.h"
 
@@ -122,7 +123,7 @@ map<string, Timer> fortran_timers;
 
 // One-time Fortran timer calls - these time sections and report timings
 // immediately
-extern "C" void g2g_timer_start_(const char* timer_name,
+extern "C" G2G_EXPORT void g2g_timer_start_(const char* timer_name,
                                  unsigned int length_arg) {
   if (G2G::timer_single) {
     string tname(timer_name, length_arg);
@@ -136,7 +137,7 @@ extern "C" void g2g_timer_start_(const char* timer_name,
   }
 }
 
-extern "C" void g2g_timer_stop_(const char* timer_name,
+extern "C" G2G_EXPORT void g2g_timer_stop_(const char* timer_name,
                                 unsigned int length_arg) {
   if (G2G::timer_single) {
     string tname(timer_name, length_arg);
@@ -152,7 +153,7 @@ extern "C" void g2g_timer_stop_(const char* timer_name,
   }
 }
 
-extern "C" void g2g_timer_pause_(const char* timer_name,
+extern "C" G2G_EXPORT void g2g_timer_pause_(const char* timer_name,
                                  unsigned int length_arg) {
   if (G2G::timer_single) {
     string tname(timer_name, length_arg);
@@ -172,7 +173,7 @@ extern "C" void g2g_timer_pause_(const char* timer_name,
 // Summary timer calls - these store timings until g2g_timer_summary is called,
 // when a summary
 // of all timings up to that point is given in a tree-sorted display
-extern "C" void g2g_timer_sum_start_(const char* timer_name,
+extern "C" G2G_EXPORT void g2g_timer_sum_start_(const char* timer_name,
                                      unsigned int length_arg) {
   if (G2G::timer_sum) {
     string tname(timer_name, length_arg);
@@ -204,7 +205,7 @@ extern "C" void g2g_timer_sum_start_(const char* timer_name,
   }
 }
 
-extern "C" void g2g_timer_sum_stop_(const char* timer_name,
+extern "C" G2G_EXPORT void g2g_timer_sum_stop_(const char* timer_name,
                                     unsigned int length_arg) {
   if (G2G::timer_sum) {
     string tname(timer_name, length_arg);
@@ -224,7 +225,7 @@ extern "C" void g2g_timer_sum_stop_(const char* timer_name,
   }
 }
 
-extern "C" void g2g_timer_sum_pause_(const char* timer_name,
+extern "C" G2G_EXPORT void g2g_timer_sum_pause_(const char* timer_name,
                                      unsigned int length_arg) {
   if (G2G::timer_sum) {
     string tname(timer_name, length_arg);
@@ -243,7 +244,7 @@ extern "C" void g2g_timer_sum_pause_(const char* timer_name,
   }
 }
 
-extern "C" void g2g_timer_clear_(void) {
+extern "C" G2G_EXPORT void g2g_timer_clear_(void) {
   if (G2G::timer_sum) {
     for (map<string, Timer*>::iterator it = all_timers.begin();
          it != all_timers.end(); ++it) {
@@ -268,7 +269,7 @@ void print_timer(string indent, string timer_name, Timer& timer, double total,
   }
 }
 
-extern "C" void g2g_timer_summary_(void) {
+extern "C" G2G_EXPORT void g2g_timer_summary_(void) {
   if (G2G::timer_sum) {
     Timer total_timer = *all_timers["Total"];
     double total_time = 0.0;

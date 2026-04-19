@@ -1,6 +1,8 @@
 #ifndef __G2G_COMMON_H__
 #define __G2G_COMMON_H__
 
+#define G2G_EXPORT __attribute__((visibility("default")))
+
 #include <stdexcept>
 #include <sys/types.h>
 #include <float.h>

@@ -35,7 +35,7 @@ CoulombIntegral<float> coulomb_integral(os_integral);
 #endif
 }
 //==========================================================================================
-extern "C" void aint_parameter_init_(const unsigned int& Md,
+extern "C" G2G_EXPORT void aint_parameter_init_(const unsigned int& Md,
                                      unsigned int* ncontd,
                                      const unsigned int* nshelld, double* cd,
                                      double* ad, unsigned int* Nucd, double* af,
@@ -127,7 +127,7 @@ extern "C" void aint_parameter_init_(const unsigned int& Md,
 #endif
 }
 //============================================================================================================
-extern "C" void aint_deinit_(void) {
+extern "C" G2G_EXPORT void aint_deinit_(void) {
 #if GPU_KERNELS
   int previous_device;
   cudaGetDevice(&previous_device);
@@ -142,7 +142,7 @@ extern "C" void aint_deinit_(void) {
 #endif
 }
 //==============================================================================================================
-extern "C" void aint_new_step_(void) {
+extern "C" G2G_EXPORT void aint_new_step_(void) {
   int stat = 0;
 #if GPU_KERNELS
   int previous_device;
@@ -168,7 +168,7 @@ extern "C" void aint_new_step_(void) {
   integral_vars.clatoms = 0;
 }
 //==============================================================================================================
-extern "C" void aint_qmmm_init_(const unsigned int& nclatom, double* r_all,
+extern "C" G2G_EXPORT void aint_qmmm_init_(const unsigned int& nclatom, double* r_all,
                                 double* pc) {
   integral_vars.clatoms = nclatom;
   if (integral_vars.clatoms > 0) {
@@ -197,7 +197,7 @@ extern "C" void aint_qmmm_init_(const unsigned int& nclatom, double* r_all,
   }
 }
 //==============================================================================================================
-extern "C" void aint_coulomb_init_(void) {
+extern "C" G2G_EXPORT void aint_coulomb_init_(void) {
 #if GPU_KERNELS
   int previous_device;
   cudaGetDevice(&previous_device);
@@ -223,7 +223,7 @@ extern "C" void aint_coulomb_init_(void) {
 //===============================================================================================================
 //                                  QM/MM routines
 //===============================================================================================================
-extern "C" void aint_qmmm_forces_(double* qm_forces, double* mm_forces) {
+extern "C" G2G_EXPORT void aint_qmmm_forces_(double* qm_forces, double* mm_forces) {
 #if GPU_KERNELS
   int previous_device;
   cudaGetDevice(&previous_device);
@@ -264,7 +264,7 @@ extern "C" void aint_qmmm_forces_(double* qm_forces, double* mm_forces) {
   cudaSetDevice(previous_device);
 #endif
 }
-extern "C" void aint_qmmm_fock_(double& Es, double& Ens) {
+extern "C" G2G_EXPORT void aint_qmmm_fock_(double& Es, double& Ens) {
   Ens = 0.0;
   Es = 0.0;
 #if GPU_KERNELS
@@ -308,7 +308,7 @@ extern "C" void aint_qmmm_fock_(double& Es, double& Ens) {
 //===============================================================================================================
 //                                  Coulomb routines
 //===============================================================================================================
-extern "C" void aint_coulomb_forces_(double* qm_forces) {
+extern "C" G2G_EXPORT void aint_coulomb_forces_(double* qm_forces) {
 #if GPU_KERNELS
   int previous_device;
   cudaGetDevice(&previous_device);
@@ -323,7 +323,7 @@ extern "C" void aint_coulomb_forces_(double* qm_forces) {
   cudaSetDevice(previous_device);
 #endif
 }
-extern "C" void aint_coulomb_fock_(double& Es) {
+extern "C" G2G_EXPORT void aint_coulomb_fock_(double& Es) {
   Es = 0.0;
 #if GPU_KERNELS
   int previous_device;
@@ -339,7 +339,7 @@ extern "C" void aint_coulomb_fock_(double& Es) {
 #endif
 }
 //===============================================================================================================
-extern "C" void aint_query_gpu_level_(int& gpu_level_out) {
+extern "C" G2G_EXPORT void aint_query_gpu_level_(int& gpu_level_out) {
 #if !GPU_KERNELS
   gpu_level_out = 0;
 #else
