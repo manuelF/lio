@@ -230,6 +230,15 @@ void gpu_compute_density(
   int lane = tid & 31;
   int warp = tid >> 5;  // 0 or 1
 
+  // Barrier: ensure all threads finish reads of fj_sh[j]/fgj_sh[j]/fh1j_sh[j]/
+  // fh2j_sh[j] from the outer bj loop before we reuse that shared memory for
+  // reduction partials. Without this, threads that finished the inner j-loop
+  // early (e.g. !valid_thread branches, or early-exit bounds) can race with
+  // threads still reading the cached basis values. Racecheck flags the write/
+  // read hazards here without this barrier; FULL_DOUBLE exposes the race
+  // because 64-bit shared-memory writes can tear into partial 32-bit reads.
+  __syncthreads();
+
   // Step 1 — all threads store partials
   fj_sh[tid] = partial_rho;
   if (!lda) {

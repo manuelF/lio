@@ -294,13 +294,21 @@ and the baseline's noise pattern happened to produce a favorable DIIS trajectory
 
 - **The real fix for precision**: Move the full density/Fock pipeline to
   float64 on GPU (requires `precision=1` build flag, `FULL_DOUBLE` macro).
-  This eliminates the float32 noise floor entirely. Half-measures (Kahan in
-  one kernel but not others) create precision mismatches that are worse than
-  consistent float32.
+  This eliminates the float32 noise floor entirely. As of 2026-04-19 the
+  FULL_DOUBLE build is working correctly (a long-latent shared-mem race in
+  `energy.h`/`energy_open.h` was patched — see
+  `../research/convergence/reproducibility_investigation_2026_04_19.md`
+  Part 6). Half-measures (Kahan in one kernel but not others) still create
+  precision mismatches that are worse than consistent float32.
 
-- **Always run the full E2E test suite** (`cd test && ./new_tests.py`) after
+- **Always run the full E2E test suite** (`cd test && ./run_tests.py`) after
   any kernel change, even "precision-only" ones. The fosfatoQMMM test
   (closed-shell, 25 iters) and Fe3H2O6 test (open-shell, restart) are both
   sensitive to float32 changes.
+
+- **Also run `./run_unit.py --sanitize=racecheck`** after any change to
+  `g2g/cuda/kernels/`. Float32 shared-mem races don't produce visibly wrong
+  output (32-bit stores are atomic), but the same race explodes in
+  FULL_DOUBLE (64-bit stores tear). Racecheck is the only reliable detector.
 
 ---

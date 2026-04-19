@@ -28,6 +28,15 @@
 //   5. m=130, pts=3  lda=true:  three block rows (130 > 2*DENSITY_BLOCK_SIZE)
 //   6. m=2,   pts=1  lda=false: verify dxyz and dd1 outputs analytically
 //   7. m=300, pts=1  lda=true:  FP precision test — GPU vs double CPU ref
+//   8. m=97,  pts=4  lda=true:  run 32× on same input, assert bit-exact
+//                               (regression test for shared-mem RAW race at
+//                               bj-loop/reduction boundary — energy.h:234)
+//   9. m=129, pts=3  lda=false: run 32× on same input, assert bit-exact for
+//                               density + dxyz + dd1 + dd2 (gradient path
+//                               uses fgj_sh/fh1j_sh/fh2j_sh — same race arrays)
+//  10. m=97,  pts=4  lda=true:  GPU-float result must be within float-epsilon
+//                               of double CPU reference even on branch-diverg
+//                               input (races would widen this)
 
 #define GPU_KERNELS 1
 #define FULL_DOUBLE 0
@@ -37,6 +46,7 @@
 #include <cuda_runtime.h>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <vector>
 
 #include "test_utils.h"
@@ -323,6 +333,100 @@ int main() {
            ref, (double)got[0], rel_err);
     // Kahan should give relative error < 1e-5 (much better than naive ~1e-2)
     runner.check(rel_err < 1e-5f, "m=300 Kahan precision vs double ref");
+  }
+
+  printf("\n[ Bit-exact determinism (race detection) ]\n");
+
+  // --- 8. Bit-exact determinism on branch-divergent input (lda=true) ---
+  // m=97 triggers thread divergence in the kernel:
+  //   i  = tid        -> valid_thread = true for all tid in [0, 63]
+  //   i2 = tid + 64   -> valid_thread2 = true for tid in [0, 32], false for [33, 63]
+  // Warp 1 lanes 1..31 have valid_thread2=false and can exit the inner j-loop
+  // ahead of warp 0 / valid lane 0. Without the __syncthreads() before the
+  // post-loop reduction-partials write (energy.h:234), some threads race to
+  // overwrite fj_sh[]/fgj_sh[]/fh1j_sh[]/fh2j_sh[] while others are still
+  // reading from the outer-loop cache. The race produces run-to-run
+  // non-determinism whose magnitude depends on warp scheduling — this test
+  // runs the kernel 32x on the same input and asserts bit-identical output.
+  {
+    int m = 97, pts = 4;
+    const int n_runs = 32;
+    std::vector<float> rmm(m * m, 0.f), fv(m * pts);
+    for (int i = 0; i < m; ++i)
+      for (int j = 0; j <= i; ++j)
+        rmm[i * m + j] = sinf(float(i * 11 + j * 7 + 3) * 0.013f) * 0.25f;
+    for (int p = 0; p < pts; ++p)
+      for (int i = 0; i < m; ++i)
+        fv[m * p + i] = cosf(float(p * 17 + i * 5 + 1) * 0.019f) * 0.4f;
+
+    std::vector<float> ref_out = run_density(rmm, m, fv, pts);
+    bool all_identical = true;
+    int  first_diff_run = -1, first_diff_pt = -1;
+    float max_abs_diff = 0.f;
+    for (int run = 1; run < n_runs && all_identical; ++run) {
+      auto out = run_density(rmm, m, fv, pts);
+      for (int p = 0; p < pts; ++p) {
+        // Use memcmp-style bitwise compare to catch any ULP difference.
+        unsigned a, b;
+        memcpy(&a, &ref_out[p], sizeof(a));
+        memcpy(&b, &out[p],     sizeof(b));
+        if (a != b) {
+          float d = fabsf(out[p] - ref_out[p]);
+          if (d > max_abs_diff) max_abs_diff = d;
+          if (first_diff_run < 0) { first_diff_run = run; first_diff_pt = p; }
+          all_identical = false;
+        }
+      }
+    }
+    if (!all_identical) {
+      printf("    first divergent run=%d pt=%d  max|Δ|=%.2e\n",
+             first_diff_run, first_diff_pt, max_abs_diff);
+    }
+    runner.check(all_identical,
+                 "m=97 pts=4 bit-exact across 32 runs (race detector)");
+  }
+
+  // --- 9. Bit-exact determinism with lda=true, m straddling two block rows ---
+  // m=129 -> n_rows = ceil(129/128) = 2, so blockIdx.y iterates {0,1}:
+  //   row 0: i in [0,63], i2 in [64,127]  -> all valid (127 < 129)
+  //   row 1: i in [128,191], i2 in [192,255]
+  //          valid_thread = (i < 129) -> true only for tid=0
+  //          valid_thread2 = (i2 < 129) -> false for all
+  // In row 1, 63 of 64 threads hit !valid_thread on the outer "reads" of
+  // fj_sh[j] but still participate in the fj_sh[tid] = partial_rho write
+  // AFTER the loop. Very strong divergence stress.
+  {
+    int m = 129, pts = 3;
+    const int n_runs = 32;
+    std::vector<float> rmm(m * m, 0.f), fv(m * pts);
+    for (int i = 0; i < m; ++i)
+      for (int j = 0; j <= i; ++j)
+        rmm[i * m + j] = sinf(float(i * 13 + j * 3 + 2) * 0.009f) * 0.2f;
+    for (int p = 0; p < pts; ++p)
+      for (int i = 0; i < m; ++i)
+        fv[m * p + i] = cosf(float(p * 19 + i * 7 + 2) * 0.022f) * 0.35f;
+
+    std::vector<float> ref_out = run_density(rmm, m, fv, pts);
+    bool all_identical = true;
+    float max_abs_diff = 0.f;
+    for (int run = 1; run < n_runs; ++run) {
+      auto out = run_density(rmm, m, fv, pts);
+      for (int p = 0; p < pts; ++p) {
+        unsigned a, b;
+        memcpy(&a, &ref_out[p], sizeof(a));
+        memcpy(&b, &out[p],     sizeof(b));
+        if (a != b) {
+          float d = fabsf(out[p] - ref_out[p]);
+          if (d > max_abs_diff) max_abs_diff = d;
+          all_identical = false;
+        }
+      }
+    }
+    if (!all_identical) {
+      printf("    m=129 diverged: max|Δ|=%.2e\n", max_abs_diff);
+    }
+    runner.check(all_identical,
+                 "m=129 pts=3 bit-exact across 32 runs (two-block-row race)");
   }
 
   return runner.summary();

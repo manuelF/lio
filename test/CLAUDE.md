@@ -99,8 +99,8 @@ manually.
 
 | Files changed | Minimum tests | Command |
 |---|---|---|
-| `g2g/cuda/kernels/energy.h` | `energy_test`, `energy_open_test` | `./run_unit.py --filter_rx "energy"` |
-| `g2g/cuda/kernels/energy_open.h` | `energy_open_test` | `./run_unit.py --filter_rx "energy_open"` |
+| `g2g/cuda/kernels/energy.h` | `energy_test`, `energy_open_test` | `./run_unit.py --filter_rx "energy"` + `./run_unit.py --filter_rx "energy" --sanitize=racecheck` |
+| `g2g/cuda/kernels/energy_open.h` | `energy_open_test` | `./run_unit.py --filter_rx "energy_open"` + `./run_unit.py --filter_rx "energy_open" --sanitize=racecheck` |
 | `g2g/cuda/kernels/energy_derivs.h` | `energy_derivs_test` | `./run_unit.py --filter_rx "energy_derivs"` |
 | `g2g/cuda/kernels/rmm.h` | `rmm_test` | `./run_unit.py --filter_rx "^rmm_test"` |
 | `g2g/cuda/kernels/rmm_gather.h` | `rmm_gather_test` | `./run_unit.py --filter_rx "rmm_gather"` |
@@ -177,11 +177,25 @@ All three scripts share `--filter_rx` and `--list`. Additional options:
 | Script | Flag | Effect |
 |---|---|---|
 | `run_unit.py` | `--no-build` | Skip `make build`, run existing binaries |
-| `run_unit.py` | `--sanitize` | Run GPU tests under `compute-sanitizer` (slow, thorough) |
+| `run_unit.py` | `--sanitize` | Run GPU tests under all `compute-sanitizer` tools (memcheck, racecheck, initcheck, synccheck). Any hazard fails the test. Slow (~5× per tool) |
+| `run_unit.py` | `--sanitize=<tool>` | Run one specific sanitizer tool. Use `--sanitize=racecheck` in CI for the fastest reproducibility guard. |
 | `run_tests.py` | `--unit-only` | Skip e2e tests |
 | `run_tests.py` | `--e2e-only` | Skip unit tests |
 | `run_tests.py` | `--no-build` | Passed through to unit runner |
 | `run_tests.py` | `--sanitize` | Passed through to unit runner |
+
+### About `--sanitize=racecheck`
+
+GPU shared-memory races in the density/energy kernels have historically
+produced **catastrophic** errors in `FULL_DOUBLE` builds (64-bit store tearing
+into 32-bit reads) and subtle noise-floor errors in `float32` builds. Running
+`./run_unit.py --sanitize=racecheck` after any change to kernels in
+`g2g/cuda/kernels/` is the cheapest guaranteed detector — it catches hazards
+that normal correctness tests miss because float32 stores are atomic at word
+boundaries and don't visibly tear.
+
+See `research/convergence/reproducibility_investigation_2026_04_19.md` Part 6
+for the bug that motivated this guard.
 
 ## Legacy
 

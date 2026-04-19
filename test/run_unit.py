@@ -9,7 +9,8 @@ Usage:
     ./run_unit.py --filter_rx "energy"  # run only tests matching regex
     ./run_unit.py --list                # list available tests without running
     ./run_unit.py --no-build            # skip build step, run existing binaries
-    ./run_unit.py --sanitize            # run under compute-sanitizer (slow)
+    ./run_unit.py --sanitize            # run all sanitizer tools (slow)
+    ./run_unit.py --sanitize=racecheck  # run specific sanitizer tool only
 """
 
 import re
@@ -59,24 +60,48 @@ def build(tests):
     return True
 
 
-def run_tests(tests, sanitize=False):
-    """Run each test binary, parse [PASS]/[FAIL] output. Return (passed, failed, skipped)."""
+SANITIZER_TOOLS = ("memcheck", "racecheck", "initcheck", "synccheck")
+
+
+def find_sanitizer():
+    """Locate compute-sanitizer (CUDA 13.1 moved it out of bin/)."""
+    for candidate in [
+        "/usr/local/cuda/bin/compute-sanitizer",
+        "/usr/local/cuda-13.1/bin/compute-sanitizer",
+        "/usr/local/cuda-13.1/compute-sanitizer/compute-sanitizer",
+        "/usr/bin/compute-sanitizer",
+    ]:
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def run_tests(tests, sanitize=None):
+    """Run each test binary, parse [PASS]/[FAIL] output.
+
+    sanitize: None (no sanitizer), "all" (run every tool), or a specific tool
+    name from SANITIZER_TOOLS. Each tool runs as a separate pass; a hazard in
+    any tool marks the test failed.
+    """
     passed = []
     failed = []
     skipped = []
 
     sanitizer_path = None
+    sanitizer_tools = []
     if sanitize:
-        # Try to find compute-sanitizer.
-        for candidate in [
-            "/usr/local/cuda/bin/compute-sanitizer",
-            "/usr/local/cuda-13.1/bin/compute-sanitizer",
-        ]:
-            if os.path.isfile(candidate):
-                sanitizer_path = candidate
-                break
+        sanitizer_path = find_sanitizer()
         if sanitizer_path:
-            print(f"Using sanitizer: {sanitizer_path}\n")
+            if sanitize == "all":
+                sanitizer_tools = list(SANITIZER_TOOLS)
+            elif sanitize in SANITIZER_TOOLS:
+                sanitizer_tools = [sanitize]
+            else:
+                print(f"Unknown sanitizer tool: {sanitize}. "
+                      f"Valid: {', '.join(SANITIZER_TOOLS)} or 'all'.")
+                return passed, failed, skipped
+            print(f"Using sanitizer: {sanitizer_path}")
+            print(f"Tools: {', '.join(sanitizer_tools)}\n")
         else:
             print("Warning: compute-sanitizer not found, running without it.\n")
 
@@ -91,38 +116,66 @@ def run_tests(tests, sanitize=False):
             skipped.append(name)
             continue
 
-        cmd = [binary]
-        if sanitize and sanitizer_path and kind == "gpu":
-            cmd = [sanitizer_path, "--tool", "memcheck", binary]
+        # Build list of passes: either one plain run, or one per sanitizer tool.
+        if sanitizer_path and sanitizer_tools and kind == "gpu":
+            passes = [(tool, [sanitizer_path, "--tool", tool, binary])
+                      for tool in sanitizer_tools]
+        else:
+            passes = [(None, [binary])]
 
-        proc = subprocess.run(
-            cmd, cwd=KERNELS_DIR,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-            timeout=120,
-        )
-
-        # Parse and display output.
         test_failed = False
-        for line in proc.stdout.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            # Show test structure lines.
-            if stripped.startswith("===") or stripped.startswith("[OK"):
-                print(f"  {stripped}")
-            elif stripped.startswith("[PASS]"):
-                print(f"  {stripped}")
-            elif stripped.startswith("[FAIL]"):
-                print(f"  {stripped}")
+        for tool_name, cmd in passes:
+            if tool_name:
+                print(f"  --- sanitizer: {tool_name} ---")
+            try:
+                proc = subprocess.run(
+                    cmd, cwd=KERNELS_DIR,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                    timeout=300 if tool_name else 120,
+                )
+            except subprocess.TimeoutExpired:
+                print(f"  [FAIL] {tool_name or 'run'} timed out")
                 test_failed = True
-            elif stripped.startswith("["):
-                # Other bracketed output (e.g. section headers).
-                print(f"  {stripped}")
+                continue
 
-        if proc.returncode != 0:
-            test_failed = True
-            if not any("[FAIL]" in l for l in proc.stdout.splitlines()):
-                print(f"  [FAIL] exit code {proc.returncode}")
+            # Parse test output.
+            sanitizer_errors = 0
+            sanitizer_warnings = 0
+            for line in proc.stdout.splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                # Sanitizer summary line, e.g.
+                # "========= RACECHECK SUMMARY: 67 hazards displayed (67 errors, 6 warnings)"
+                # Must check this BEFORE the "===" prefix branch below.
+                if "SUMMARY:" in stripped and "=========" in stripped:
+                    m = re.search(r"\((\d+)\s+errors?,\s*(\d+)\s+warnings?\)",
+                                  stripped)
+                    if m:
+                        sanitizer_errors = int(m.group(1))
+                        sanitizer_warnings = int(m.group(2))
+                    print(f"  {stripped}")
+                elif stripped.startswith("===") or stripped.startswith("[OK"):
+                    print(f"  {stripped}")
+                elif stripped.startswith("[PASS]"):
+                    print(f"  {stripped}")
+                elif stripped.startswith("[FAIL]"):
+                    print(f"  {stripped}")
+                    test_failed = True
+                elif stripped.startswith("["):
+                    print(f"  {stripped}")
+
+            if tool_name:
+                ok_str = "ok" if sanitizer_errors == 0 else "FAIL"
+                print(f"  [{ok_str}] {tool_name}: "
+                      f"{sanitizer_errors} errors, {sanitizer_warnings} warnings")
+                if sanitizer_errors > 0:
+                    test_failed = True
+
+            if proc.returncode != 0:
+                test_failed = True
+                if not any("[FAIL]" in l for l in proc.stdout.splitlines()):
+                    print(f"  [FAIL] {tool_name or 'run'}: exit {proc.returncode}")
 
         if test_failed:
             failed.append(name)
@@ -155,8 +208,11 @@ def main():
                         help="List tests without running them")
     parser.add_argument("--no-build", action="store_true",
                         help="Skip the build step")
-    parser.add_argument("--sanitize", action="store_true",
-                        help="Run GPU tests under compute-sanitizer (slow)")
+    parser.add_argument(
+        "--sanitize", nargs="?", const="all", default=None,
+        help="Run GPU tests under compute-sanitizer. With no value runs all "
+             "tools (memcheck, racecheck, initcheck, synccheck). Pass a tool "
+             "name (e.g. --sanitize=racecheck) to run just that one. Slow.")
     args = parser.parse_args()
 
     tests = discover_tests(args.filter_rx)
@@ -180,6 +236,10 @@ def main():
             return 1
 
     passed, failed, skipped = run_tests(tests, sanitize=args.sanitize)
+    if failed and args.sanitize:
+        print("\nNOTE: sanitizer hazards count as test failures. Run without "
+              "--sanitize to confirm functional correctness, and inspect raw "
+              "compute-sanitizer output for details.")
     print_summary(passed, failed, skipped)
     return 1 if failed else 0
 

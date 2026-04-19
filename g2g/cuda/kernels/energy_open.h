@@ -218,6 +218,15 @@ __global__ void gpu_compute_density_opened(
   int lane = position & 31;
   int warp = position >> 5;  // 0 or 1
 
+  // Barrier: ensure all threads finish reads of fj_sh[j]/fgj_sh[j]/fh1j_sh[j]/
+  // fh2j_sh[j] from the outer bj loop before we reuse that shared memory for
+  // reduction partials. Without this, threads that finished the inner j-loop
+  // early (e.g. !valid_thread branches, or early-exit bounds) can race with
+  // threads still reading the cached basis values. FULL_DOUBLE exposes the
+  // race because 64-bit shared-memory writes can tear into partial 32-bit
+  // reads — the closed-shell kernel had the same bug (energy.h).
+  __syncthreads();
+
   // Step 1a: store alpha partials, sync, warp-0 cross-warp pair + shuffle.
   // A second __syncthreads() after the alpha block (below) ensures warp 0
   // finishes reading fj_sh[32..63] before warp 1 overwrites them with beta.
