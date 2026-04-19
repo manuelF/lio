@@ -76,3 +76,5 @@ test/tests_engine/*.pyc
 # Others
 ###########################################################
 .vscode
+# Added by code-review-graph
+.code-review-graph/
