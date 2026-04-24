@@ -64,7 +64,7 @@ subroutine predictor(F1a, F1b, FON, rho2, factorial, Xmat, Xtrans, timestep, &
                             ntatom, Iz, MEMO, Fmat_vec, Fmat_vec2, Ginv_vec, &
                             Hmat_vec, Gmat_vec, Pmat_vec
    use field_subs   , only: field_calc
-   use mathsubs     , only: basechange
+   use mathsubs     , only: basechange_gemm
    use faint_cpu    , only: int3lu
    use fockbias_subs, only: fockbias_apply
    use basis_data   , only: M
@@ -104,13 +104,13 @@ subroutine predictor(F1a, F1b, FON, rho2, factorial, Xmat, Xtrans, timestep, &
    if (OPEN) then
       call magnus(F3(:,:,2), rho2(:,:,2), rho4(:,:,2), M_in, NBCH, tdstep1, &
                   factorial)
-      rho2t(:,:,1) = basechange(M_in, Xmat, rho4(:,:,1), Xtrans)
-      rho2t(:,:,2) = basechange(M_in, Xmat, rho4(:,:,2), Xtrans)
+      rho2t(:,:,1) = basechange_gemm(M_in, rho4(:,:,1), Xtrans)
+      rho2t(:,:,2) = basechange_gemm(M_in, rho4(:,:,2), Xtrans)
       call sprepack_ctr('L', M, rhoalpha, rho2t(MTB+1:MTB+M,MTB+1:MTB+M,1))
       call sprepack_ctr('L', M, rhobeta , rho2t(MTB+1:MTB+M,MTB+1:MTB+M,2))
       Pmat_vec = rhoalpha + rhobeta
    else
-      rho2t(:,:,1) = basechange(M_in, Xmat, rho4(:,:,1), Xtrans)
+      rho2t(:,:,1) = basechange_gemm(M_in, rho4(:,:,1), Xtrans)
       call sprepack_ctr('L', M, Pmat_vec, rho2t(MTB+1:MTB+M,MTB+1:MTB+M,1))
    end if
 
@@ -123,12 +123,12 @@ subroutine predictor(F1a, F1b, FON, rho2, factorial, Xmat, Xtrans, timestep, &
    call spunpack('L', M, Fmat_vec, FBA(MTB+1:MTB+M,MTB+1:MTB+M,1))
 
    call fockbias_apply(time, FBA(MTB+1:MTB+M,MTB+1:MTB+M,1))
-   FON(:,:,1) = basechange(M_in, Xtrans, FBA(:,:,1), Xmat)
+   FON(:,:,1) = basechange_gemm(M_in, FBA(:,:,1), Xmat)
 
    if (OPEN) then
       call spunpack('L', M, Fmat_vec2, FBA(MTB+1:MTB+M,MTB+1:MTB+M,2))
       call fockbias_apply(time, FBA(MTB+1:MTB+M,MTB+1:MTB+M,2))
-      FON(:,:,2) = basechange(M_in, Xtrans, FBA(:,:,2), Xmat)
+      FON(:,:,2) = basechange_gemm(M_in, FBA(:,:,2), Xmat)
    end if
 
    deallocate(rho4, rho2t, F3, FBA)

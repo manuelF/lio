@@ -478,7 +478,9 @@
         AAB_SEMILOCAL=0.d0
         Z=ZlistECP(k)
         n=lxi+lxj+lyi+lyj+lzi+lzj
-	Kvector=(/-2.d0*dx,-2.d0*dy,-2.d0*dz/)*a(j,ji)
+        Kvector(1) = -2.d0*dx*a(j,ji)
+        Kvector(2) = -2.d0*dy*a(j,ji)
+        Kvector(3) = -2.d0*dz*a(j,ji)
         Kmod=2.d0 * sqrt(dx**2.d0 + dy**2.d0 + dz**2.d0) *a(j,ji)
         lmaxbase=lxj+lyj+lzj
 	AABx=0.d0
@@ -597,7 +599,9 @@
         AAB_LOCAL=0.d0
         acum=0.d0
         integral=0.d0
-        Kvector=(/-2.d0*dx,-2.d0*dy,-2.d0*dz/)*a(j,ji)
+        Kvector(1) = -2.d0*dx*a(j,ji)
+        Kvector(2) = -2.d0*dy*a(j,ji)
+        Kvector(3) = -2.d0*dz*a(j,ji)
         Kmod= 2.d0 * sqrt(dx**2.d0 + dy**2.d0 + dz**2.d0) *a(j,ji)
 
         DO w =1, expnumbersECP(z,l) !barre todos los terminos del Lmaximo
@@ -807,8 +811,9 @@
 	z=IzECP(k)
 	L=Lmax(Z)
 	lmaxbase=lxi+lyi+lzi+lxj+lyj+lzj
-	Kvector=(/a(i,ii)*dx1+a(j,ji)*dx2,a(i,ii)*dy1+a(j,ji)*dy2,a(i,ii)*dz1+a(j,ji)*dz2/)
-	Kvector=-2.d0*Kvector
+        Kvector(1) = -2.d0*(a(i,ii)*dx1+a(j,ji)*dx2)
+        Kvector(2) = -2.d0*(a(i,ii)*dy1+a(j,ji)*dy2)
+        Kvector(3) = -2.d0*(a(i,ii)*dz1+a(j,ji)*dz2)
 	Kmod=sqrt(Kvector(1)**2.d0+Kvector(2)**2.d0+Kvector(3)**2.d0)
 	integral=0.d0
 	acum=0.d0
@@ -924,8 +929,12 @@
 	l1max=lxi+lyi+lzi
 	l2max=lxj+lyj+lzj
 
-        Kivector=-2.d0*a(i,ii)*(/dxi,dyi,dzi/)
-        Kjvector=-2.d0*a(j,ji)*(/dxj,dyj,dzj/)
+        Kivector(1) = -2.d0*a(i,ii)*dxi
+        Kivector(2) = -2.d0*a(i,ii)*dyi
+        Kivector(3) = -2.d0*a(i,ii)*dzi
+        Kjvector(1) = -2.d0*a(j,ji)*dxj
+        Kjvector(2) = -2.d0*a(j,ji)*dyj
+        Kjvector(3) = -2.d0*a(j,ji)*dzj
 
         Kimod=sqrt(Kivector(1)**2.d0+Kivector(2)**2.d0+Kivector(3)**2.d0)
 	Kjmod=sqrt(Kjvector(1)**2.d0+Kjvector(2)**2.d0+Kjvector(3)**2.d0)

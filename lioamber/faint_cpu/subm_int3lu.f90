@@ -63,6 +63,38 @@ module subm_int3lu
    real            , allocatable, save :: af_s_w(:), terms_s_w(:)
    integer, save :: saved_Md = 0, saved_kknumd = 0, saved_kknums = 0
 
+   ! Explicit BLAS interfaces — silences -Warray-temporaries on scalar-literal
+   ! arguments (1.0D0, 0.0D0) and -Wimplicit-interface for these calls.
+   ! Measured runtime impact on fosfato SCF: within noise (~0%). The win is
+   ! compile-time argument-type checking, not throughput.
+   interface
+      subroutine dgemv(trans, m, n, alpha, a, lda, x, incx, beta, y, incy)
+         character, intent(in) :: trans
+         integer, intent(in) :: m, n, lda, incx, incy
+         double precision, intent(in) :: alpha, beta
+         double precision, intent(in) :: a(lda,*), x(*)
+         double precision, intent(inout) :: y(*)
+      end subroutine
+      subroutine sgemv(trans, m, n, alpha, a, lda, x, incx, beta, y, incy)
+         character, intent(in) :: trans
+         integer, intent(in) :: m, n, lda, incx, incy
+         real, intent(in) :: alpha, beta
+         real, intent(in) :: a(lda,*), x(*)
+         real, intent(inout) :: y(*)
+      end subroutine
+      subroutine dspmv(uplo, n, alpha, ap, x, incx, beta, y, incy)
+         character, intent(in) :: uplo
+         integer, intent(in) :: n, incx, incy
+         double precision, intent(in) :: alpha, beta
+         double precision, intent(in) :: ap(*), x(*)
+         double precision, intent(inout) :: y(*)
+      end subroutine
+      double precision function ddot(n, x, incx, y, incy)
+         integer, intent(in) :: n, incx, incy
+         double precision, intent(in) :: x(*), y(*)
+      end function
+   end interface
+
 contains
 subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo)
    use basis_data, only: M, Md, cool, cools, kkind, kkinds, kknumd, kknums, &
@@ -75,9 +107,6 @@ subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo)
 
    double precision :: Ea, Eb
    integer          :: ll(3), k_ind, kk_ind, m_ind
-
-   ! BLAS function declarations
-   double precision, external :: ddot
 
    Ea = 0.D0 ; Eb = 0.D0
 
