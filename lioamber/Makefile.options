@@ -105,6 +105,10 @@ ifeq ($(intel),0)
   FFLAGS += -fprefetch-loop-arrays
   FFLAGS += -fipa-pta
   FFLAGS += -fgraphite-identity -floop-nest-optimize
+  FFLAGS += -ffrontend-optimize
+  FFLAGS += -march=native -mtune=native
+  FFLAGS += -fstack-arrays
+  FFLAGS += -Warray-temporaries -Wimplicit-interface -Waliasing
   LFLAGS += -L/usr/lib -fopenmp
   LIBS   += -lblas -llapack
 
