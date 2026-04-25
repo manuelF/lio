@@ -47,7 +47,7 @@ Ranked by expected wall-time impact on the fosfatoQMMM benchmark.
 |---|---|---|---|---|
 | 0 | **Enable cuda=2 build** | Build | 50-90ms estimated (free; activates existing `cublasmath/` paths) | [fortran/full_scf_port_evaluation.md](fortran/full_scf_port_evaluation.md) |
 | 1 | Overlap int3lu ↔ g2g solve | Fortran/GPU | 150-270ms (6-15% wall) | [fortran/overlap_int3lu_g2g.md](fortran/overlap_int3lu_g2g.md) |
-| 2 | GPU arena allocator | Infrastructure | ~90ms (5% wall); 1298 cudaMalloc+Free pairs | [infrastructure/optimize_gpu_allocator.md](infrastructure/optimize_gpu_allocator.md) |
+| ~~2~~ | ~~GPU arena allocator~~ — **DONE 2026-04-24** (async pool, −85.8 ms API, −5% wall) | Infrastructure | — | [infrastructure/optimize_gpu_allocator_async_pool_2026_04_24.md](infrastructure/optimize_gpu_allocator_async_pool_2026_04_24.md) |
 | 3 | Density as GEMM | GPU | 100-200ms (5-10% wall); density is ~46% of GPU time | [gpu/optimize_density_gemm.md](gpu/optimize_density_gemm.md) |
 | 4 | Partition auto-tune caching | Infrastructure | High for MD runs (one-time for single-point) | _(no research doc yet)_ |
 | 5 | Open-shell GGA register reduction | GPU | Open-shell systems only (zero effect on fosfato) | [gpu/optimize_open_shell_registers.md](gpu/optimize_open_shell_registers.md) |
@@ -73,6 +73,7 @@ rejected/deferred — see rejected table below for the decision rationale.
 | Converger direct P'_ON from eigenvectors | Eliminated 2 DGEMMs/iter in converger (commit 7325eeb3) | _(commit only)_ |
 | int3mem OpenMP parallelization | Coulomb precalc 418ms → 132ms (286ms saved, commit 7229cad3) | _(commit only)_ |
 | Cholesky for G matrix | dgesdd+dsytrf/i → dpotrf/i; 125ms → 9ms (commit de2d2f21) | _(commit only)_ |
+| GPU async memory pool | 1298 cudaMalloc+Free 100.7ms → 14.9ms; −5% wall | [infrastructure/optimize_gpu_allocator_async_pool_2026_04_24.md](infrastructure/optimize_gpu_allocator_async_pool_2026_04_24.md) |
 
 ## Rejected / Dead Ends / Diminished Returns
 

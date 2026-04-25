@@ -277,10 +277,10 @@ template<class T> CudaMatrix<T>& CudaMatrix<T>::resize(unsigned int _width, unsi
 
   #if GPU_KERNELS
   if (_width != this->width || _height != this->height) {
-    if (this->data) cudaFree(this->data);
+    if (this->data) cudaFreeAsync(this->data, 0);
     this->width = _width; this->height = _height;
     void* ptr = nullptr;
-    cudaMalloc(&ptr, this->bytes());
+    cudaMallocAsync(&ptr, this->bytes(), 0);
     this->data = static_cast<T*>(ptr);
     cudaAssertNoError("CudaMatrix::resize");
   }
@@ -315,7 +315,7 @@ template<class T> CudaMatrix<T>::~CudaMatrix(void) noexcept {
 
 template<class T> void CudaMatrix<T>::deallocate(void) noexcept {
   #if GPU_KERNELS
-	if (this->data) cudaFree(this->data);
+	if (this->data) cudaFreeAsync(this->data, 0);
 	this->data = NULL;
   this->width = this->height = 0;
   #endif
@@ -355,21 +355,21 @@ template<class T> void CudaMatrix<T>::copy_submatrix(const std::vector<T>& v, un
 template<class T> CudaMatrix<T>& CudaMatrix<T>::operator=(const HostMatrix<T>& c) noexcept {
   #if GPU_KERNELS
 	if (!c.data) {
-		if (this->data) { cudaFree(this->data); this->width = this->height = 0; this->data = NULL; }
+		if (this->data) { cudaFreeAsync(this->data, 0); this->width = this->height = 0; this->data = NULL; }
 	}
 	else {
 		void* ptr = nullptr;
 		if (this->data) {
 			if (this->bytes() != c.bytes()) {
-				cudaFree(this->data);
+				cudaFreeAsync(this->data, 0);
 				this->width = c.width; this->height = c.height;
-				cudaMalloc(&ptr, this->bytes());
+				cudaMallocAsync(&ptr, this->bytes(), 0);
 				this->data = static_cast<T*>(ptr);
 			}
 		}
 		else {
 			this->width = c.width; this->height = c.height;
-			cudaMalloc(&ptr, this->bytes());
+			cudaMallocAsync(&ptr, this->bytes(), 0);
 			this->data = static_cast<T*>(ptr);
 		}
 		cudaAssertNoError("CudaMatrix::operator=");
@@ -382,21 +382,21 @@ template<class T> CudaMatrix<T>& CudaMatrix<T>::operator=(const HostMatrix<T>& c
 template<class T> CudaMatrix<T>& CudaMatrix<T>::operator=(const std::vector<T>& v) noexcept {
   #if GPU_KERNELS
 	if (v.empty()) {
-		if (this->data) { cudaFree(this->data); this->width = this->height = 0; this->data = NULL; }
+		if (this->data) { cudaFreeAsync(this->data, 0); this->width = this->height = 0; this->data = NULL; }
 	}
 	else {
 		void* ptr = nullptr;
 		if (this->data) {
 			if (this->elements() != v.size()) {
-				cudaFree(this->data);
+				cudaFreeAsync(this->data, 0);
 				this->width = static_cast<unsigned int>(v.size()); this->height = 1;
-				cudaMalloc(&ptr, this->bytes());
+				cudaMallocAsync(&ptr, this->bytes(), 0);
 				this->data = static_cast<T*>(ptr);
 			}
 		}
 		else {
 			this->width = static_cast<unsigned int>(v.size()); this->height = 1;
-			cudaMalloc(&ptr, this->bytes());
+			cudaMallocAsync(&ptr, this->bytes(), 0);
 			this->data = static_cast<T*>(ptr);
 		}
     cudaAssertNoError("CudaMatrix::operator=");
@@ -410,21 +410,21 @@ template<class T> CudaMatrix<T>& CudaMatrix<T>::operator=(const CudaMatrix<T>& c
   #if GPU_KERNELS
 	// copies data from c, only if necessary (always frees this's data, if any)
 	if (!c.data) {
-		if (this->data) { cudaFree(this->data); this->width = this->height = 0; this->data = NULL; }
+		if (this->data) { cudaFreeAsync(this->data, 0); this->width = this->height = 0; this->data = NULL; }
 	}
 	else {
 		void* ptr = nullptr;
 		if (this->data) {
 			if (this->bytes() != c.bytes()) {
-				cudaFree(this->data);
+				cudaFreeAsync(this->data, 0);
 				this->width = c.width; this->height = c.height;
-				cudaMalloc(&ptr, this->bytes());
+				cudaMallocAsync(&ptr, this->bytes(), 0);
 				this->data = static_cast<T*>(ptr);
 			}
 		}
 		else {
 			this->width = c.width; this->height = c.height;
-			cudaMalloc(&ptr, this->bytes());
+			cudaMallocAsync(&ptr, this->bytes(), 0);
 			this->data = static_cast<T*>(ptr);
     }
 		cudaMemcpy(this->data, c.data, this->bytes(), cudaMemcpyDeviceToDevice);
