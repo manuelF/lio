@@ -291,7 +291,7 @@ template<class T> CudaMatrix<T>& CudaMatrix<T>::resize(unsigned int _width, unsi
 template<class T> CudaMatrix<T>& CudaMatrix<T>::zero(void) noexcept {
   #if GPU_KERNELS
 	assert(this->data);
-	cudaMemset(this->data, 0, this->bytes());
+	cudaMemsetAsync(this->data, 0, this->bytes(), 0);
   cudaAssertNoError("CudaMatrix::zero");
   #endif
 	return *this;

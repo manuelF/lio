@@ -248,9 +248,10 @@ void PointGroupGPU<scalar_type>::solve_closed(
       s_global_rmm_dev.resize(rmm_global_size, 1);
     }
     if (s_last_epoch != g2g_solve_epoch) {
-      cudaMemcpy(s_global_rmm_dev.data,
-                 fortran_vars.rmm_input_ndens1.data,
-                 rmm_global_size * sizeof(double), cudaMemcpyHostToDevice);
+      cudaMemcpyAsync(s_global_rmm_dev.data,
+                      fortran_vars.rmm_input_ndens1.data,
+                      rmm_global_size * sizeof(double),
+                      cudaMemcpyHostToDevice, 0);
       s_last_epoch = g2g_solve_epoch;
     }
 
@@ -587,8 +588,8 @@ void PointGroupGPU<scalar_type>::solve_closed(
         s_global_fock_dev.resize(rmm_global_size, 1);
       }
       if (s_fock_epoch != g2g_solve_epoch) {
-        cudaMemset(s_global_fock_dev.data, 0,
-                   rmm_global_size * sizeof(double));
+        cudaMemsetAsync(s_global_fock_dev.data, 0,
+                        rmm_global_size * sizeof(double), 0);
         s_fock_epoch = g2g_solve_epoch;
       }
       uint n_indexes = this->rmm_bigs.size();
@@ -725,10 +726,12 @@ void PointGroupGPU<scalar_type>::solve_opened(
       s_global_rmm_b_dev.resize(rmm_global_size, 1);
     }
     if (s_last_epoch_open != g2g_solve_epoch) {
-      cudaMemcpy(s_global_rmm_a_dev.data, fortran_vars.rmm_dens_a.data,
-                 rmm_global_size * sizeof(double), cudaMemcpyHostToDevice);
-      cudaMemcpy(s_global_rmm_b_dev.data, fortran_vars.rmm_dens_b.data,
-                 rmm_global_size * sizeof(double), cudaMemcpyHostToDevice);
+      cudaMemcpyAsync(s_global_rmm_a_dev.data, fortran_vars.rmm_dens_a.data,
+                      rmm_global_size * sizeof(double),
+                      cudaMemcpyHostToDevice, 0);
+      cudaMemcpyAsync(s_global_rmm_b_dev.data, fortran_vars.rmm_dens_b.data,
+                      rmm_global_size * sizeof(double),
+                      cudaMemcpyHostToDevice, 0);
       s_last_epoch_open = g2g_solve_epoch;
     }
 
@@ -983,10 +986,10 @@ void PointGroupGPU<scalar_type>::solve_opened(
         s_global_fock_b_dev.resize(rmm_global_size, 1);
       }
       if (s_fock_epoch != g2g_solve_epoch) {
-        cudaMemset(s_global_fock_a_dev.data, 0,
-                   rmm_global_size * sizeof(double));
-        cudaMemset(s_global_fock_b_dev.data, 0,
-                   rmm_global_size * sizeof(double));
+        cudaMemsetAsync(s_global_fock_a_dev.data, 0,
+                        rmm_global_size * sizeof(double), 0);
+        cudaMemsetAsync(s_global_fock_b_dev.data, 0,
+                        rmm_global_size * sizeof(double), 0);
         s_fock_epoch = g2g_solve_epoch;
       }
       uint n_indexes = this->rmm_bigs.size();
