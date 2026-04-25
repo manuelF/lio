@@ -20,7 +20,7 @@ relevant sub-index before diving into individual files.
 |------|------|---------------|
 | **GPU kernels** | [gpu/INDEX.md](gpu/INDEX.md) | 20 files — density, RMM, forces, transpose, memory caching. 6 completed, 14 open. |
 | **CPU kernels** | [cpu/INDEX.md](cpu/INDEX.md) | 5 files — BLAS, threading, vectorization, screening. All open, lower priority. |
-| **SCF convergence** | [convergence/INDEX.md](convergence/INDEX.md) | 4 files — DIIS solver, float32 noise, data flow analysis. Critical reading for kernel work. |
+| **SCF convergence** | [convergence/INDEX.md](convergence/INDEX.md) | DIIS solver, float32 noise, data flow analysis, plus 6 algorithmic-lever proposals (XC grid schedule, McWeeny, DIIS skip, incremental Fock, mixed-prec diag, Vxc Taylor). |
 | **Infrastructure** | [infrastructure/INDEX.md](infrastructure/INDEX.md) | 7 files — memory management, data layout, rebalancer, pinned memory. |
 | **Fortran (lioamber)** | [fortran/INDEX.md](fortran/INDEX.md) | 4 files — BLAS, modernization, testing, ECP. |
 | **TD-DFT** | [tddft/INDEX.md](tddft/INDEX.md) | 1 file — Ehrenfest propagation optimization. |
@@ -51,6 +51,11 @@ Ranked by expected wall-time impact on the fosfatoQMMM benchmark.
 | 3 | Density as GEMM | GPU | 100-200ms (5-10% wall); density is ~46% of GPU time | [gpu/optimize_density_gemm.md](gpu/optimize_density_gemm.md) |
 | 4 | Partition auto-tune caching | Infrastructure | High for MD runs (one-time for single-point) | _(no research doc yet)_ |
 | 5 | Open-shell GGA register reduction | GPU | Open-shell systems only (zero effect on fosfato) | [gpu/optimize_open_shell_registers.md](gpu/optimize_open_shell_registers.md) |
+| 6 | Coarse→fine XC grid schedule | g2g + lioamber | 150-250ms (7-12% wall); low risk | [convergence/algorithmic_xc_grid_schedule.md](convergence/algorithmic_xc_grid_schedule.md) |
+| 7 | McWeeny purification (skip O(N³) diag) | lioamber | 100-200ms (5-10% wall) | [convergence/algorithmic_diag_avoidance.md](convergence/algorithmic_diag_avoidance.md) |
+| 8 | DIIS-step Fock-build skip | lioamber | 80-150ms (4-7% wall); low risk | [convergence/algorithmic_diis_step_skip.md](convergence/algorithmic_diis_step_skip.md) |
+| 9 | Incremental Fock (RI-J density-difference) | lioamber | 80-150ms (4-7% wall); modest | [convergence/algorithmic_incremental_fock.md](convergence/algorithmic_incremental_fock.md) |
+| 10 | Mixed-prec SSYEVD for early iters | lioamber | 40-80ms (2-4% wall); trivial | [convergence/algorithmic_reduced_precision_diag.md](convergence/algorithmic_reduced_precision_diag.md) |
 
 **Iteration reduction is not a lever on this workload** — LIO's 25-iter
 convergence is near the float32 DIIS floor. See

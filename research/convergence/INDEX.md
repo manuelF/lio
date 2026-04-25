@@ -20,6 +20,13 @@ data flows through the SCF loop.
 | [scf_loop_profile_2026_03_28.md](scf_loop_profile_2026_03_28.md) | DONE | Full nsys+perf profile: 49% CPU idle, 840ms sync bottleneck, allocation hoisting |
 | [numerical_stability_investigation_2026_04_17.md](numerical_stability_investigation_2026_04_17.md) | DONE | Variance characterization; FULL_DOUBLE build broken (6.6 mHa offset); initcheck clean |
 | [reproducibility_investigation_2026_04_19.md](reproducibility_investigation_2026_04_19.md) | DONE | Float32 noise sources quantified (3e-7 floor + 4× rebalance amp); FULL_DOUBLE brokenness scoped (agua fine, fosfato broken — size-dependent, memcheck clean) |
+| [algorithmic_xc_grid_schedule.md](algorithmic_xc_grid_schedule.md) | OPEN | Coarse→fine XC grid by SCF state. Est. 150-250 ms (7-12% wall). Lives in g2g; toggled from SCF.f90 |
+| [algorithmic_diag_avoidance.md](algorithmic_diag_avoidance.md) | OPEN | McWeeny purification replaces O(N³) DSYEVD inside SCF. Est. 100-200 ms (5-10% wall). Pure lioamber change |
+| [algorithmic_diis_step_skip.md](algorithmic_diis_step_skip.md) | OPEN | Skip Fock rebuild when DIIS-extrapolated step is below threshold. Est. 80-150 ms. Pure lioamber, low risk |
+| [algorithmic_incremental_fock.md](algorithmic_incremental_fock.md) | OPEN | Density-difference fitting in int3lu (RI-J context). Est. 80-150 ms. Modest because int3lu is already RI-fitted |
+| [algorithmic_reduced_precision_diag.md](algorithmic_reduced_precision_diag.md) | OPEN | Single-prec SSYEVD for early SCF iters. Est. 40-80 ms. Trivial to prototype, lioamber-only |
+| [algorithmic_xc_taylor_linearization.md](algorithmic_xc_taylor_linearization.md) | OPEN — speculative | Vxc Taylor expansion for late iters. Est. 60-120 ms. **High risk** — changes float32 patterns, defer until precision=1 validated |
+| [algorithmic_qmmm_1e_cache_verified.md](algorithmic_qmmm_1e_cache_verified.md) | NOT A LEVER | Verified QM/MM 1-e Fock is already built once before SCF loop and reused via Hmat_vec |
 
 ## Key Constraints (read before touching convergence-sensitive code)
 
