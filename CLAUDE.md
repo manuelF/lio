@@ -36,7 +36,6 @@ make clean               # Clean everything
 Key build options:
 - `cuda=1|2`: GPU kernels (2 also enables CUBLAS)
 - `cpu=1`: CPU OpenMP kernels
-- `intel=1|2`: Use Intel compilers (2 also uses MKL)
 - `precision=1`: Full double precision (default is hybrid single/double)
 - `libxc=1|2`: Enable Libxc (1=CPU mode, 2=GPU mode)
 - `dbg=1`: Debug symbols + `-D_DEBUG`
@@ -87,7 +86,7 @@ Fortran 90 QM logic layer. Calls into `libg2g.so` for numerical work. Key files:
 - `faint_cpu/`: Fortran-side CPU integral routines
 - `ehrensubs/`: Real-time TD-DFT subroutines
 
-### `liosolo/` → `liosolo` executable
+### `liosolo/liosolo` executable
 Standalone Fortran driver for testing without AMBER/GROMACS.
 
 ### Language interoperability
@@ -97,7 +96,7 @@ Fortran calls C++ via `extern "C"` bindings with trailing underscores (e.g., `g2
 ## Research & Optimization Knowledge Base
 
 `research/` contains all optimization research, profiling analysis, bug investigations,
-and technical evaluations — 43 files organized into 7 areas. This is the project's
+and technical evaluations. This is the project's
 institutional memory for performance work.
 
 ### How to navigate it

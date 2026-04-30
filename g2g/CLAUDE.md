@@ -3,7 +3,6 @@
 Subsystem-specific guidance for AI-assisted development of `g2g`.
 See the **root `CLAUDE.md`** for project-wide build commands, environment setup,
 running tests, and the CUDA build environment notes (nvcc path, GENCODE_FLAGS).
-See `GEMINI.md` for a general architectural overview of this directory.
 
 ---
 
@@ -90,64 +89,6 @@ CPU serialization that previously required `cudaStreamSynchronize` + CPU scatter
 group. The global Fock buffer (`s_global_fock_dev`) is zeroed once per SCF iteration
 (epoch-gated) and accumulated via `atomicAdd(double)` (natively supported on SM 6.0+).
 
-### Measured configuration (fosfatoQMMM, 34 QM atoms, 25 SCF iters)
-
-*Last profiled: 2026-03-23 on GTX 1080 (SM 6.1 Pascal), after all optimizations including fgm=-1 caching, AINT float, GPU scatter. Hardware is now RTX 3080 Ti (SM 8.6 Ampere) — numbers will change.*
-
-| Parameter | Value |
-|---|---|
-| cpu_threads | 15 (= OMP_NUM_THREADS − 1 GPU) |
-| gpu_threads | 1 |
-| SPLITPOINTS | 200 (default) |
-| GPU groups per SCF iter | ~45 (= 1134 gpu_compute_density calls / 25) |
-| **Wall time (total)** | **3.22 s** |
-| Post-SCF (AINT float, one-time) | ~418 ms |
-| GPU kernel time (total) | 1.34 s (42% of wall) |
-| GPU kernel time (SCF only) | 0.92 s (29% of wall) |
-| Memcpy + memset | 40 + 5 = 45 ms (<2% of wall) |
-| cudaMalloc + cudaFree | 92 ms (3% of wall) — mostly first-iter + AINT |
-| cudaStreamSynchronize | 837 ms / 151 calls (forces sync only, no RMM sync) |
-
-### GPU kernel time breakdown (fosfatoQMMM)
-
-**SCF kernels (called per iteration × 25 iters):**
-
-| Kernel | Total time | % GPU | Calls | Avg/call |
-|---|---|---|---|---|
-| gpu_compute_density (GGA) | 602 ms | 45.0% | 1134 | 531 µs |
-| gpu_update_rmm | 193 ms | 14.4% | 1050 | 183 µs |
-| gpu_compute_density_derivs | 75 ms | 5.6% | 42 | 1.79 ms |
-| gpu_compute_forces | 12 ms | 0.9% | 42 | 276 µs |
-| transpose\<vec4\> | 7 ms | 0.5% | 84 | 83 µs |
-| gpu_accumulate_point (all) | 4 ms | 0.3% | 1134 | 3.5 µs |
-| gpu_compute_functions | 4 ms | 0.3% | 42 | 87 µs |
-| gpu_gather_rmm | 3 ms | 0.2% | 1134 | 2.9 µs |
-| gpu_compute_weights | 3 ms | 0.2% | 42 | 69 µs |
-| gpu_scatter_rmm | 3 ms | 0.2% | 1050 | 2.4 µs |
-| transpose\<float\> | 1 ms | 0.1% | 42 | 20 µs |
-
-Note: with `fgm=-1` caching, `compute_functions` and transpose run only on the first
-iteration (42 calls = 42 groups × 1 iter). Subsequent iterations reuse cached values.
-
-**Post-SCF (AINT float, called once after convergence):**
-
-| Kernel | Total time |
-|---|---|
-| gpu_qmmm_forces (all angular momenta) | 268 ms |
-| gpu_coulomb_forces (all angular momenta) | 104 ms |
-| gpu_qmmm_fock (all angular momenta) | 46 ms |
-
-### CUDA API overhead
-
-| API call | Time | Calls | Note |
-|---|---|---|---|
-| cudaStreamSynchronize | 837 ms | 151 | Forces sync only (RMM scatter is async) |
-| cudaDeviceSynchronize | 131 ms | 6 | Post-SCF barriers |
-| cudaLaunchKernel | 69 ms | 5836 | — |
-| cudaFree | 65 ms | 1240 | Residual (first-iter + AINT) |
-| cudaMemcpy | 40 ms | 624 | Mostly AINT (pageable) |
-| cudaMalloc | 27 ms | 1240 | Residual (first-iter + AINT) |
-
 ### Thread runtime: who is the bottleneck?
 
 - **GPU thread** is the critical path. With `fgm=-1` caching + GPU scatter, most
@@ -155,20 +96,6 @@ iteration (42 calls = 42 groups × 1 iter). Subsequent iterations reuse cached v
   themselves (density + rmm_update) plus the 151 remaining `cudaStreamSynchronize`
   calls for forces readback.
 - **CPU threads** (15 threads × many small groups) finish well within the GPU thread's time.
-
-### Known optimizations applied
-
-| Commit | Change | Effect |
-|---|---|---|
-| `ac87eef0` | Warp shuffle reductions in energy.h / energy_open.h | Smem 2560→256 B (LDA), 100% occupancy; preserves FP order |
-| `21758bcb` | Persistent `transpose_stream_1/2` per PointGroupGPU | −345 ms streamSync, −22 ms create/destroy; −330 ms wall |
-| (pinned) | Pinned host memory for all PointGroupGPU transfer buffers | cudaMemcpyAsync 1636→7.5 ms (218×); −2.2% wall |
-| `e4a43707` | BLAS optimizations in converger_subs (DGEMM, DDOT) | Reduced Fortran CPU time |
-| `5a7d1743` | BLAS in int3lu (DGEMV, DSPMV, DDOT) | Reduced per-iteration Fortran CPU |
-| `104f8dc9` | DGELSS in DIIS solver (replaces DGELS) | Robust to float32 noise; bounded coefficients |
-| (uncommitted) | Auto-detect GPU memory caching (`fgm=-1`) | −89% malloc calls, −93% malloc+free time; **−34% wall** (5.87→3.87s) |
-| `627e32b5` | AINT float precision (`aint_mp=1` default) | AINT kernels 1.65× faster; −15% wall (3.87→3.29s) |
-| (uncommitted) | GPU-side RMM scatter (`gpu_scatter_rmm` + `gpu_gather_rmm`) | Eliminates per-group cudaStreamSync + CPU scatter; −5% wall (3.38→3.22s) |
 
 ### GPU memory caching (`free_global_memory`)
 
@@ -183,57 +110,11 @@ reallocates function/gradient/hessian buffers for all GPU groups (19K malloc/fre
 - `free_global_memory = 0.0` — no caching (default, backward-compatible, deterministic)
 - `free_global_memory = 0.8` — use 80% of free GPU memory for caching (legacy manual mode)
 
-**Measured (fosfatoQMMM, auto-detect):**
-
-| Metric | fgm=0.0 | fgm=auto | Improvement |
-|---|---|---|---|
-| Wall time | 5.87 s | 3.87 s | **−34%** |
-| cudaMalloc calls | 18,780 | 2,051 | −89% |
-| cudaFree calls | 18,780 | 2,051 | −89% |
-| malloc+free time | 2.07 s | 142 ms | −93% |
-| gpu_compute_functions | 1,890 calls | 70 calls | −96% (first iter only) |
-| transpose kernels | 3,920 calls | eliminated | −100% (after iter 1) |
-
 **Nondeterminism warning**: Caching introduces run-to-run energy variation (~0.0002 Ha)
 because the timing-dependent `rebalance()` function makes different group-to-thread
 assignment decisions when the GPU finishes faster. This is NOT a caching correctness bug —
 it's inherent to the timing-dependent rebalancer interacting with FP accumulation order.
 See `../research/gpu/optimize_memory_pool.md` for details.
-
-### Open optimization opportunities (ranked by expected impact)
-
-1. ~~**GPU-side RMM gather/scatter**~~ — **DONE** (2026-03-23). `gpu_gather_rmm` +
-   `gpu_scatter_rmm` replace CPU `get_rmm_input()` / `add_rmm_output()`. Eliminates
-   per-group `cudaStreamSynchronize` for RMM (2030→151 calls). Actual speedup was ~5%
-   (not the estimated 20-40%) because `fgm=-1` caching had already reduced the number
-   of groups needing scatter, shrinking the overhead that scatter elimination targeted.
-2. ~~**Reduce GlobalMemoryPool churn**~~ — **SOLVED** (2026-03-20). Auto-detect caching
-   (`fgm=-1`) eliminates 89% of malloc/free calls. See "GPU memory caching" section above.
-   Remaining 1,240 calls are from first-iter setup and AINT.
-3. ~~**Replace tex2D with `__ldg`**~~ — **REJECTED** on both Pascal SM 6.1 (36% regression,
-   cache hit loss) and Ampere SM 8.6 (2.5× regression, address computation overhead in
-   tight inner loop). Dead end. See `../research/gpu/optimize_density_texture.md`.
-4. ~~**Eliminate forces cudaStreamSynchronize**~~ — **NOT WORTH IT** (2026-03-28).
-   Analysis shows 837ms/151 calls breaks down as: 25 structural Fock syncs (675ms of
-   real GPU work, unavoidable) + 126 post-SCF syncs (5.5ms pipeline overhead, 0.2% wall).
-   The remaining syncs are NOT in the SCF hot loop — SCF iterations are already sync-free
-   after RMM scatter. See `../research/gpu/async_execution.md` for full accounting.
-5. ~~**Multi-stream GPU pipeline**~~ — **NOT WORTH IT**. With `fgm=-1` caching and
-   GPU-side scatter, CPU launch overhead is ~60µs/group vs ~700µs/group kernel time.
-   GPU is never starved. Double buffering would save <1ms total.
-6. **Open-shell GGA register reduction** — 93 regs → 56 regs (see TODO file).
-7. **CPU-GPU Fock overlap** — Run int3lu (CPU Coulomb) concurrently with g2g GPU work.
-   Would recover ~250ms barrier idle per run. Requires Fortran-level restructuring.
-8. **GPU kernel optimization** — Density kernel is 45% of GPU time with roofline room.
-   See `../research/gpu/roofline_gpu_compute_density.md`.
-
----
-
-## SCF Convergence and Numerical Precision — Lessons Learned
-
-**DO NOT add Kahan compensated summation (or any FP-order-changing optimization)
-to GPU kernels whose output feeds into the DIIS convergence loop.** This was
-extensively tested in March 2026 and consistently caused convergence regressions.
 
 ### Background
 
@@ -242,64 +123,11 @@ results are cast to double on the CPU side. The SCF loop converges when
 `rho_diff < 1e-6`. The DIIS accelerator (Pulay) extrapolates from stored Fock
 matrices to predict the next iterate.
 
-### What was tried and failed
-
-| Change | Effect | Why it fails |
-|---|---|---|
-| Kahan summation in `gpu_compute_density` (energy.h) bj-loop | 25 → 31 SCF iterations (fosfatoQMMM) | Changes float32 values → different DIIS trajectory → oscillation near threshold |
-| Kahan in energy.h + `__launch_bounds__(64, 16)` | 25 → 31 iters, amplified | `__launch_bounds__` forces different register allocation → different FP instruction scheduling → compounds the effect |
-| Kahan in `gpu_update_rmm` (rmm.h) inner loop | Fe3H2O6 open-shell energy error 0.004 Ha (threshold 1.5e-4) | Same mechanism: changed float32 Fock matrix → different DIIS path |
-| Reducing `ndiis` from 30 to 8 | Convergence stalls at ~2e-6, never reaches 1e-6 | With float32 noise floor ~2e-6, DIIS needs MORE history vectors to occasionally find an extrapolation that pushes below threshold |
-
-### Root cause: DIIS sensitivity to float32 noise
-
-The density kernel (`gpu_compute_density`) sums only ~43–86 terms per thread.
-Kahan improves precision from ~5e-7 to ~6e-8 relative error — but the values
-are **numerically different** from the non-Kahan baseline. These different XC
-contributions feed into DIIS, which builds a least-squares extrapolation from
-stored Fock matrices. Near convergence (rho_diff ~1e-6), the DIIS trajectory is
-exquisitely sensitive to the exact float32 noise pattern. A "more precise" noise
-pattern is NOT necessarily a better one for convergence — it's just different,
-and the baseline's noise pattern happened to produce a favorable DIIS trajectory.
-
-### Key findings
-
-1. **Float32 noise floor is ~2e-6 in rho_diff.** This is inherent to the hybrid
-   precision architecture. Any change that shifts float32 values (even toward
-   more precise ones) can move the effective noise floor enough to disrupt DIIS.
-
-2. **`__launch_bounds__` changes FP results.** By forcing different register
-   allocation, nvcc may reorder FMA/multiply/add instructions, producing
-   bit-different float32 results. This alone moved convergence from 31→28 iters.
-
-3. **ndiis=30 is necessary** (unlike literature's typical 6–12). With float32
-   noise near 1e-6, DIIS needs a large vector history to find linear
-   combinations that push rho_diff below threshold. Reducing to 8 vectors was
-   catastrophic.
-
-4. **Warp shuffle reductions are safe** IF the FP summation order matches the
-   original volatile shared-memory pattern (cross-warp pair first, then
-   intra-warp tree). See commit `ac87eef0` for the correct implementation.
-
 ### Guidelines for future precision work
 
 - **Safe optimizations**: Structural changes that preserve FP order (warp
   shuffles matching old volatile order, shared memory layout, loop unrolling
   without reordering). These don't change numerical results.
-
-- **Unsafe optimizations**: Kahan summation, double-precision accumulators in
-  GPU kernels, `__launch_bounds__`, any change to the order of FP operations
-  in kernels feeding DIIS. These change float32 bit patterns and will likely
-  shift SCF convergence.
-
-- **The real fix for precision**: Move the full density/Fock pipeline to
-  float64 on GPU (requires `precision=1` build flag, `FULL_DOUBLE` macro).
-  This eliminates the float32 noise floor entirely. As of 2026-04-19 the
-  FULL_DOUBLE build is working correctly (a long-latent shared-mem race in
-  `energy.h`/`energy_open.h` was patched — see
-  `../research/convergence/reproducibility_investigation_2026_04_19.md`
-  Part 6). Half-measures (Kahan in one kernel but not others) still create
-  precision mismatches that are worse than consistent float32.
 
 - **Always run the full E2E test suite** (`cd test && ./run_tests.py`) after
   any kernel change, even "precision-only" ones. The fosfatoQMMM test
@@ -310,5 +138,3 @@ and the baseline's noise pattern happened to produce a favorable DIIS trajectory
   `g2g/cuda/kernels/`. Float32 shared-mem races don't produce visibly wrong
   output (32-bit stores are atomic), but the same race explodes in
   FULL_DOUBLE (64-bit stores tear). Racecheck is the only reliable detector.
-
----
