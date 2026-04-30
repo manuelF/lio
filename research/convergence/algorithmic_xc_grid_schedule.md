@@ -1,12 +1,45 @@
 ---
-status: OPEN
+status: REJECTED
 date: 2026-04-25
-impact: 150-250 ms (7-12% wall on fosfatoQMMM)
-risk: low
+impact: NEGATIVE (+8 iters on fosfatoQMMM, energy off 0.5 mHa)
+risk: realised
 area: g2g
 ---
 
 # Coarse → fine XC grid schedule
+
+## Spike result (2026-04-25) — REJECTED
+
+One-day spike: hardcoded `g2g_new_grid` schedule before the per-iter
+`g2g_solve_groups` in `lioamber/SCF.f90`, gated by `good`:
+- `good > 1e-3` → SMALL (50)
+- `1e-5 < good ≤ 1e-3` → MEDIUM (116)
+- `good ≤ 1e-5` → BIG (194)
+
+fosfatoQMMM:
+- Baseline: 25 iters, −2148.6509632 Ha, ~2.85 s wall
+- Schedule: **33 iters (+8)**, **−2148.6514517 Ha (Δ = 488 µHa)**, 2.80 s wall
+
+The +8 iter penalty entirely consumes the per-iter XC savings, and the
+final energy is 488 µHa off baseline — far outside the 1 µHa target.
+DIIS does not absorb the Fock discontinuity at each grid switch: each
+switch effectively pollutes the 30-vector DIIS history with a Fock
+matrix from a different grid, which (combined with the rebalancer
+`timeforgroup` reset triggered by `partition.regenerate()`) shifts the
+SCF trajectory enough to cost iters. Same root cause documented in
+`reproducibility_investigation_2026_04_19.md` for fgm caching variation.
+
+Conclusion: **even with full partition caching the iter cost would
+still apply** — caching only removes the 195 ms regenerate overhead per
+switch, not the DIIS perturbation. Killing this lever entirely.
+
+Pivot to `algorithmic_diis_step_skip.md` (80–150 ms, lioamber-only, no
+DIIS perturbation: just reuses an iter's Fock when DIIS already
+predicts a tiny step).
+
+# Original proposal (kept for context)
+
+## Idea
 
 ## Idea
 

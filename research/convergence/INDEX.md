@@ -20,7 +20,8 @@ data flows through the SCF loop.
 | [scf_loop_profile_2026_03_28.md](scf_loop_profile_2026_03_28.md) | DONE | Full nsys+perf profile: 49% CPU idle, 840ms sync bottleneck, allocation hoisting |
 | [numerical_stability_investigation_2026_04_17.md](numerical_stability_investigation_2026_04_17.md) | DONE | Variance characterization; FULL_DOUBLE build broken (6.6 mHa offset); initcheck clean |
 | [reproducibility_investigation_2026_04_19.md](reproducibility_investigation_2026_04_19.md) | DONE | Float32 noise sources quantified (3e-7 floor + 4× rebalance amp); FULL_DOUBLE brokenness scoped (agua fine, fosfato broken — size-dependent, memcheck clean) |
-| [algorithmic_xc_grid_schedule.md](algorithmic_xc_grid_schedule.md) | OPEN | Coarse→fine XC grid by SCF state. Est. 150-250 ms (7-12% wall). Lives in g2g; toggled from SCF.f90 |
+| [full_double_kahan_dead_end_2026_04_25.md](full_double_kahan_dead_end_2026_04_25.md) | REJECTED | Kahan in FP64 kernels: 0 accuracy gain (FP64 has 8 orders of headroom over 1e-6 told), ~2.5× slower (register spills). Dead in both float32 (DIIS break) and FP64 (no benefit) |
+| [algorithmic_xc_grid_schedule.md](algorithmic_xc_grid_schedule.md) | REJECTED | Spike 2026-04-25: +8 iters, energy 488 µHa off. DIIS can't absorb Fock discontinuity at switches; caching wouldn't help |
 | [algorithmic_diag_avoidance.md](algorithmic_diag_avoidance.md) | OPEN | McWeeny purification replaces O(N³) DSYEVD inside SCF. Est. 100-200 ms (5-10% wall). Pure lioamber change |
 | [algorithmic_diis_step_skip.md](algorithmic_diis_step_skip.md) | OPEN | Skip Fock rebuild when DIIS-extrapolated step is below threshold. Est. 80-150 ms. Pure lioamber, low risk |
 | [algorithmic_incremental_fock.md](algorithmic_incremental_fock.md) | OPEN | Density-difference fitting in int3lu (RI-J context). Est. 80-150 ms. Modest because int3lu is already RI-fitted |
