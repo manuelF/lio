@@ -435,6 +435,45 @@ extern "C" G2G_EXPORT void g2g_solve_groups_(const uint& computation_type,
     }
   }
 }
+
+//===============================================================================================================
+// Variant of g2g_solve_groups_ that writes the Fock contribution into a
+// caller-supplied buffer instead of fortran_vars.rmm_output.data. Caller is
+// responsible for zero-initializing fock_buffer before the call (it is treated
+// as a pure accumulation target by partition.solve()'s Kahan merge).
+//
+// Used to overlap int3lu (CPU BLAS Coulomb fit) with g2g_solve_groups (GPU+CPU
+// XC Fock) inside an OpenMP parallel sections block: the XC contribution lands
+// in the scratch buffer, and the caller adds it to Fmat after the merge.
+extern "C" G2G_EXPORT void g2g_solve_groups_into_(
+    const uint& computation_type,
+    double* fort_energy_ptr,
+    double* fort_forces_ptr,
+    double* fock_buffer) {
+  double* saved = fortran_vars.rmm_output.data;
+  fortran_vars.rmm_output.data = fock_buffer;
+  g2g_solve_groups_(computation_type, fort_energy_ptr, fort_forces_ptr);
+  fortran_vars.rmm_output.data = saved;
+}
+
+// Open-shell variant: rebinds fortran_vars.rmm_output_a/_b to caller-supplied
+// alpha/beta scratch buffers for the duration of the call. Both buffers must
+// be pre-zeroed; partition.solve() Kahan-merges per-thread XC accumulators
+// into them.
+extern "C" G2G_EXPORT void g2g_solve_groups_into_open_(
+    const uint& computation_type,
+    double* fort_energy_ptr,
+    double* fort_forces_ptr,
+    double* fock_buffer_a,
+    double* fock_buffer_b) {
+  double* saved_a = fortran_vars.rmm_output_a.data;
+  double* saved_b = fortran_vars.rmm_output_b.data;
+  fortran_vars.rmm_output_a.data = fock_buffer_a;
+  fortran_vars.rmm_output_b.data = fock_buffer_b;
+  g2g_solve_groups_(computation_type, fort_energy_ptr, fort_forces_ptr);
+  fortran_vars.rmm_output_a.data = saved_a;
+  fortran_vars.rmm_output_b.data = saved_b;
+}
 //================================================================================================================
 /* general options */
 namespace G2G {

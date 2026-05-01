@@ -104,7 +104,12 @@ ifeq ($(intel),0)
   FFLAGS += -fstack-arrays
   FFLAGS += -Warray-temporaries -Wimplicit-interface -Waliasing
   LFLAGS += -L/usr/lib -fopenmp
-  LIBS   += -lblas -llapack
+  # -lopenblas is required so SCF.f90's openblas_set_num_threads_/get_ symbols
+  # resolve. The Ubuntu reference libblas.so.3 (which itself maps to OpenBLAS)
+  # only exports the standard BLAS interface, not the OpenBLAS thread-control
+  # extensions. On non-OpenBLAS systems (Cray, MKL, reference LAPACK) drop
+  # -lopenblas and disable the overlap path: leave LIO_OVERLAP_INT3LU_G2G unset.
+  LIBS   += -lblas -llapack -lopenblas
 
   DEBUG01 = -g -Wtabs -fcheck=all
   DEBUG02 = -g -Wall -Wextra -fcheck=all -fbacktrace -pedantic -ffpe-trap=invalid,zero,overflow,underflow

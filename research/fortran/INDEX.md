@@ -20,7 +20,8 @@ OpenBLAS dgemv/dgemm 20%, int3mem outlined OpenMP fns ~1.8%.
 
 | File | Status | Summary |
 |------|--------|---------|
-| [overlap_int3lu_g2g.md](overlap_int3lu_g2g.md) | OPEN (top priority) | Overlap int3lu CPU-only BLAS with g2g solve GPU work; est. 150-270ms save (6-15% wall) |
+| [overlap_int3lu_g2g.md](overlap_int3lu_g2g.md) | DESIGN | Original design doc — superseded by implementation note below |
+| [overlap_int3lu_g2g_implemented_2026_05_01.md](overlap_int3lu_g2g_implemented_2026_05_01.md) | DONE | Closed-shell overlap shipped behind `LIO_OVERLAP_INT3LU_G2G=1`. Fosfato 1.90→1.66s (-12-15%, ~250-300ms saved); 25 iters preserved; all 8 e2e PASS |
 | [int3lu_gpu_offload_evaluation.md](int3lu_gpu_offload_evaluation.md) | REJECTED | Same ceiling as CPU/GPU overlap, 3-5× the effort; revisit at M≥1500 |
 | [full_scf_port_evaluation.md](full_scf_port_evaluation.md) | DEFERRED | 440-565ms ceiling but 11-14 weeks effort; revisit at M≥1500 or MD throughput. First step: try `cuda=2` build |
 | [blas_optimization.md](blas_optimization.md) | DONE | BLAS replacements + allocation hoisting; SCF loop is BLAS-bound at M=364 |

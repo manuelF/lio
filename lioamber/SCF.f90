@@ -145,6 +145,25 @@ subroutine SCF(E)
    integer :: MM, MM2, MMd, Md2
    integer :: M1, M2
 
+!------------------------------------------------------------------------------!
+!  Overlap of int3lu (Coulomb fit + Fock, CPU BLAS) with g2g_solve_groups
+!  (XC Fock, GPU + CPU partition). Toggle via LIO_OVERLAP_INT3LU_G2G=1 env var.
+!  Closed-shell only. The XC contribution lands in fmat_xc_scratch via a
+!  rebound fortran_vars.rmm_output pointer (see g2g_solve_groups_into_), and
+!  the post-section merge adds it into Fmat_vec.
+   logical, save :: overlap_int3lu_g2g_initialized = .false.
+   logical, save :: overlap_int3lu_g2g = .false.
+   integer, save :: overlap_blas_threads = 4
+   double precision, allocatable, save :: fmat_xc_scratch(:)
+   double precision, allocatable, save :: fmat_xc_scratch_b(:)
+   character(len=16) :: env_overlap_str
+   integer :: env_overlap_status
+   integer :: prev_blas_threads
+   integer :: prev_max_levels
+   integer, external :: openblas_get_num_threads
+   integer, external :: omp_get_max_active_levels
+   external :: openblas_set_num_threads, omp_set_max_active_levels
+
 
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 !carlos: Operators for matrices with alpha and beta spins.
@@ -459,6 +478,47 @@ subroutine SCF(E)
 ! vectors are 'coherent'
 
       if (hybrid_converg) DIIS=.true. ! cambio para convergencia damping-diis
+
+!------------------------------------------------------------------------------!
+!  One-time setup for int3lu/g2g overlap (closed-shell only).
+      if (.not. overlap_int3lu_g2g_initialized) then
+         call get_environment_variable("LIO_OVERLAP_INT3LU_G2G", &
+                                       env_overlap_str, &
+                                       status=env_overlap_status)
+         if (env_overlap_status == 0 .and. trim(env_overlap_str) == "1") then
+            overlap_int3lu_g2g = .true.
+            ! Allow override of BLAS thread split inside the int3lu section.
+            call get_environment_variable("LIO_OVERLAP_BLAS_THREADS", &
+                                          env_overlap_str, &
+                                          status=env_overlap_status)
+            if (env_overlap_status == 0) then
+               read(env_overlap_str, *, iostat=env_overlap_status) &
+                    overlap_blas_threads
+               if (env_overlap_status /= 0 .or. overlap_blas_threads < 1) &
+                    overlap_blas_threads = 4
+            endif
+            if (verbose > 1) write(*,'(A,I0,A)') &
+               " [overlap] int3lu/g2g overlap ENABLED (", &
+               overlap_blas_threads, " BLAS threads in int3lu section)"
+         endif
+         overlap_int3lu_g2g_initialized = .true.
+      endif
+
+      if (overlap_int3lu_g2g) then
+         if (.not. allocated(fmat_xc_scratch)) allocate(fmat_xc_scratch(MM))
+         if (size(fmat_xc_scratch) /= MM) then
+            deallocate(fmat_xc_scratch)
+            allocate(fmat_xc_scratch(MM))
+         endif
+         if (OPEN) then
+            if (.not. allocated(fmat_xc_scratch_b)) allocate(fmat_xc_scratch_b(MM))
+            if (size(fmat_xc_scratch_b) /= MM) then
+               deallocate(fmat_xc_scratch_b)
+               allocate(fmat_xc_scratch_b(MM))
+            endif
+         endif
+      endif
+
       call g2g_timer_sum_stop('Initialize SCF')
 
 !------------------------------------------------------------------------------!
@@ -482,20 +542,68 @@ subroutine SCF(E)
         if (Dbug) call SEEK_NaN(Pmat_vec,1,MM,"RHO Start")
         if (Dbug) call SEEK_NaN(Fmat_vec,1,MM,"FOCK Start")
 
-!       Computes Coulomb part of Fock, and energy on E2
-        call g2g_timer_sum_start('Coulomb fit + Fock')
-        call int3lu(E2, Pmat_vec, Fmat_vec2, Fmat_vec, Gmat_vec, Ginv_vec, &
-                    Hmat_vec, open, MEMO)
-        call g2g_timer_sum_pause('Coulomb fit + Fock')
+        if (overlap_int3lu_g2g) then
+!          Overlap path: int3lu (CPU BLAS) and g2g_solve_groups (GPU+CPU partition)
+!          run concurrently. int3lu writes Fmat_vec(/Fmat_vec2) = Hmat + Coulomb
+!          in-place; g2g writes XC into the zero-initialized scratch buffers via
+!          rebound fortran_vars.rmm_output(_a/_b) pointers. After both finish we
+!          add scratch into the Fock matrix. The BLAS inside int3lu is throttled
+!          to overlap_blas_threads to leave most cores for g2g's CPU partition.
+           prev_blas_threads = openblas_get_num_threads()
+           prev_max_levels = omp_get_max_active_levels()
+           fmat_xc_scratch(1:MM) = 0.0d0
+           if (OPEN) fmat_xc_scratch_b(1:MM) = 0.0d0
 
-!       Test for NaN
-        if (Dbug) call SEEK_NaN(Pmat_vec,1,MM,"RHO Coulomb")
-        if (Dbug) call SEEK_NaN(Fmat_vec,1,MM,"FOCK Coulomb")
+!          Enable nested OpenMP only for the duration of the sections so the
+!          inner parallel-for inside g2g_solve actually spawns workers.
+!          Restored immediately after to avoid leaking process-wide nesting
+!          into TDDFT/Ehrenfest paths that call g2g/BLAS without expecting it.
+           if (prev_max_levels < 2) call omp_set_max_active_levels(2)
 
-!       XC integration / Fock elements
-        call g2g_timer_sum_start('Exchange-correlation Fock')
-        call g2g_solve_groups(0,Ex,0)
-        call g2g_timer_sum_pause('Exchange-correlation Fock')
+           call g2g_timer_sum_start('Coulomb fit + Fock')
+           if (OPEN) then
+!$omp parallel sections default(shared) num_threads(2)
+!$omp section
+              call openblas_set_num_threads(overlap_blas_threads)
+              call int3lu(E2, Pmat_vec, Fmat_vec2, Fmat_vec, Gmat_vec, Ginv_vec, &
+                          Hmat_vec, open, MEMO)
+!$omp section
+              call g2g_solve_groups_into_open(0, Ex, 0, fmat_xc_scratch, &
+                                              fmat_xc_scratch_b)
+!$omp end parallel sections
+           else
+!$omp parallel sections default(shared) num_threads(2)
+!$omp section
+              call openblas_set_num_threads(overlap_blas_threads)
+              call int3lu(E2, Pmat_vec, Fmat_vec2, Fmat_vec, Gmat_vec, Ginv_vec, &
+                          Hmat_vec, open, MEMO)
+!$omp section
+              call g2g_solve_groups_into(0, Ex, 0, fmat_xc_scratch)
+!$omp end parallel sections
+           endif
+           call openblas_set_num_threads(prev_blas_threads)
+           if (prev_max_levels < 2) call omp_set_max_active_levels(prev_max_levels)
+
+!          Merge XC contributions into the Fock matrix(es).
+           Fmat_vec(1:MM)  = Fmat_vec(1:MM)  + fmat_xc_scratch(1:MM)
+           if (OPEN) Fmat_vec2(1:MM) = Fmat_vec2(1:MM) + fmat_xc_scratch_b(1:MM)
+           call g2g_timer_sum_pause('Coulomb fit + Fock')
+        else
+!          Computes Coulomb part of Fock, and energy on E2
+           call g2g_timer_sum_start('Coulomb fit + Fock')
+           call int3lu(E2, Pmat_vec, Fmat_vec2, Fmat_vec, Gmat_vec, Ginv_vec, &
+                       Hmat_vec, open, MEMO)
+           call g2g_timer_sum_pause('Coulomb fit + Fock')
+
+!          Test for NaN
+           if (Dbug) call SEEK_NaN(Pmat_vec,1,MM,"RHO Coulomb")
+           if (Dbug) call SEEK_NaN(Fmat_vec,1,MM,"FOCK Coulomb")
+
+!          XC integration / Fock elements
+           call g2g_timer_sum_start('Exchange-correlation Fock')
+           call g2g_solve_groups(0,Ex,0)
+           call g2g_timer_sum_pause('Exchange-correlation Fock')
+        endif
 !       Test for NaN
         if (Dbug) call SEEK_NaN(Pmat_vec,1,MM,"RHO Ex-Corr")
         if (Dbug) call SEEK_NaN(Fmat_vec,1,MM,"FOCK Ex-Corr")

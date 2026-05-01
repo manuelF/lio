@@ -46,7 +46,7 @@ Ranked by expected wall-time impact on the fosfatoQMMM benchmark.
 | # | Optimization | Area | Expected Impact | File |
 |---|---|---|---|---|
 | 0 | **Enable cuda=2 build** | Build | 50-90ms estimated (free; activates existing `cublasmath/` paths) | [fortran/full_scf_port_evaluation.md](fortran/full_scf_port_evaluation.md) |
-| 1 | Overlap int3lu ↔ g2g solve | Fortran/GPU | 150-270ms (6-15% wall) | [fortran/overlap_int3lu_g2g.md](fortran/overlap_int3lu_g2g.md) |
+| ~~1~~ | ~~Overlap int3lu ↔ g2g solve~~ — **DONE 2026-05-01** (closed-shell, behind `LIO_OVERLAP_INT3LU_G2G=1`; ~250-300ms / 12-15% wall on fosfato) | Fortran/GPU | — | [fortran/overlap_int3lu_g2g_implemented_2026_05_01.md](fortran/overlap_int3lu_g2g_implemented_2026_05_01.md) |
 | ~~2~~ | ~~GPU arena allocator~~ — **DONE 2026-04-24** (async pool, −85.8 ms API, −5% wall) | Infrastructure | — | [infrastructure/optimize_gpu_allocator_async_pool_2026_04_24.md](infrastructure/optimize_gpu_allocator_async_pool_2026_04_24.md) |
 | 3 | Density as GEMM | GPU | 100-200ms (5-10% wall); density is ~46% of GPU time | [gpu/optimize_density_gemm.md](gpu/optimize_density_gemm.md) |
 | 4 | Partition auto-tune caching | Infrastructure | High for MD runs (one-time for single-point) | _(no research doc yet)_ |
