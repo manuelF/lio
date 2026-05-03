@@ -153,11 +153,13 @@ subroutine SCF(E)
 !  the post-section merge adds it into Fmat_vec.
    logical, save :: overlap_int3lu_g2g_initialized = .false.
    logical, save :: overlap_int3lu_g2g = .false.
-   integer, save :: overlap_blas_threads = 4
+   integer, save :: overlap_blas_threads = 0
    double precision, allocatable, save :: fmat_xc_scratch(:)
    double precision, allocatable, save :: fmat_xc_scratch_b(:)
    character(len=16) :: env_overlap_str
    integer :: env_overlap_status
+   integer, external :: g2g_recommended_blas_threads
+   integer, external :: omp_get_max_threads
    integer :: prev_blas_threads
    integer :: prev_max_levels
    integer, external :: openblas_get_num_threads
@@ -495,11 +497,14 @@ subroutine SCF(E)
                read(env_overlap_str, *, iostat=env_overlap_status) &
                     overlap_blas_threads
                if (env_overlap_status /= 0 .or. overlap_blas_threads < 1) &
-                    overlap_blas_threads = 4
+                    overlap_blas_threads = g2g_recommended_blas_threads()
+            else
+               overlap_blas_threads = g2g_recommended_blas_threads()
             endif
-            if (verbose > 1) write(*,'(A,I0,A)') &
-               " [overlap] int3lu/g2g overlap ENABLED (", &
-               overlap_blas_threads, " BLAS threads in int3lu section)"
+            if (verbose > 1) write(*,'(A,I0,A,I0,A)') &
+               " [overlap] int3lu/g2g overlap ENABLED (OMP=", &
+               omp_get_max_threads(), " g2g, BLAS=", &
+               overlap_blas_threads, " int3lu)"
          endif
          overlap_int3lu_g2g_initialized = .true.
       endif
