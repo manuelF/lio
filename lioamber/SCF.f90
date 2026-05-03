@@ -162,8 +162,10 @@ subroutine SCF(E)
    integer, external :: omp_get_max_threads
    integer :: prev_blas_threads
    integer :: prev_max_levels
+   double precision :: t_int3lu, t_g2g
    integer, external :: openblas_get_num_threads
    integer, external :: omp_get_max_active_levels
+   double precision, external :: omp_get_wtime
    external :: openblas_set_num_threads, omp_set_max_active_levels
 
 
@@ -566,28 +568,51 @@ subroutine SCF(E)
            if (prev_max_levels < 2) call omp_set_max_active_levels(2)
 
            call g2g_timer_sum_start('Coulomb fit + Fock')
+           t_int3lu = 0.0d0
+           t_g2g    = 0.0d0
            if (OPEN) then
 !$omp parallel sections default(shared) num_threads(2)
 !$omp section
               call openblas_set_num_threads(overlap_blas_threads)
+              t_int3lu = -omp_get_wtime()
               call int3lu(E2, Pmat_vec, Fmat_vec2, Fmat_vec, Gmat_vec, Ginv_vec, &
                           Hmat_vec, open, MEMO)
+              t_int3lu = t_int3lu + omp_get_wtime()
 !$omp section
+              t_g2g = -omp_get_wtime()
               call g2g_solve_groups_into_open(0, Ex, 0, fmat_xc_scratch, &
                                               fmat_xc_scratch_b)
+              t_g2g = t_g2g + omp_get_wtime()
 !$omp end parallel sections
            else
 !$omp parallel sections default(shared) num_threads(2)
 !$omp section
               call openblas_set_num_threads(overlap_blas_threads)
+              t_int3lu = -omp_get_wtime()
               call int3lu(E2, Pmat_vec, Fmat_vec2, Fmat_vec, Gmat_vec, Ginv_vec, &
                           Hmat_vec, open, MEMO)
+              t_int3lu = t_int3lu + omp_get_wtime()
 !$omp section
+              t_g2g = -omp_get_wtime()
               call g2g_solve_groups_into(0, Ex, 0, fmat_xc_scratch)
+              t_g2g = t_g2g + omp_get_wtime()
 !$omp end parallel sections
            endif
            call openblas_set_num_threads(prev_blas_threads)
            if (prev_max_levels < 2) call omp_set_max_active_levels(prev_max_levels)
+           if (verbose > 3) then
+              if (t_int3lu > t_g2g) then
+                 write(*,'(A,F6.1,A,F6.1,A,F6.1,A)') &
+                    "  [overlap] int3lu=", t_int3lu*1e3, "ms  g2g=", &
+                    t_g2g*1e3, "ms  idle=", (t_int3lu-t_g2g)*1e3, &
+                    "ms (g2g waits -- increase LIO_OVERLAP_BLAS_THREADS)"
+              else
+                 write(*,'(A,F6.1,A,F6.1,A,F6.1,A)') &
+                    "  [overlap] int3lu=", t_int3lu*1e3, "ms  g2g=", &
+                    t_g2g*1e3, "ms  idle=", (t_g2g-t_int3lu)*1e3, &
+                    "ms (int3lu waits)"
+              endif
+           endif
 
 !          Merge XC contributions into the Fock matrix(es).
            Fmat_vec(1:MM)  = Fmat_vec(1:MM)  + fmat_xc_scratch(1:MM)
