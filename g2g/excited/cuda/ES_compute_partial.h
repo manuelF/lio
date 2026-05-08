@@ -1,5 +1,6 @@
 template <class scalar_type, bool compute_energy, bool compute_factor, bool lda>
-__global__ void ES_compute_partial(uint points,
+__global__ void ES_compute_partial(cudaTextureObject_t tred_gpu_tex,
+                                uint points,
                                 const scalar_type* function_values, uint m,
                                 const vec_type<scalar_type, 4>* gradient_values,
                                 scalar_type* out_partial_tred, vec_type<scalar_type, 4>* out_tredxyz)

@@ -26,13 +26,6 @@
 #endif
 
 namespace G2G {
-#if FULL_DOUBLE
-texture<int2, 2, cudaReadModeElementType> rmm_input_gpu_tex;
-texture<int2, 2, cudaReadModeElementType> rmm_input_gpu_tex2;
-#else
-texture<float, 2, cudaReadModeElementType> rmm_input_gpu_tex;
-texture<float, 2, cudaReadModeElementType> rmm_input_gpu_tex2;
-#endif
 /** KERNELS **/
 #include "gpu_variables.h"
 #include "kernels/accumulate_point.h"
@@ -217,11 +210,30 @@ void PointGroupGPU<scalar_type>::solve_closed(
    */
 
   cudaArray* cuArray;
-  cudaMallocArray(&cuArray, &rmm_input_gpu_tex.channelDesc, rmm_input_cpu.width, rmm_input_cpu.height);
+  cudaChannelFormatDesc channelDesc;
+#if FULL_DOUBLE
+  channelDesc = cudaCreateChannelDesc<int2>();
+#else
+  channelDesc = cudaCreateChannelDesc<float>();
+#endif
+  cudaMallocArray(&cuArray, &channelDesc, rmm_input_cpu.width, rmm_input_cpu.height);
   cudaMemcpyToArray(cuArray, 0, 0, rmm_input_cpu.data, sizeof(scalar_type)*rmm_input_cpu.width*rmm_input_cpu.height, cudaMemcpyHostToDevice);
-  cudaBindTextureToArray(rmm_input_gpu_tex, cuArray);
 
-  rmm_input_gpu_tex.normalized = false;
+  cudaResourceDesc resDesc;
+  memset(&resDesc, 0, sizeof(resDesc));
+  resDesc.resType = cudaResourceTypeArray;
+  resDesc.res.array.array = cuArray;
+
+  cudaTextureDesc texDesc;
+  memset(&texDesc, 0, sizeof(texDesc));
+  texDesc.addressMode[0] = cudaAddressModeClamp;
+  texDesc.addressMode[1] = cudaAddressModeClamp;
+  texDesc.filterMode = cudaFilterModePoint;
+  texDesc.readMode = cudaReadModeElementType;
+  texDesc.normalizedCoords = 0;
+
+  cudaTextureObject_t rmm_input_gpu_tex = 0;
+  cudaCreateTextureObject(&rmm_input_gpu_tex, &resDesc, &texDesc, NULL);
 
 #if USE_LIBXC
   fortran_vars.fexc = fortran_vars.func_coef[0];
@@ -254,6 +266,7 @@ void PointGroupGPU<scalar_type>::solve_closed(
     CudaMatrix<scalar_type> energy_gpu(this->number_of_points);
 
 #define compute_parameters \
+    rmm_input_gpu_tex, \
     energy_gpu.data, factors_gpu.data, point_weights_gpu.data, this->number_of_points, function_values_transposed.data, \
     gradient_values_transposed.data, hessian_values_transposed.data, group_m, partial_densities_gpu.data, dxyz_gpu.data, \
     dd1_gpu.data,dd2_gpu.data
@@ -363,6 +376,7 @@ void PointGroupGPU<scalar_type>::solve_closed(
 #undef accumulate_parameters
 
 #define compute_parameters \
+    rmm_input_gpu_tex, \
     NULL,factors_gpu.data,point_weights_gpu.data,this->number_of_points,function_values_transposed.data,gradient_values_transposed.data,hessian_values_transposed.data,group_m,partial_densities_gpu.data,dxyz_gpu.data,dd1_gpu.data,dd2_gpu.data
 #define accumulate_parameters \
     NULL,factors_gpu.data,point_weights_gpu.data,this->number_of_points,block_height,partial_densities_gpu.data,dxyz_gpu.data,dd1_gpu.data,dd2_gpu.data, fortran_vars.fexc
@@ -441,7 +455,7 @@ void PointGroupGPU<scalar_type>::solve_closed(
     CudaMatrixUInt nuc_gpu(this->func2local_nuc);  // TODO: esto en realidad se podria guardar una sola vez durante su construccion
 
     gpu_compute_density_derivs<<<threadGrid, threadBlock>>>(
-        function_values.data, gradient_values.data, nuc_gpu.data, dd_gpu.data, this->number_of_points, group_m, this->total_nucleii());
+        rmm_input_gpu_tex, function_values.data, gradient_values.data, nuc_gpu.data, dd_gpu.data, this->number_of_points, group_m, this->total_nucleii());
     cudaAssertNoError("density_derivs");
     timers.density_derivs.pause_and_sync();
 
@@ -524,7 +538,7 @@ void PointGroupGPU<scalar_type>::solve_closed(
     hessian_values_transposed.deallocate();
   }
   //Deshago el bind de textura de rmm
-  cudaUnbindTexture(rmm_input_gpu_tex); //Enroque el Unbind con el Free, asi parece mas logico. Nano
+  cudaDestroyTextureObject(rmm_input_gpu_tex);
   cudaFreeArray(cuArray);
 }
 
@@ -646,15 +660,38 @@ void PointGroupGPU<scalar_type>::solve_opened(
 
   cudaArray* cuArray1;
   cudaArray* cuArray2;
-  cudaMallocArray(&cuArray1, &rmm_input_gpu_tex.channelDesc, rmm_input_a_cpu.width,rmm_input_a_cpu.height);
-  cudaMallocArray(&cuArray2, &rmm_input_gpu_tex2.channelDesc, rmm_input_b_cpu.width,rmm_input_b_cpu.height);
+  cudaChannelFormatDesc channelDesc;
+#if FULL_DOUBLE
+  channelDesc = cudaCreateChannelDesc<int2>();
+#else
+  channelDesc = cudaCreateChannelDesc<float>();
+#endif
+  cudaMallocArray(&cuArray1, &channelDesc, rmm_input_a_cpu.width,rmm_input_a_cpu.height);
+  cudaMallocArray(&cuArray2, &channelDesc, rmm_input_b_cpu.width,rmm_input_b_cpu.height);
   cudaMemcpyToArray(cuArray1, 0, 0,rmm_input_a_cpu.data,sizeof(scalar_type)*rmm_input_a_cpu.width*rmm_input_a_cpu.height, cudaMemcpyHostToDevice);
   cudaMemcpyToArray(cuArray2, 0, 0,rmm_input_b_cpu.data,sizeof(scalar_type)*rmm_input_b_cpu.width*rmm_input_b_cpu.height, cudaMemcpyHostToDevice);
-  cudaBindTextureToArray(rmm_input_gpu_tex, cuArray1);
-  cudaBindTextureToArray(rmm_input_gpu_tex2, cuArray2);
 
-  rmm_input_gpu_tex.normalized = false;
-  rmm_input_gpu_tex2.normalized = false;
+  cudaResourceDesc resDesc1;
+  memset(&resDesc1, 0, sizeof(resDesc1));
+  resDesc1.resType = cudaResourceTypeArray;
+  resDesc1.res.array.array = cuArray1;
+  cudaResourceDesc resDesc2;
+  memset(&resDesc2, 0, sizeof(resDesc2));
+  resDesc2.resType = cudaResourceTypeArray;
+  resDesc2.res.array.array = cuArray2;
+
+  cudaTextureDesc texDesc;
+  memset(&texDesc, 0, sizeof(texDesc));
+  texDesc.addressMode[0] = cudaAddressModeClamp;
+  texDesc.addressMode[1] = cudaAddressModeClamp;
+  texDesc.filterMode = cudaFilterModePoint;
+  texDesc.readMode = cudaReadModeElementType;
+  texDesc.normalizedCoords = 0;
+
+  cudaTextureObject_t rmm_input_gpu_tex = 0;
+  cudaTextureObject_t rmm_input_gpu_tex2 = 0;
+  cudaCreateTextureObject(&rmm_input_gpu_tex, &resDesc1, &texDesc, NULL);
+  cudaCreateTextureObject(&rmm_input_gpu_tex2, &resDesc2, &texDesc, NULL);
 
   // For CDFT and becke partitioning.
   CudaMatrix<scalar_type> becke_w_gpu;
@@ -678,6 +715,7 @@ void PointGroupGPU<scalar_type>::solve_opened(
 
     if (compute_forces || compute_rmm) {
       gpu_compute_density_opened<scalar_type, true, true, false><<<threadGrid, threadBlock>>>(
+             rmm_input_gpu_tex, rmm_input_gpu_tex2,
              point_weights_gpu.data,this->number_of_points, function_values_transposed.data,
              gradient_values_transposed.data,hessian_values_transposed.data, group_m,
              partial_densities_a_gpu.data, dxyz_a_gpu.data, dd1_a_gpu.data, dd2_a_gpu.data,
@@ -702,6 +740,7 @@ void PointGroupGPU<scalar_type>::solve_opened(
       }
     } else {
       gpu_compute_density_opened<scalar_type, true, false, false><<<threadGrid, threadBlock>>>(
+             rmm_input_gpu_tex, rmm_input_gpu_tex2,
              point_weights_gpu.data,this->number_of_points, function_values_transposed.data,
              gradient_values_transposed.data,hessian_values_transposed.data, group_m,
              partial_densities_a_gpu.data, dxyz_a_gpu.data, dd1_a_gpu.data, dd2_a_gpu.data,
@@ -742,6 +781,7 @@ void PointGroupGPU<scalar_type>::solve_opened(
     }
   } else {
     gpu_compute_density_opened<scalar_type, false, true, false><<<threadGrid, threadBlock>>>(
+           rmm_input_gpu_tex, rmm_input_gpu_tex2,
            point_weights_gpu.data, this->number_of_points, function_values_transposed.data,
            gradient_values_transposed.data,hessian_values_transposed.data, group_m,
            partial_densities_a_gpu.data, dxyz_a_gpu.data, dd1_a_gpu.data, dd2_a_gpu.data,
@@ -803,7 +843,7 @@ void PointGroupGPU<scalar_type>::solve_opened(
     CudaMatrixUInt nuc_gpu(this->func2local_nuc);
 
     // Kernel
-    gpu_compute_density_derivs_open<<<threadGrid, threadBlock>>>(function_values.data, gradient_values.data, nuc_gpu.data, dd_gpu_a.data, dd_gpu_b.data, this->number_of_points, group_m, this->total_nucleii());
+    gpu_compute_density_derivs_open<<<threadGrid, threadBlock>>>(rmm_input_gpu_tex, rmm_input_gpu_tex2, function_values.data, gradient_values.data, nuc_gpu.data, dd_gpu_a.data, dd_gpu_b.data, this->number_of_points, group_m, this->total_nucleii());
 
     cudaAssertNoError("density_derivs");
     timers.density_derivs.pause_and_sync();
@@ -928,8 +968,8 @@ void PointGroupGPU<scalar_type>::solve_opened(
   }
 
   //Deshago el bind de textura de rmm
-  cudaUnbindTexture(rmm_input_gpu_tex); //Enroque el Unbind con el Free, asi parece mas logico. Nano
-  cudaUnbindTexture(rmm_input_gpu_tex2); //Enroque el Unbind con el Free, asi parece mas logico. Nano
+  cudaDestroyTextureObject(rmm_input_gpu_tex);
+  cudaDestroyTextureObject(rmm_input_gpu_tex2);
   cudaFreeArray(cuArray1);
   cudaFreeArray(cuArray2);
 

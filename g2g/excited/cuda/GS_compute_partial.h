@@ -1,16 +1,17 @@
 #if FULL_DOUBLE
-static __inline__ __device__ double fetch_double(texture<int2, 2> t, float x,
+static __inline__ __device__ double fetch_double(cudaTextureObject_t t, float x,
                                                  float y) {
-  int2 v = tex2D(t, x, y);
+  int2 v = tex2D<int2>(t, x, y);
   return __hiloint2double(v.y, v.x);
 }
 #define fetch(t, x, y) fetch_double(t, x, y)
 #else
-#define fetch(t, x, y) tex2D(t, x, y)
+#define fetch(t, x, y) tex2D<float>(t, x, y)
 #endif
 
 template <class scalar_type, bool compute_energy, bool compute_factor, bool lda>
-__global__ void GS_compute_partial(uint points,
+__global__ void GS_compute_partial(cudaTextureObject_t rmm_gpu_tex,
+                                uint points,
                                 const scalar_type* function_values, uint m,
                                 const vec_type<scalar_type, 4>* gradient_values,
                                 scalar_type* out_partial_density, vec_type<scalar_type, 4>* out_dxyz)

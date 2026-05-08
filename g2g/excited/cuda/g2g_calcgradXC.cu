@@ -26,13 +26,6 @@
 using namespace std;
 
 namespace G2G {
-#if FULL_DOUBLE
-texture<int2, 2, cudaReadModeElementType> tred_gpu_for_tex;
-texture<int2, 2, cudaReadModeElementType> diff_gpu_for_tex;
-#else
-texture<float, 2, cudaReadModeElementType> tred_gpu_for_tex;
-texture<float, 2, cudaReadModeElementType> diff_gpu_for_tex;
-#endif
 
 #include "../../cuda/kernels/transpose.h"
 #include "ES_compute_for_partial.h"
@@ -143,19 +136,46 @@ template<class scalar_type> void PointGroupGPU<scalar_type>::
    }
 
 // Form Bind Texture
+   cudaChannelFormatDesc tex_channelDesc;
+#if FULL_DOUBLE
+   tex_channelDesc = cudaCreateChannelDesc<int2>();
+#else
+   tex_channelDesc = cudaCreateChannelDesc<float>();
+#endif
    cudaArray* cuArraytred;
-   cudaMallocArray(&cuArraytred, &tred_gpu_for_tex.channelDesc, tred_cpu.width, tred_cpu.height);
+   cudaMallocArray(&cuArraytred, &tex_channelDesc, tred_cpu.width, tred_cpu.height);
    cudaMemcpyToArray(cuArraytred,0,0,tred_cpu.data,sizeof(scalar_type)*tred_cpu.width*tred_cpu.height,cudaMemcpyHostToDevice);
-   cudaBindTextureToArray(tred_gpu_for_tex, cuArraytred);
    cudaArray* cuArraydiff;
-   cudaMallocArray(&cuArraydiff, &diff_gpu_for_tex.channelDesc, diff_cpu.width, diff_cpu.height);
+   cudaMallocArray(&cuArraydiff, &tex_channelDesc, diff_cpu.width, diff_cpu.height);
    cudaMemcpyToArray(cuArraydiff,0,0,diff_cpu.data,sizeof(scalar_type)*diff_cpu.width*diff_cpu.height,cudaMemcpyHostToDevice);
-   cudaBindTextureToArray(diff_gpu_for_tex, cuArraydiff);
+
+   cudaResourceDesc tred_resDesc;
+   memset(&tred_resDesc, 0, sizeof(tred_resDesc));
+   tred_resDesc.resType = cudaResourceTypeArray;
+   tred_resDesc.res.array.array = cuArraytred;
+   cudaResourceDesc diff_resDesc;
+   memset(&diff_resDesc, 0, sizeof(diff_resDesc));
+   diff_resDesc.resType = cudaResourceTypeArray;
+   diff_resDesc.res.array.array = cuArraydiff;
+
+   cudaTextureDesc tex_texDesc;
+   memset(&tex_texDesc, 0, sizeof(tex_texDesc));
+   tex_texDesc.addressMode[0] = cudaAddressModeClamp;
+   tex_texDesc.addressMode[1] = cudaAddressModeClamp;
+   tex_texDesc.filterMode = cudaFilterModePoint;
+   tex_texDesc.readMode = cudaReadModeElementType;
+   tex_texDesc.normalizedCoords = 0;
+
+   cudaTextureObject_t tred_gpu_for_tex = 0;
+   cudaTextureObject_t diff_gpu_for_tex = 0;
+   cudaCreateTextureObject(&tred_gpu_for_tex, &tred_resDesc, &tex_texDesc, NULL);
+   cudaCreateTextureObject(&diff_gpu_for_tex, &diff_resDesc, &tex_texDesc, NULL);
 
    tred_cpu.deallocate(); diff_cpu.deallocate();
 
 // CALCULATE PARTIAL DENSITIES
 #define compden_parameter \
+   tred_gpu_for_tex, diff_gpu_for_tex, \
    point_weights_gpu.data,this->number_of_points,function_values_transposed.data,\
    group_m,gradient_values_transposed.data, partial_tred_gpu.data,tredxyz_gpu.data, \
    partial_diff_gpu.data, diffxyz_gpu.data
@@ -259,8 +279,8 @@ template<class scalar_type> void PointGroupGPU<scalar_type>::
    gdens_xyz.deallocate(); tdens_xyz.deallocate(); ddens_xyz.deallocate();
 
 // Free Texture and Memory
-   cudaUnbindTexture(tred_gpu_for_tex);
-   cudaUnbindTexture(diff_gpu_for_tex);
+   cudaDestroyTextureObject(tred_gpu_for_tex);
+   cudaDestroyTextureObject(diff_gpu_for_tex);
    cudaFreeArray(cuArraytred);
    cudaFreeArray(cuArraydiff);
    mat_dens_gpu.deallocate(); mat_diff_gpu.deallocate(); 

@@ -1,20 +1,21 @@
 #if FULL_DOUBLE
 /*
-static __inline__ __device__ double fetch_double(texture<int2, 2> t, float x,
+static __inline__ __device__ double fetch_double(cudaTextureObject_t t, float x,
 float y)
 {
-   int2 v = tex2D(t,x,y);
+   int2 v = tex2D<int2>(t,x,y);
    return __hiloint2double(v.y, v.x);
 }*/
 #define fetch(t, x, y) fetch_double(t, x, y)
 #else
-#define fetch(t, x, y) tex2D(t, x, y)
+#define fetch(t, x, y) tex2D<float>(t, x, y)
 #endif
 
 template <class scalar_type, bool compute_energy, bool compute_factor, bool lda>
 __global__ void gpu_compute_density_opened(
-    const scalar_type* point_weights, uint points,
-    const scalar_type* function_values,
+    cudaTextureObject_t rmm_input_gpu_tex,
+    cudaTextureObject_t rmm_input_gpu_tex2, const scalar_type* point_weights,
+    uint points, const scalar_type* function_values,
     const vec_type<scalar_type, 4>* gradient_values,
     const vec_type<scalar_type, 4>* hessian_values, uint m,
     scalar_type* out_partial_density_a, vec_type<scalar_type, 4>* out_dxyz_a,
@@ -66,7 +67,7 @@ __global__ void gpu_compute_density_opened(
   // Si nos vamos a pasar del bloque con el segundo puntero, hacemos que haga la
   // misma cuenta
   if (min_i > m) {
-    min_i  = min_i - DENSITY_BLOCK_SIZE;
+    min_i = min_i - DENSITY_BLOCK_SIZE;
   }
 
   if (valid_thread2) {
@@ -74,19 +75,19 @@ __global__ void gpu_compute_density_opened(
     if (!lda) {
       Fgi2 = vec_type<scalar_type, 3>(gradient_values[(m)*point + i2]);
       Fhi12 = vec_type<scalar_type, 3>(
-          hessian_values[(m)*2 * point + (2 * i2 + 0)]);
+          hessian_values[(m) * 2 * point + (2 * i2 + 0)]);
       Fhi22 = vec_type<scalar_type, 3>(
-          hessian_values[(m)*2 * point + (2 * i2 + 1)]);
+          hessian_values[(m) * 2 * point + (2 * i2 + 1)]);
     }
   }
   if (valid_thread) {
     Fi = function_values[(m)*point + i];
     if (!lda) {
       Fgi = vec_type<scalar_type, 3>(gradient_values[(m)*point + i]);
-      Fhi1 =
-          vec_type<scalar_type, 3>(hessian_values[(m)*2 * point + (2 * i + 0)]);
-      Fhi2 =
-          vec_type<scalar_type, 3>(hessian_values[(m)*2 * point + (2 * i + 1)]);
+      Fhi1 = vec_type<scalar_type, 3>(
+          hessian_values[(m) * 2 * point + (2 * i + 0)]);
+      Fhi2 = vec_type<scalar_type, 3>(
+          hessian_values[(m) * 2 * point + (2 * i + 1)]);
     }
   }
 
@@ -100,9 +101,9 @@ __global__ void gpu_compute_density_opened(
         fgj_sh[position] = vec_type<scalar_type, 3>(
             gradient_values[(m)*point + (bj + position)]);
         fh1j_sh[position] = vec_type<scalar_type, 3>(
-            hessian_values[(m)*2 * point + (2 * (bj + position) + 0)]);
+            hessian_values[(m) * 2 * point + (2 * (bj + position) + 0)]);
         fh2j_sh[position] = vec_type<scalar_type, 3>(
-            hessian_values[(m)*2 * point + (2 * (bj + position) + 1)]);
+            hessian_values[(m) * 2 * point + (2 * (bj + position) + 1)]);
       }
     }
 

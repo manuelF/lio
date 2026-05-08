@@ -9,18 +9,18 @@
 
 #define PI 3.14159265358979312
 #define PI52 34.9868366552497108
-//#define PI 3.141592653589793238462643383
-//#define PI52 17.49341832762486284626282167987
+// #define PI 3.141592653589793238462643383
+// #define PI52 17.49341832762486284626282167987
 
 #if FULL_DOUBLE || !AINT_MP
-static __inline__ __device__ double os_fetch_double(texture<int2, 2> t, float x,
-                                                    float y) {
-  int2 v = tex2D(t, x, y);
+static __inline__ __device__ double os_fetch_double(cudaTextureObject_t t,
+                                                    float x, float y) {
+  int2 v = tex2D<int2>(t, x, y);
   return __hiloint2double(v.y, v.x);
 }
 #define os_fetch(t, x, y) os_fetch_double(t, x, y)
 #else
-#define os_fetch(t, x, y) tex2D(t, x, y)
+#define os_fetch(t, x, y) tex2D<float>(t, x, y)
 #endif
 
 //

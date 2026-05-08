@@ -22,13 +22,6 @@
 using namespace std;
 
 namespace G2G {
-#if FULL_DOUBLE
-texture<int2, 2, cudaReadModeElementType> rmm_gpu_tex;
-texture<int2, 2, cudaReadModeElementType> tred_gpu_tex;
-#else
-texture<float, 2, cudaReadModeElementType> rmm_gpu_tex;
-texture<float, 2, cudaReadModeElementType> tred_gpu_tex;
-#endif
 
 #include "../../cuda/kernels/transpose.h"
 #include "obtain_fock_cuda.h"
@@ -130,14 +123,36 @@ void PointGroupGPU<scalar_type>::solve_closed_lr(double* T, HostMatrix<double>& 
    }
 
 // Form Bind Textures
+   cudaChannelFormatDesc tred_channelDesc;
+#if FULL_DOUBLE
+   tred_channelDesc = cudaCreateChannelDesc<int2>();
+#else
+   tred_channelDesc = cudaCreateChannelDesc<float>();
+#endif
    cudaArray* cuArraytred;
-   cudaMallocArray(&cuArraytred, &tred_gpu_tex.channelDesc, tred_cpu.width, tred_cpu.height);
+   cudaMallocArray(&cuArraytred, &tred_channelDesc, tred_cpu.width, tred_cpu.height);
    cudaMemcpyToArray(cuArraytred,0,0,tred_cpu.data,sizeof(scalar_type)*tred_cpu.width*tred_cpu.height,cudaMemcpyHostToDevice);
-   cudaBindTextureToArray(tred_gpu_tex, cuArraytred);
+
+   cudaResourceDesc tred_resDesc;
+   memset(&tred_resDesc, 0, sizeof(tred_resDesc));
+   tred_resDesc.resType = cudaResourceTypeArray;
+   tred_resDesc.res.array.array = cuArraytred;
+
+   cudaTextureDesc tred_texDesc;
+   memset(&tred_texDesc, 0, sizeof(tred_texDesc));
+   tred_texDesc.addressMode[0] = cudaAddressModeClamp;
+   tred_texDesc.addressMode[1] = cudaAddressModeClamp;
+   tred_texDesc.filterMode = cudaFilterModePoint;
+   tred_texDesc.readMode = cudaReadModeElementType;
+   tred_texDesc.normalizedCoords = 0;
+
+   cudaTextureObject_t tred_gpu_tex = 0;
+   cudaCreateTextureObject(&tred_gpu_tex, &tred_resDesc, &tred_texDesc, NULL);
    tred_cpu.deallocate();
 
 // CALCULATE PARTIAL DENSITIES
 #define compden_parameter \
+   tred_gpu_tex, \
    this->number_of_points,function_values_transposed.data,group_m,gradient_values_transposed.data,\
    partial_tred_gpu.data,tredxyz_gpu.data
    ES_compute_partial<scalar_type,true,true,false><<<threadGrid, threadBlock>>>(compden_parameter);
@@ -211,7 +226,7 @@ void PointGroupGPU<scalar_type>::solve_closed_lr(double* T, HostMatrix<double>& 
 
 // Free Memory
    smallFock.deallocate();
-   cudaUnbindTexture(tred_gpu_tex);
+   cudaDestroyTextureObject(tred_gpu_tex);
    cudaFreeArray(cuArraytred);
    Txyz.deallocate();
    Dxyz.deallocate();
@@ -303,14 +318,36 @@ template<class scalar_type> void PointGroupGPU<scalar_type>::
    }
 
 // Form Bind Textures
+   cudaChannelFormatDesc rmm_channelDesc;
+#if FULL_DOUBLE
+   rmm_channelDesc = cudaCreateChannelDesc<int2>();
+#else
+   rmm_channelDesc = cudaCreateChannelDesc<float>();
+#endif
    cudaArray* cuArrayrmm;
-   cudaMallocArray(&cuArrayrmm, &rmm_gpu_tex.channelDesc, rmm_cpu.width, rmm_cpu.height);
+   cudaMallocArray(&cuArrayrmm, &rmm_channelDesc, rmm_cpu.width, rmm_cpu.height);
    cudaMemcpyToArray(cuArrayrmm,0,0,rmm_cpu.data,sizeof(scalar_type)*rmm_cpu.width*rmm_cpu.height,cudaMemcpyHostToDevice);
-   cudaBindTextureToArray(rmm_gpu_tex, cuArrayrmm);
+
+   cudaResourceDesc rmm_resDesc;
+   memset(&rmm_resDesc, 0, sizeof(rmm_resDesc));
+   rmm_resDesc.resType = cudaResourceTypeArray;
+   rmm_resDesc.res.array.array = cuArrayrmm;
+
+   cudaTextureDesc rmm_texDesc;
+   memset(&rmm_texDesc, 0, sizeof(rmm_texDesc));
+   rmm_texDesc.addressMode[0] = cudaAddressModeClamp;
+   rmm_texDesc.addressMode[1] = cudaAddressModeClamp;
+   rmm_texDesc.filterMode = cudaFilterModePoint;
+   rmm_texDesc.readMode = cudaReadModeElementType;
+   rmm_texDesc.normalizedCoords = 0;
+
+   cudaTextureObject_t rmm_gpu_tex = 0;
+   cudaCreateTextureObject(&rmm_gpu_tex, &rmm_resDesc, &rmm_texDesc, NULL);
    rmm_cpu.deallocate();
 
 // CALCULATE PARTIAL DENSITIES
 #define compden_parameter \
+   rmm_gpu_tex, \
    this->number_of_points,function_values_transposed.data,group_m,gradient_values_transposed.data, \
    partial_densities_gpu.data,dxyz_gpu.data
    GS_compute_partial<scalar_type,true,true,false><<<threadGrid, threadBlock>>>(compden_parameter);
@@ -325,7 +362,7 @@ template<class scalar_type> void PointGroupGPU<scalar_type>::
 #undef accumulate_parameters
 
 // FREE MEMORY
-   cudaUnbindTexture(rmm_gpu_tex);
+   cudaDestroyTextureObject(rmm_gpu_tex);
    cudaFreeArray(cuArrayrmm);
    partial_densities_gpu.deallocate();
    dxyz_gpu.deallocate();
