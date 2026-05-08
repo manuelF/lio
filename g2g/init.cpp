@@ -5,6 +5,7 @@
 #include <fenv.h>
 #include <signal.h>
 #include <cassert>
+#include <cstdint>
 #include "common.h"
 #include "init.h"
 #include "timer.h"
@@ -53,6 +54,18 @@ extern "C" void g2g_init_(void) {
     if (verbose > 2) cout << "  GPU Device used: " << devprop.name << endl;
   }
   G2G::gpu_threads = devcount;
+
+  // Keep the default stream-ordered memory pool from returning freed blocks
+  // to the driver between allocations. Without this, cudaFreeAsync trims
+  // back to the driver on every call and we lose the pooling benefit.
+  for (int i = 0; i < devcount; i++) {
+    cudaMemPool_t mempool;
+    if (cudaDeviceGetDefaultMemPool(&mempool, i) == cudaSuccess) {
+      uint64_t threshold = UINT64_MAX;
+      cudaMemPoolSetAttribute(mempool, cudaMemPoolAttrReleaseThreshold,
+                              &threshold);
+    }
+  }
 #endif
 #if CPU_KERNELS
   G2G::cpu_threads = max_threads - G2G::gpu_threads;
