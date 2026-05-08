@@ -100,6 +100,7 @@ ifeq ($(intel),0)
   FC      = gfortran
   LC      = gfortran
   FFLAGS += -cpp -I$(OBJPATH) -J$(OBJPATH)
+  FFLAGS += -fallow-argument-mismatch
   LFLAGS += -L/usr/lib
   LIBS   += -lblas -llapack
 
