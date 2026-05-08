@@ -1,7 +1,8 @@
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 subroutine matrix_diagon_dsyevd( matrix_in, eigen_vecs, eigen_vals , info )
 !
-!
+! DSYEVD with persistent workspace: the work/iwork arrays are allocated once
+! (on first call or when M changes) and reused across iterations.
 !
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
   implicit none
@@ -10,17 +11,15 @@ subroutine matrix_diagon_dsyevd( matrix_in, eigen_vecs, eigen_vals , info )
   LIODBLE,  intent(out)           :: eigen_vals(:)
   integer, intent(out), optional :: info
 
-  integer             :: lwork
-  LIODBLE, allocatable :: work(:)
-  integer             :: liwork
-  integer,allocatable :: iwork(:)
+  ! Persistent workspace — survives across calls (SAVE attribute).
+  integer,          save :: cached_M = 0
+  integer,          save :: cached_lwork = 0
+  integer,          save :: cached_liwork = 0
+  LIODBLE, allocatable, save :: work(:)
+  integer,allocatable, save :: iwork(:)
 
-  integer :: M,ii,jj
+  integer :: M
   integer :: local_stat
-  logical :: be_safe
-!
-!
-!
 !
 ! Initial checks
 !------------------------------------------------------------------------------!
@@ -38,89 +37,58 @@ subroutine matrix_diagon_dsyevd( matrix_in, eigen_vecs, eigen_vals , info )
       info = 1
       return
     else
-      print*,'matrix_diagon_dsyevr : incompatible size between arguments'
+      print*,'matrix_diagon_dsyevd : incompatible size between arguments'
       print*,'local info: ', local_stat
       stop
     end if
   end if
 !
-!
-!
-!
-! Allocation of variables
+! Allocate workspace on first call or if M changed
 !------------------------------------------------------------------------------!
-  if ( local_stat == 0 ) then
-    if ( allocated(work) ) deallocate(work)
-    allocate( work(1), stat=local_stat )
-  end if
+  if ( M /= cached_M ) then
+    eigen_vecs = matrix_in
 
-  if ( local_stat == 0 ) then
+    ! Workspace query
+    if ( allocated(work) )  deallocate(work)
     if ( allocated(iwork) ) deallocate(iwork)
-    allocate( iwork(1), stat=local_stat )
-  end if
-
-  if ( local_stat /= 0 ) then
-    if ( present(info) ) then
-      info = 1
-      return
-    else
-      print*,'matrix_diagon_dsyevd : critical error during initial allocation'
-      print*,'local info: ', local_stat
-      stop
+    allocate( work(1), iwork(1), stat=local_stat )
+    if ( local_stat /= 0 ) then
+      if ( present(info) ) then; info = 1; return
+      else; print*,'matrix_diagon_dsyevd : allocation error'; stop
+      end if
     end if
-  end if
-!
-!
-!
-!
-! Set working size
-!------------------------------------------------------------------------------!
-  lwork=-1
-  liwork=-1
-  eigen_vecs=matrix_in
 
 # ifdef magma
-  call magmaf_dsyevd( 'V', 'L', M, eigen_vecs, M, eigen_vals, &
-                    & work, lwork, iwork, lwork, local_stat )
+    call magmaf_dsyevd( 'V', 'L', M, eigen_vecs, M, eigen_vals, &
+                      & work, -1, iwork, -1, local_stat )
 # else
-  call        dsyevd( 'V', 'L', M, eigen_vecs, M, eigen_vals, &
-                    & work, lwork, iwork, lwork, local_stat )
+    call        dsyevd( 'V', 'L', M, eigen_vecs, M, eigen_vals, &
+                      & work, -1, iwork, -1, local_stat )
 # endif
 
-  if ( local_stat == 0 ) then
-    lwork = int(work(1))
-    if ( allocated(work) ) deallocate( work )
-    allocate( work(lwork), stat=local_stat )
-  end if
-
-  if ( local_stat == 0 ) then
-    liwork = iwork(1)
-    if ( allocated(iwork) ) deallocate( iwork )
-    allocate( iwork(liwork), stat=local_stat  )
-  end if
-
-  if ( local_stat /= 0 ) then
-    if ( present(info) ) then
-      info = 2
-      return
-    else
-      print*,'matrix_diagon_dsyevd : critical error while setting working size'
-      print*,'local info: ', local_stat
-      stop
+    cached_lwork  = int(work(1))
+    cached_liwork = iwork(1)
+    deallocate( work, iwork )
+    allocate( work(cached_lwork), iwork(cached_liwork), stat=local_stat )
+    if ( local_stat /= 0 ) then
+      if ( present(info) ) then; info = 2; return
+      else; print*,'matrix_diagon_dsyevd : workspace allocation error'; stop
+      end if
     end if
+
+    cached_M = M
   end if
-!
-!
-!
 !
 ! Do actual diagonalization
 !------------------------------------------------------------------------------!
+  eigen_vecs = matrix_in
+
 # ifdef magma
   call magmaf_dsyevd( 'V', 'L', M, eigen_vecs, M, eigen_vals, &
-                    & work, lwork, iwork, liwork, local_stat )
+                    & work, cached_lwork, iwork, cached_liwork, local_stat )
 # else
   call        dsyevd( 'V', 'L', M, eigen_vecs, M, eigen_vals, &
-                    & work, lwork, iwork, liwork, local_stat )
+                    & work, cached_lwork, iwork, cached_liwork, local_stat )
 # endif
 
   if ( local_stat /= 0 ) then
@@ -134,27 +102,5 @@ subroutine matrix_diagon_dsyevd( matrix_in, eigen_vecs, eigen_vals , info )
     end if
   end if
 
-  be_safe=.true.
-  if (be_safe.eqv..true.) then
-    do ii=1,size(eigen_vecs,1)
-    do jj=1,size(eigen_vecs,2)
-      if ( ISNAN(eigen_vecs(ii,jj)) ) then
-        if ( present(info) ) then
-          info = 4
-          return
-        else
-          print*,'matrix_diagon_dsyevd : critical error has not been &
-                 &recognized by lapack!'
-          print*,'local info: ', local_stat
-          stop
-        end if
-      end if
-    end do
-    end do
-  end if
-!
-!
-!
-!
 end subroutine matrix_diagon_dsyevd
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!

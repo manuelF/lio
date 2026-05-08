@@ -4,180 +4,215 @@
 ! Calculates Coulomb elements for the Fock matrix, and 2e energy.              !
 !                                                                              !
 ! EXTERNAL INPUT: system information.                                          !
-!   · rho(M,M): density matrix.                                                !
-!   · Fmat(M,M): Fock matrix (Fock alpha in open shell).                       !
-!   · Fmat_b(M,M): Fock beta matrix (ignored in closed shell).                 !
-!   · Gmat(M,M): Coulomb G matrix.                                             !
-!   · Ginv(M,M): Inverted coulomb G matrix.                                    !
-!   · Hmat(M,M): 1e matrix elements.                                           !
+!   · rho(MM): packed density matrix.                                          !
+!   · Fmat(MM): packed Fock matrix (alpha in open shell).                      !
+!   · Fmat_b(MM): packed Fock beta matrix (ignored in closed shell).           !
+!   · Gmat(MMd): packed Coulomb G matrix (lower triangular).                   !
+!   · Ginv(MMd): packed inverted Coulomb G matrix (lower triangular).          !
+!   · Hmat(MM): packed 1e matrix elements.                                     !
 !   · open_shell: boolean indicating open-shell calculation.                   !
+!   · memo: if .true., use precalculated integrals (cool/cools); otherwise     !
+!           recompute via aint_coulomb_fock.                                    !
 !                                                                              !
-! INTERNAL INPUT: basis set information.                                       !
-!   · M: number of basis functions (without contractions)                      !
-!   · Md: number of auxiliary basis functions (without contractions)           !
-!   · af(Md): variational coefficient for auxiliary function i.                !
-!   · MEMO: indicates if cool/kkind/kknum are stored in memory. This is not    !
-!           used when performing analytic integrals in GPU.                    !
-!   · cool: precalculated 2e terms in LIODBLE.                        !
-!   · kkind: precalculated indexes for LIODBLE Fock matrix elements.  !
-!   · kknumd: number of precalculated LIODBLE Fock matrix elements.   !
-!   · cools: precalculated 2e terms in single precision.                       !
-!   · kkinds: precalculated indexes for single precision Fock matrix elements. !
-!   · kknums: number of precalculated single precision Fock matrix elements.   !
+! INTERNAL INPUT (from basis_data module):                                     !
+!   · M: number of basis functions.                                            !
+!   · Md: number of auxiliary (fitting) basis functions.                        !
+!   · cool(Md*kknumd): precalculated 3-center integrals, double precision.     !
+!     Laid out as a (Md x kknumd) column-major matrix: element (k, kk) is at   !
+!     cool((kk-1)*Md + k). Each column kk holds the Md fitting integrals for   !
+!     basis pair kk.                                                           !
+!   · cools(Md*kknums): same layout as cool, but single precision.             !
+!   · kkind(kknumd): maps double-precision pair index kk to packed rho/Fmat    !
+!     position.                                                                !
+!   · kkinds(kknums): maps single-precision pair index kk to packed rho/Fmat   !
+!     position.                                                                !
+!   · kknumd: count of double-precision integral pairs.                        !
+!   · kknums: count of single-precision integral pairs.                        !
+!   · af(Md): variational fitting coefficients (output, written here).         !
 !                                                                              !
 ! EXTERNAL OUTPUTS:                                                            !
-!   · E2: 2e coulomb energy.                                                   !
+!   · E2: 2e Coulomb energy.                                                   !
+!                                                                              !
+! ALGORITHM (MEMO path):                                                       !
+!   1. Rc accumulation: Rc(k) = sum_kk t(k,kk) * rho(kkind(kk))              !
+!      This is a matrix-vector product: Rc = cool * rho_gathered               !
+!      (DGEMV for double, SGEMV for single-precision integrals).               !
+!   2. Fitting coefficients: af = Ginv * Rc                                    !
+!      Packed symmetric matrix-vector product (DSPMV).                         !
+!   3. Energy: Ea = af . Rc  (DDOT)                                            !
+!              Eb = af^T * Gmat * af  (DSPMV + DDOT)                           !
+!              E2 = Ea - Eb/2                                                  !
+!   4. Fock update: Fmat(kkind(kk)) += sum_k af(k) * t(k,kk)                  !
+!      This is the transpose product: terms = cool^T * af, then scatter-add    !
+!      (DGEMV('T') for double, SGEMV('T') for single).                         !
 !                                                                              !
 ! Original and debugged (or supposed to): Dario Estrin Jul/1992                !
 ! Refactored:                             Federico Pedron Sep/2018             !
+! Optimized with BLAS:                    Claude/Manuel Mar/2026               !
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
-#include "../datatypes/datatypes.fh"
 module subm_int3lu
+   implicit none
+   private
+   public :: int3lu
+
+   ! Persistent work arrays — allocated once on first MEMO call, reused every
+   ! iteration. Avoids 25 × 8 allocate/deallocate pairs per SCF run.
+   double precision, allocatable, save :: Rc_w(:), aux_w(:)
+   double precision, allocatable, save :: rho_gathered_w(:), terms_d_w(:)
+   real            , allocatable, save :: rho_s_w(:), Rc_s_w(:)
+   real            , allocatable, save :: af_s_w(:), terms_s_w(:)
+   integer, save :: saved_Md = 0, saved_kknumd = 0, saved_kknums = 0
+
 contains
 subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo)
-!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
-! Integrals subroutines - 2e integrals, 3 index                                !
-! Wavefunction and density fitting functions are calculated using the          !
-! Obara-Saika recursive method.                                                !
-! Inputs: G, F, standard basis and density basis.                              !
-! F should already have the 1e part, and here the Coulomb part is added without!
-! storing the integrals separately.                                            !
-! Output: F updated with Coulomb part, also Coulomb energy.                    !
-!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
    use basis_data, only: M, Md, cool, cools, kkind, kkinds, kknumd, kknums, &
                          af, MM, MMd
 
    implicit none
    logical         , intent(in) :: open_shell, memo
-   LIODBLE, intent(in) :: rho(:), Gmat(:), Ginv(:), Hmat(:)
-   LIODBLE, intent(inout) :: E2, Fmat_b(:), Fmat(:)
+   double precision, intent(in) :: rho(:), Gmat(:), Ginv(:), Hmat(:)
+   double precision, intent(inout) :: E2, Fmat_b(:), Fmat(:)
 
-   LIODBLE, allocatable :: Rc(:), aux(:)
-   LIODBLE :: Ea, Eb, term
-   integer          :: ll(3), iikk, k_ind, kk_ind, m_ind
+   double precision :: Ea, Eb
+   integer          :: ll(3), k_ind, kk_ind, m_ind
 
-   ! 16 loops for all combinations - 1-2: for wavefunction basis, 3 for the
-   ! density fitting.
-   ! Rc(k) is constructed adding t(i,j,k)*P(i,j), and cf(k), the variationally
-   ! obtained fitting coefficient, is obtained by adding R(i)*G-1(i,k)
-   ! if t(i,j,k) is not stored, they should be calculated again in order to
-   ! evaluate the corresponding part of the Fock matrix.
-   ! V(i,j) is obtained by adding af(k_ind) * t(i,j,k).
-   allocate(Rc(Md), aux(md))
+   ! BLAS function declarations
+   double precision, external :: ddot
+
    Ea = 0.D0 ; Eb = 0.D0
 
-   MM=M*(M+1)/2
-   MMd=Md*(Md+1)/2
+   MM = M * (M + 1) / 2
+   MMd = Md * (Md + 1) / 2
 
    if (MEMO) then
       call g2g_timer_start('int3lu - start')
 
+      ! Reallocate persistent work arrays only when sizes change (first call
+      ! or if basis changes between SCF runs in MD).
+      if (Md /= saved_Md .or. kknumd /= saved_kknumd .or. &
+          kknums /= saved_kknums) then
+         if (allocated(Rc_w))           deallocate(Rc_w)
+         if (allocated(aux_w))          deallocate(aux_w)
+         if (allocated(rho_gathered_w)) deallocate(rho_gathered_w)
+         if (allocated(terms_d_w))      deallocate(terms_d_w)
+         if (allocated(rho_s_w))        deallocate(rho_s_w)
+         if (allocated(Rc_s_w))         deallocate(Rc_s_w)
+         if (allocated(af_s_w))         deallocate(af_s_w)
+         if (allocated(terms_s_w))      deallocate(terms_s_w)
+
+         allocate(Rc_w(Md), aux_w(Md))
+         if (kknumd > 0) allocate(rho_gathered_w(kknumd), terms_d_w(kknumd))
+         if (kknums > 0) allocate(rho_s_w(kknums), Rc_s_w(Md), &
+                                  af_s_w(Md), terms_s_w(kknums))
+         saved_Md = Md
+         saved_kknumd = kknumd
+         saved_kknums = kknums
+      endif
+
       do k_ind = 1, 3
-         Ll(k_ind) = k_ind * (k_ind-1) / 2
+         Ll(k_ind) = k_ind * (k_ind - 1) / 2
       enddo
 
-      do k_ind = 1, Md
-         Rc(k_ind) = 0.D0
-      enddo
+      !--------------------------------------------------------------------
+      ! STEP 1: Rc accumulation
+      !   Rc(k) = sum over basis pairs kk of: rho(kkind(kk)) * cool(k, kk)
+      !--------------------------------------------------------------------
 
-      do kk_ind = 1, kknumd
-         iikk = (kk_ind - 1) * Md
-         do k_ind = 1, Md
-            Rc(k_ind) = Rc(k_ind) + rho(kkind(kk_ind)) * cool(iikk + k_ind)
+      ! Double-precision integrals: Rc = cool(Md, kknumd) * rho_gathered
+      Rc_w = 0.0D0
+      if (kknumd > 0) then
+         do kk_ind = 1, kknumd
+            rho_gathered_w(kk_ind) = rho(kkind(kk_ind))
          enddo
-      enddo
-
-      do kk_ind = 1, kknums
-         iikk = (kk_ind - 1) * Md
-         do k_ind = 1, Md
-            Rc(k_ind) = Rc(k_ind) + rho(kkinds(kk_ind)) * cools(iikk + k_ind)
-         enddo
-      enddo
-
-      ! Calculation of variational coefficients and fitting coefficients
-      do m_ind = 1, Md
-         af(m_ind) = 0.0D0
-         do k_ind = 1, m_ind-1
-            af(m_ind) = af(m_ind) + &
-                        Rc(k_ind) * Ginv(m_ind + (2*Md-k_ind)*(k_ind-1)/2)
-         enddo
-         do k_ind = m_ind, Md
-            af(m_ind) = af(m_ind) + &
-                        Rc(k_ind) * Ginv(k_ind + (2*Md-m_ind)*(m_ind-1)/2)
-         enddo
-      enddo
-
-      ! Initialization of Fock matrix elements
-      do k_ind = 1, MM
-         Fmat(k_ind) = Hmat(k_ind)
-      enddo
-      if (open_shell) then
-      do k_ind = 1, MM
-         Fmat_b(k_ind) = Hmat(k_ind)
-      enddo
+         call dgemv('N', Md, kknumd, 1.0D0, cool, Md, rho_gathered_w, 1, &
+                    0.0D0, Rc_w, 1)
       endif
 
-      do m_ind = 1, Md
-         Ea = Ea + af(m_ind)  * Rc(m_ind)
-         do k_ind = 1, m_ind
-            Eb = Eb + af(k_ind) * af(m_ind) * &
-                      Gmat(m_ind + (2*Md-k_ind)*(k_ind-1)/2)
+      ! Single-precision integrals: Rc += cools(Md, kknums) * rho_s
+      if (kknums > 0) then
+         do kk_ind = 1, kknums
+            rho_s_w(kk_ind) = real(rho(kkinds(kk_ind)))
          enddo
-         do k_ind = m_ind+1, Md
-            Eb = Eb + af(k_ind) * af(m_ind) * &
-                      Gmat(k_ind + (2*Md-m_ind)*(m_ind-1)/2)
-         enddo
-      enddo
-
-      ! Calculation of all integrals again, in order to build the Fock matrix.
-      aux = 0.0D0
-      if (open_shell) then
+         call sgemv('N', Md, kknums, 1.0, cools, Md, rho_s_w, 1, &
+                    0.0, Rc_s_w, 1)
          do k_ind = 1, Md
-            aux(k_ind) = af(k_ind)
+            Rc_w(k_ind) = Rc_w(k_ind) + dble(Rc_s_w(k_ind))
          enddo
       endif
+
+      !--------------------------------------------------------------------
+      ! STEP 2: Fitting coefficients  af = Ginv * Rc
+      !--------------------------------------------------------------------
+      call dspmv('L', Md, 1.0D0, Ginv, Rc_w, 1, 0.0D0, af, 1)
+
+      ! Initialize Fock matrix from one-electron integrals
+      Fmat(1:MM) = Hmat(1:MM)
+      if (open_shell) Fmat_b(1:MM) = Hmat(1:MM)
+
+      !--------------------------------------------------------------------
+      ! STEP 3: Two-electron Coulomb energy
+      !--------------------------------------------------------------------
+      Ea = ddot(Md, af, 1, Rc_w, 1)
+      call dspmv('L', Md, 1.0D0, Gmat, af, 1, 0.0D0, aux_w, 1)
+      Eb = ddot(Md, af, 1, aux_w, 1)
 
       call g2g_timer_stop('int3lu - start')
       call g2g_timer_start('int3lu')
+
+      !--------------------------------------------------------------------
+      ! STEP 4: Fock matrix update (Coulomb contribution)
+      !--------------------------------------------------------------------
       if (open_shell) then
-         do kk_ind = 1, kknumd
-            iikk = (kk_ind - 1) * Md
-            do k_ind = 1, Md
-               Fmat(kkind(kk_ind)) = Fmat(kkind(kk_ind)) + &
-                                     af(k_ind)  * cool(iikk + k_ind)
-               Fmat_b(kkind(kk_ind)) = Fmat_b(kkind(kk_ind)) + &
-                                       aux(k_ind) * cool(iikk + k_ind)
+         ! Double-precision Fock update (open-shell)
+         if (kknumd > 0) then
+            call dgemv('T', Md, kknumd, 1.0D0, cool, Md, af, 1, &
+                       0.0D0, terms_d_w, 1)
+            do kk_ind = 1, kknumd
+               Fmat(kkind(kk_ind))   = Fmat(kkind(kk_ind))   + terms_d_w(kk_ind)
+               Fmat_b(kkind(kk_ind)) = Fmat_b(kkind(kk_ind)) + terms_d_w(kk_ind)
             enddo
-         enddo
-         do kk_ind = 1, kknums
-            iikk = (kk_ind - 1) * Md
+         endif
+
+         ! Single-precision Fock update (open-shell)
+         if (kknums > 0) then
             do k_ind = 1, Md
-               Fmat(kkinds(kk_ind)) = Fmat(kkinds(kk_ind)) + &
-                                      af(k_ind)  * cools(iikk + k_ind)
+               af_s_w(k_ind) = real(af(k_ind))
+            enddo
+            call sgemv('T', Md, kknums, 1.0, cools, Md, af_s_w, 1, &
+                       0.0, terms_s_w, 1)
+            do kk_ind = 1, kknums
+               Fmat(kkinds(kk_ind))   = Fmat(kkinds(kk_ind))   + &
+                                        dble(terms_s_w(kk_ind))
                Fmat_b(kkinds(kk_ind)) = Fmat_b(kkinds(kk_ind)) + &
-                                        aux(k_ind) * cools(iikk + k_ind)
+                                        dble(terms_s_w(kk_ind))
             enddo
-         enddo
+         endif
       else
-         do kk_ind = 1, kknumd
-            iikk = (kk_ind - 1) * Md
-            term = 0.0D0
-            do k_ind = 1, Md
-              term = term + af(k_ind) * cool(iikk + k_ind)
+         ! Double-precision Fock update (closed-shell)
+         if (kknumd > 0) then
+            call dgemv('T', Md, kknumd, 1.0D0, cool, Md, af, 1, &
+                       0.0D0, terms_d_w, 1)
+            do kk_ind = 1, kknumd
+               Fmat(kkind(kk_ind)) = Fmat(kkind(kk_ind)) + terms_d_w(kk_ind)
             enddo
-            Fmat(kkind(kk_ind)) = Fmat(kkind(kk_ind)) + term
-         enddo
-         do kk_ind = 1, kknums
-            iikk = (kk_ind - 1) * Md
-            term = 0.0D0
+         endif
+
+         ! Single-precision Fock update (closed-shell)
+         if (kknums > 0) then
             do k_ind = 1, Md
-              term = term + af(k_ind) * cools(iikk + k_ind)
+               af_s_w(k_ind) = real(af(k_ind))
             enddo
-            Fmat(kkinds(kk_ind)) = Fmat(kkinds(kk_ind)) + term
-         enddo
+            call sgemv('T', Md, kknums, 1.0, cools, Md, af_s_w, 1, &
+                       0.0, terms_s_w, 1)
+            do kk_ind = 1, kknums
+               Fmat(kkinds(kk_ind)) = Fmat(kkinds(kk_ind)) + &
+                                      dble(terms_s_w(kk_ind))
+            enddo
+         endif
       endif
       call g2g_timer_stop('int3lu')
    else
+      ! Non-MEMO path: recompute integrals on the fly via GPU analytic code.
       do k_ind = 1, MM
          Fmat(k_ind) = Hmat(k_ind)
          if (open_shell) Fmat_b(k_ind) = Hmat(k_ind)
@@ -197,7 +232,6 @@ subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo)
    endif
 
    E2 = Ea - Eb / 2.D0
-   deallocate(Rc, aux)
    return
 end subroutine int3lu
 end module subm_int3lu
