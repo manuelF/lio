@@ -114,6 +114,13 @@ endif
 include Makefile.excited
 include Makefile.cioverlap
 
+# Split targets so the top-level Makefile can overlap g2g and lioamber
+# object compilation under `make -j`. Declared after every Makefile.* include
+# so $(OBJ) is fully populated (libint, excited, cioverlap, ...).
+.PHONY: compile link
+compile: $(OBJ)
+link: $(LIBRARY)
+
 depend:
 	@touch Makefile.depends
 	@makedepend -Y -fMakefile.depends $(SRCS) > /dev/null 2>&1

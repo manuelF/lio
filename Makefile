@@ -1,21 +1,31 @@
 ################################################################################
 # LIO MAKEFILE ################################################################################
 
-all: liosolo liblio g2g tools
+all: liosolo tools
 
+# Compilation phases — no cross-dependencies, run in parallel under `make -j`.
+# lioamber's .o files don't need libg2g.so; only the link step does.
+.PHONY: g2g-compile lioamber-compile
+g2g-compile:
+	$(MAKE) -C g2g compile
+
+lioamber-compile:
+	$(MAKE) -C lioamber compile
+
+# g2g link — needs only g2g objects
+.PHONY: g2g
+g2g: g2g-compile
+	$(MAKE) -C g2g link
+
+# lioamber link — needs its own objects AND libg2g.so
+.PHONY: liblio
+liblio: lioamber-compile g2g
+	$(MAKE) -C lioamber link
+
+# liosolo — needs both .so files
 .PHONY: liosolo
 liosolo: liblio
 	$(MAKE) -C liosolo
-
-
-.PHONY: liblio
-liblio: g2g
-	$(MAKE) -C lioamber
-
-
-.PHONY: g2g
-g2g:
-	$(MAKE) -C g2g
 
 .PHONY: tools
 tools:

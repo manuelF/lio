@@ -78,6 +78,12 @@ $(OBJPATH)/%.o :  %.f90 $(MAKEFILES) | $(OBJPATH)
 liblio-g2g.so : $(OBJECTS:%.o=$(OBJPATH)/%.o)
 	$(LC) $^ $(LFLAGS) $(LIBS) -o $@
 
+# Split targets so the top-level Makefile can overlap g2g and lioamber
+# object compilation under `make -j`.
+.PHONY: compile link
+compile: $(OBJECTS:%.o=$(OBJPATH)/%.o)
+link: liblio-g2g.so
+
 .PHONY: .FORCE
 .FORCE:
 
