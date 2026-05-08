@@ -93,20 +93,29 @@ __device__ void lio_gamma(scalar_type* __restrict__ F_mU, scalar_type U) {
 }
 
 //
-// Reduce an array within a single warp - no need for synchronization between
-// steps (but the "volatile" keyword is needed to avoid register-caching data
-// race issues)
+// Reduce 64 elements (sdata[tid] + sdata[tid+32], tid in [0,31]) to sdata[0].
+//
+// Callers guarantee that sdata[0..63] is fully written and __syncthreads() has
+// been called before invoking this function.
+//
+// Uses __shfl_down_sync instead of the old volatile shared-memory pattern to
+// eliminate the intra-warp data races flagged by compute-sanitizer --tool
+// racecheck.  The FP reduction tree is identical to the original, so numerical
+// results are bit-for-bit unchanged:
+//   step 0 : val  = sdata[tid] + sdata[tid+32]   (mirrors old volatile step 1)
+//   steps 1-5 : warp-shuffle tree                 (mirrors old volatile steps 2-6)
 //
 // Modified from presentation "Optimizing Parallel Reduction in CUDA" by Mark
 // Harris (Nvidia)
 template <class scalar_type>
 __device__ void warpReduce(volatile scalar_type* sdata, unsigned int tid) {
-  sdata[tid] += sdata[tid + 32];
-  sdata[tid] += sdata[tid + 16];
-  sdata[tid] += sdata[tid + 8];
-  sdata[tid] += sdata[tid + 4];
-  sdata[tid] += sdata[tid + 2];
-  sdata[tid] += sdata[tid + 1];
+  scalar_type val = sdata[tid] + sdata[tid + 32];
+  val += __shfl_down_sync(0xFFFFFFFF, val, 16);
+  val += __shfl_down_sync(0xFFFFFFFF, val, 8);
+  val += __shfl_down_sync(0xFFFFFFFF, val, 4);
+  val += __shfl_down_sync(0xFFFFFFFF, val, 2);
+  val += __shfl_down_sync(0xFFFFFFFF, val, 1);
+  if (tid == 0) sdata[0] = val;
 }
 
 //

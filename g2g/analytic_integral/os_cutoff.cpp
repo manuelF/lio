@@ -178,7 +178,7 @@ void OSIntegral<scalar_type>::new_cutoff(void) {
                   (2 * G2G::fortran_vars.m - ((j + j_orbital) + 1)) *
                       (j + j_orbital) / 2;
               this->dens_values.push_back(
-                  G2G::fortran_vars.rmm_input_ndens1.data[dens_ind]);
+                  (scalar_type)G2G::fortran_vars.rmm_input_ndens1.data[dens_ind]);
               this->local2globaldens.push_back(dens_ind);
               local_dens_ind++;
             }

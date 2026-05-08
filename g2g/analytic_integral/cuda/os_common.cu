@@ -318,9 +318,9 @@ void OSIntegral<scalar_type>::get_gradient_output(double* qm_forces, uint partia
     for (uint i = 0; i < G2G::fortran_vars.atoms; i++) {
       for (uint j = 0; j < partial_out_size; j++) {
         const auto& v = cpu_partial_qm_forces.data[i * w + j];
-        qm_forces[i + 0 * G2G::fortran_vars.atoms] += v.x;
-        qm_forces[i + 1 * G2G::fortran_vars.atoms] += v.y;
-        qm_forces[i + 2 * G2G::fortran_vars.atoms] += v.z;
+        qm_forces[i + 0 * G2G::fortran_vars.atoms] += (double)v.x;
+        qm_forces[i + 1 * G2G::fortran_vars.atoms] += (double)v.y;
+        qm_forces[i + 2 * G2G::fortran_vars.atoms] += (double)v.z;
       }
     }
 
