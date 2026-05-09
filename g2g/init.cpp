@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <cassert>
 #include <cstdint>
+#include "hardware_topo.h"
 #include "common.h"
 #include "init.h"
 #include "timer.h"
@@ -32,6 +33,7 @@ namespace G2G {
   FortranVars fortran_vars;
   int cpu_threads=0;
   int gpu_threads=0;
+  int recommended_blas_threads=0;
 }
 
 /* methods */
@@ -67,6 +69,23 @@ extern "C" void g2g_init_(void) {
     }
   }
 #endif
+  // Auto-tune: set recommended_blas_threads from hardware topology.
+  // When overlap is requested and OMP_NUM_THREADS is not explicitly set,
+  // cap OMP threads to leave headroom for the concurrent int3lu BLAS section.
+  // Formula calibrated on 5800X3D (8 phys / 16 logical): OMP=6, BLAS=4 optimal.
+  {
+    int phys = detect_physical_cores();
+    G2G::recommended_blas_threads = ::recommended_blas_threads(phys);
+    const char* ov = getenv("LIO_OVERLAP_INT3LU_G2G");
+    bool overlap_on = (ov && ov[0] == '1' && ov[1] == '\0');
+    if (overlap_on && getenv("OMP_NUM_THREADS") == nullptr) {
+      int n_omp = ::recommended_omp_threads(phys);
+      omp_set_num_threads(n_omp);
+      if (verbose > 1)
+        printf("  [overlap] auto OMP_NUM_THREADS=%d BLAS=%d (phys_cores=%d)\n",
+               n_omp, G2G::recommended_blas_threads, phys);
+    }
+  }
 #if CPU_KERNELS
   G2G::cpu_threads = max_threads - G2G::gpu_threads;
   if (G2G::cpu_threads < 0) G2G::cpu_threads = 0;
@@ -77,6 +96,9 @@ extern "C" void g2g_init_(void) {
   if (verbose > 2) cout << "  Using " << G2G::cpu_threads << " CPU Threads and "
        << G2G::gpu_threads << " GPU Threads." << endl;
 
+}
+extern "C" int g2g_recommended_blas_threads_(void) {
+  return G2G::recommended_blas_threads;
 }
 //==========================================================================================
 namespace G2G {
@@ -466,6 +488,44 @@ extern "C" void g2g_get_becke_spin_(double* fort_becke){
   }
 }
 
+//===============================================================================================================
+// Variant of g2g_solve_groups_ that writes the Fock contribution into a
+// caller-supplied buffer instead of fortran_vars.rmm_output.data. Caller is
+// responsible for zero-initializing fock_buffer before the call (it is treated
+// as a pure accumulation target by partition.solve()'s Kahan merge).
+//
+// Used to overlap int3lu (CPU BLAS Coulomb fit) with g2g_solve_groups (GPU+CPU
+// XC Fock) inside an OpenMP parallel sections block: the XC contribution lands
+// in the scratch buffer, and the caller adds it to Fmat after the merge.
+extern "C" void g2g_solve_groups_into_(
+    const uint& computation_type,
+    double* fort_energy_ptr,
+    double* fort_forces_ptr,
+    double* fock_buffer) {
+  double* saved = fortran_vars.rmm_output.data;
+  fortran_vars.rmm_output.data = fock_buffer;
+  g2g_solve_groups_(computation_type, fort_energy_ptr, fort_forces_ptr);
+  fortran_vars.rmm_output.data = saved;
+}
+
+// Open-shell variant: rebinds fortran_vars.rmm_output_a/_b to caller-supplied
+// alpha/beta scratch buffers for the duration of the call. Both buffers must
+// be pre-zeroed; partition.solve() Kahan-merges per-thread XC accumulators
+// into them.
+extern "C" void g2g_solve_groups_into_open_(
+    const uint& computation_type,
+    double* fort_energy_ptr,
+    double* fort_forces_ptr,
+    double* fock_buffer_a,
+    double* fock_buffer_b) {
+  double* saved_a = fortran_vars.rmm_output_a.data;
+  double* saved_b = fortran_vars.rmm_output_b.data;
+  fortran_vars.rmm_output_a.data = fock_buffer_a;
+  fortran_vars.rmm_output_b.data = fock_buffer_b;
+  g2g_solve_groups_(computation_type, fort_energy_ptr, fort_forces_ptr);
+  fortran_vars.rmm_output_a.data = saved_a;
+  fortran_vars.rmm_output_b.data = saved_b;
+}
 //================================================================================================================
 /* general options */
 namespace G2G {
