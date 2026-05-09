@@ -18,6 +18,16 @@ namespace G2G {
 int MINCOST, THRESHOLD, SPLITPOINTS;
 Partition partition;
 
+#if GPU_KERNELS
+// Defined in cuda/iteration.cu
+void gpu_scatter_zero_global_fock(unsigned int rmm_global_size, bool open);
+void gpu_scatter_download_global_fock(double* host_dst,
+                                      unsigned int rmm_global_size);
+void gpu_scatter_download_global_fock_open(double* host_dst_a,
+                                           double* host_dst_b,
+                                           unsigned int rmm_global_size);
+#endif
+
 ostream& operator<<(ostream& io, const Timers& t) {
   ostringstream ss;
   ss << "density = " << t.density << " rmm = " << t.rmm
@@ -440,6 +450,18 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
 
   Timer smallgroups, biggroups;
 
+#if GPU_KERNELS
+  // Zero the GPU-side packed Fock buffer(s) once before the parallel region.
+  // Each PointGroupGPU::solve_* will atomicAdd its local Fock contribution
+  // into this shared buffer via gpu_scatter_rmm; we download it after the
+  // parallel region.
+  if (compute_rmm && gpu_threads > 0) {
+    const unsigned int rmm_global_size =
+        fortran_vars.m * (fortran_vars.m + 1) / 2;
+    gpu_scatter_zero_global_fock(rmm_global_size, OPEN);
+  }
+#endif
+
 // Verificar si anda reduction (+:energy) FF
 #pragma omp parallel for num_threads(cpu_threads + gpu_threads) schedule( \
     static) reduction(+ : energy)
@@ -542,6 +564,27 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
   }
 
   if (compute_rmm) {
+#if GPU_KERNELS
+    // Download per-iteration GPU-side packed Fock into the GPU-thread slot of
+    // rmm_outputs (which was zeroed above). The existing accumulation loop
+    // then sums it into fortran_vars.rmm_output[_a/_b] like any CPU bin.
+    // Note: when cpu_threads >= 1 and gpu_threads >= 1 there is exactly one
+    // GPU thread at index `cpu_threads`. When gpu_threads == 0 we skip
+    // entirely. When cpu_threads == 0 the GPU thread sits at index 0.
+    if (gpu_threads > 0) {
+      const unsigned int rmm_global_size =
+          fortran_vars.m * (fortran_vars.m + 1) / 2;
+      const uint gpu_slot = cpu_threads;  // first GPU bin index
+      if (fortran_vars.OPEN) {
+        gpu_scatter_download_global_fock_open(rmm_outputs_a[gpu_slot].data,
+                                              rmm_outputs_b[gpu_slot].data,
+                                              rmm_global_size);
+      } else {
+        gpu_scatter_download_global_fock(rmm_outputs[gpu_slot].data,
+                                         rmm_global_size);
+      }
+    }
+#endif
     if (fortran_vars.OPEN) {
       double* dst_a = fortran_vars.rmm_output_a.data;
       double* dst_b = fortran_vars.rmm_output_b.data;

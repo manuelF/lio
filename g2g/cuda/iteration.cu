@@ -38,10 +38,60 @@ namespace G2G {
 #include "kernels/force.h"
 #include "kernels/transpose.h"
 #include "kernels/becke.h"
+#include "kernels/rmm_scatter.h"
 
 using std::cout;
 using std::vector;
 using std::endl;
+
+// GPU-side packed Fock buffers shared across all GPU groups within a single
+// Partition::solve() call. Each PointGroupGPU::solve_* atomicAdds its local
+// scatter into these; partition.cpp downloads them once after the parallel
+// region. Allocated lazily; zeroed by gpu_scatter_zero_global_fock.
+static CudaMatrix<double> s_global_fock_dev;
+static CudaMatrix<double> s_global_fock_a_dev;
+static CudaMatrix<double> s_global_fock_b_dev;
+
+void gpu_scatter_zero_global_fock(unsigned int rmm_global_size, bool open) {
+  if (!open) {
+    if (!s_global_fock_dev.is_allocated() ||
+        s_global_fock_dev.width != rmm_global_size) {
+      s_global_fock_dev.resize(rmm_global_size, 1);
+    }
+    cudaMemsetAsync(s_global_fock_dev.data, 0,
+                    rmm_global_size * sizeof(double), 0);
+  } else {
+    if (!s_global_fock_a_dev.is_allocated() ||
+        s_global_fock_a_dev.width != rmm_global_size) {
+      s_global_fock_a_dev.resize(rmm_global_size, 1);
+      s_global_fock_b_dev.resize(rmm_global_size, 1);
+    }
+    cudaMemsetAsync(s_global_fock_a_dev.data, 0,
+                    rmm_global_size * sizeof(double), 0);
+    cudaMemsetAsync(s_global_fock_b_dev.data, 0,
+                    rmm_global_size * sizeof(double), 0);
+  }
+}
+
+void gpu_scatter_download_global_fock(double* host_dst,
+                                      unsigned int rmm_global_size) {
+  if (!s_global_fock_dev.is_allocated()) return;
+  cudaMemcpy(host_dst, s_global_fock_dev.data,
+             rmm_global_size * sizeof(double), cudaMemcpyDeviceToHost);
+}
+
+void gpu_scatter_download_global_fock_open(double* host_dst_a,
+                                           double* host_dst_b,
+                                           unsigned int rmm_global_size) {
+  if (s_global_fock_a_dev.is_allocated()) {
+    cudaMemcpy(host_dst_a, s_global_fock_a_dev.data,
+               rmm_global_size * sizeof(double), cudaMemcpyDeviceToHost);
+  }
+  if (s_global_fock_b_dev.is_allocated()) {
+    cudaMemcpy(host_dst_b, s_global_fock_b_dev.data,
+               rmm_global_size * sizeof(double), cudaMemcpyDeviceToHost);
+  }
+}
 
 //extern "C" void g2g_timer_sum_start_(const char* timer_name, unsigned int length_arg);
 //extern "C" void g2g_timer_sum_stop_(const char* timer_name, unsigned int length_arg);
@@ -525,9 +575,34 @@ void PointGroupGPU<scalar_type>::solve_closed(
 
     cudaAssertNoError("update_rmm");
 
-    /*** Contribute this RMM to the total RMM ***/
-    HostMatrix<scalar_type> rmm_output_cpu(rmm_output_gpu);
-    this->add_rmm_output(rmm_output_cpu, rmm_output_local);
+    /*** Scatter local Fock to global packed Fock on GPU ***/
+    {
+      const unsigned int n_indexes = this->rmm_bigs.size();
+      if (n_indexes > 0) {
+        if (!this->rmm_bigs_gpu.is_allocated()) {
+          this->rmm_bigs_gpu.resize(n_indexes, 1);
+          this->rmm_rows_gpu.resize(n_indexes, 1);
+          this->rmm_cols_gpu.resize(n_indexes, 1);
+          cudaMemcpy(this->rmm_bigs_gpu.data, this->rmm_bigs.data(),
+                     n_indexes * sizeof(unsigned int),
+                     cudaMemcpyHostToDevice);
+          cudaMemcpy(this->rmm_rows_gpu.data, this->rmm_rows.data(),
+                     n_indexes * sizeof(unsigned int),
+                     cudaMemcpyHostToDevice);
+          cudaMemcpy(this->rmm_cols_gpu.data, this->rmm_cols.data(),
+                     n_indexes * sizeof(unsigned int),
+                     cudaMemcpyHostToDevice);
+        }
+        const unsigned int rmm_width = COALESCED_DIMENSION(group_m);
+        dim3 scatter_block(256);
+        dim3 scatter_grid((n_indexes + 255) / 256);
+        gpu_scatter_rmm<scalar_type><<<scatter_grid, scatter_block>>>(
+            rmm_output_gpu.data, this->rmm_bigs_gpu.data,
+            this->rmm_rows_gpu.data, this->rmm_cols_gpu.data,
+            s_global_fock_dev.data, n_indexes, rmm_width);
+        cudaAssertNoError("gpu_scatter_rmm");
+      }
+    }
   }
   timers.rmm.pause_and_sync();
 
@@ -952,11 +1027,39 @@ void PointGroupGPU<scalar_type>::solve_opened(
     }
 
     cudaAssertNoError("update_rmm");
-    /*** Contribute this RMM to the total RMM ***/
-    HostMatrix<scalar_type> rmm_output_a_cpu(rmm_output_a_gpu);
-    HostMatrix<scalar_type> rmm_output_b_cpu(rmm_output_b_gpu);
-    this->add_rmm_output(rmm_output_a_cpu, rmm_output_local_a);
-    this->add_rmm_output(rmm_output_b_cpu, rmm_output_local_b);
+
+    /*** Scatter local Fock (alpha+beta) to global packed Fock on GPU ***/
+    {
+      const unsigned int n_indexes = this->rmm_bigs.size();
+      if (n_indexes > 0) {
+        if (!this->rmm_bigs_gpu.is_allocated()) {
+          this->rmm_bigs_gpu.resize(n_indexes, 1);
+          this->rmm_rows_gpu.resize(n_indexes, 1);
+          this->rmm_cols_gpu.resize(n_indexes, 1);
+          cudaMemcpy(this->rmm_bigs_gpu.data, this->rmm_bigs.data(),
+                     n_indexes * sizeof(unsigned int),
+                     cudaMemcpyHostToDevice);
+          cudaMemcpy(this->rmm_rows_gpu.data, this->rmm_rows.data(),
+                     n_indexes * sizeof(unsigned int),
+                     cudaMemcpyHostToDevice);
+          cudaMemcpy(this->rmm_cols_gpu.data, this->rmm_cols.data(),
+                     n_indexes * sizeof(unsigned int),
+                     cudaMemcpyHostToDevice);
+        }
+        const unsigned int rmm_width = COALESCED_DIMENSION(group_m);
+        dim3 scatter_block(256);
+        dim3 scatter_grid((n_indexes + 255) / 256);
+        gpu_scatter_rmm<scalar_type><<<scatter_grid, scatter_block>>>(
+            rmm_output_a_gpu.data, this->rmm_bigs_gpu.data,
+            this->rmm_rows_gpu.data, this->rmm_cols_gpu.data,
+            s_global_fock_a_dev.data, n_indexes, rmm_width);
+        gpu_scatter_rmm<scalar_type><<<scatter_grid, scatter_block>>>(
+            rmm_output_b_gpu.data, this->rmm_bigs_gpu.data,
+            this->rmm_rows_gpu.data, this->rmm_cols_gpu.data,
+            s_global_fock_b_dev.data, n_indexes, rmm_width);
+        cudaAssertNoError("gpu_scatter_rmm_open");
+      }
+    }
   }
   timers.rmm.pause_and_sync();
 

@@ -252,6 +252,13 @@ class PointGroupGPU: public PointGroup<scalar_type> {
     G2G::CudaMatrix< vec_type<scalar_type,4> > dxyz_accum_gpu;
     int current_device;
 
+    // Device-side scatter indexes (lazy uploaded from host rmm_bigs/rows/cols
+    // on the first solve_*; reused on every iteration). Used by the
+    // gpu_scatter_rmm kernel to atomicAdd this group's local Fock into the
+    // global packed Fock buffer maintained in cuda/iteration.cu.
+    G2G::CudaMatrix<unsigned int> rmm_bigs_gpu;
+    G2G::CudaMatrix<unsigned int> rmm_rows_gpu;
+    G2G::CudaMatrix<unsigned int> rmm_cols_gpu;
 };
 
 #if FULL_DOUBLE
