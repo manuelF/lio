@@ -263,11 +263,29 @@ extern "C" void g2g_parameter_init_(
 
 #if GPU_KERNELS
   G2G::gpu_set_variables();
+
+  // Pin the Fortran-allocated RMM density buffer in place so the per-iter
+  // host->device upload becomes a fast pinned transfer instead of going
+  // through the driver's pageable staging buffer. cudaHostRegister pins
+  // existing pages without reallocating; the matching cudaHostUnregister is
+  // in g2g_deinit_. Closed-shell only: open-shell density buffers
+  // (rmm_dens_a/b) have a smaller Fortran-side allocation than the
+  // FortranMatrix m*m dimensions imply and registering past the end caused
+  // open-shell SCF to diverge to NaN.
+  if (!fortran_vars.OPEN) {
+    cudaHostRegister(fortran_vars.rmm_input_ndens1.data,
+                     fortran_vars.m * fortran_vars.m * sizeof(double),
+                     cudaHostRegisterDefault);
+  }
 #endif
 }
 //============================================================================================================
 extern "C" void g2g_deinit_(void) {
   if (verbose > 3) cout << "G2G Deinitialisation." << endl;
+#if GPU_KERNELS
+  if (!fortran_vars.OPEN && fortran_vars.rmm_input_ndens1.data)
+    cudaHostUnregister(fortran_vars.rmm_input_ndens1.data);
+#endif
   partition.clear();
 }
 //============================================================================================================
