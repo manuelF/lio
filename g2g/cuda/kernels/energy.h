@@ -1,6 +1,6 @@
 #if FULL_DOUBLE
-static __inline__ __device__ double fetch_double(cudaTextureObject_t t, float x,
-                                                 float y) {
+static __forceinline__ __device__ double fetch_double(cudaTextureObject_t t,
+                                                      float x, float y) {
   int2 v = tex2D<int2>(t, x, y);
   return __hiloint2double(v.y, v.x);
 }
@@ -9,15 +9,21 @@ static __inline__ __device__ double fetch_double(cudaTextureObject_t t, float x,
 #define fetch(t, x, y) tex2D<float>(t, x, y)
 #endif
 
-template <class scalar_type, bool compute_energy, bool compute_factor, bool lda>
-__global__ void gpu_compute_density(
-    cudaTextureObject_t rmm_input_gpu_tex, scalar_type* const energy,
-    scalar_type* const factor, const scalar_type* const point_weights,
-    uint points, const scalar_type* function_values,
-    const vec_type<scalar_type, 4>* gradient_values,
-    const vec_type<scalar_type, 4>* hessian_values, uint m,
-    scalar_type* out_partial_density, vec_type<scalar_type, 4>* out_dxyz,
-    vec_type<scalar_type, 4>* out_dd1, vec_type<scalar_type, 4>* out_dd2) {
+// energy, factor, point_weights and compute_energy/compute_factor were
+// historically passed for symmetry with gpu_accumulate_point, but this kernel
+// never reads any of them — it only emits the per-block partials that
+// gpu_accumulate_point later folds into energy/factor. Dropping them collapses
+// 6 identical specializations into 2 (one per lda).
+template <class scalar_type, bool lda>
+__launch_bounds__(DENSITY_BLOCK_SIZE, 16) __global__ void gpu_compute_density(
+    cudaTextureObject_t rmm_input_gpu_tex, uint points,
+    const scalar_type* __restrict__ function_values,
+    const vec_type<scalar_type, 4>* __restrict__ gradient_values,
+    const vec_type<scalar_type, 4>* __restrict__ hessian_values, uint m,
+    scalar_type* __restrict__ out_partial_density,
+    vec_type<scalar_type, 4>* __restrict__ out_dxyz,
+    vec_type<scalar_type, 4>* __restrict__ out_dd1,
+    vec_type<scalar_type, 4>* __restrict__ out_dd2) {
   uint point = blockIdx.x;
 
   uint i = threadIdx.x + blockIdx.y * 2 * DENSITY_BLOCK_SIZE;

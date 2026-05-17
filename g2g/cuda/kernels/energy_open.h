@@ -11,17 +11,24 @@ float y)
 #define fetch(t, x, y) tex2D<float>(t, x, y)
 #endif
 
-template <class scalar_type, bool compute_energy, bool compute_factor, bool lda>
+// As with gpu_compute_density, point_weights and the compute_* template flags
+// were never referenced in the body — only out_partial_density_*/dxyz_*/dd*
+// are written. Collapses 3 identical specializations into 1.
+template <class scalar_type, bool lda>
 __global__ void gpu_compute_density_opened(
     cudaTextureObject_t rmm_input_gpu_tex,
-    cudaTextureObject_t rmm_input_gpu_tex2, const scalar_type* point_weights,
-    uint points, const scalar_type* function_values,
-    const vec_type<scalar_type, 4>* gradient_values,
-    const vec_type<scalar_type, 4>* hessian_values, uint m,
-    scalar_type* out_partial_density_a, vec_type<scalar_type, 4>* out_dxyz_a,
-    vec_type<scalar_type, 4>* out_dd1_a, vec_type<scalar_type, 4>* out_dd2_a,
-    scalar_type* out_partial_density_b, vec_type<scalar_type, 4>* out_dxyz_b,
-    vec_type<scalar_type, 4>* out_dd1_b, vec_type<scalar_type, 4>* out_dd2_b) {
+    cudaTextureObject_t rmm_input_gpu_tex2, uint points,
+    const scalar_type* __restrict__ function_values,
+    const vec_type<scalar_type, 4>* __restrict__ gradient_values,
+    const vec_type<scalar_type, 4>* __restrict__ hessian_values, uint m,
+    scalar_type* __restrict__ out_partial_density_a,
+    vec_type<scalar_type, 4>* __restrict__ out_dxyz_a,
+    vec_type<scalar_type, 4>* __restrict__ out_dd1_a,
+    vec_type<scalar_type, 4>* __restrict__ out_dd2_a,
+    scalar_type* __restrict__ out_partial_density_b,
+    vec_type<scalar_type, 4>* __restrict__ out_dxyz_b,
+    vec_type<scalar_type, 4>* __restrict__ out_dd1_b,
+    vec_type<scalar_type, 4>* __restrict__ out_dd2_b) {
   uint point = blockIdx.x;
   uint i = threadIdx.x + blockIdx.y * 2 * DENSITY_BLOCK_SIZE;
   uint i2 = i + DENSITY_BLOCK_SIZE;

@@ -3,9 +3,11 @@
 
 template <class scalar_type>
 __global__ void gpu_compute_density_derivs(
-    cudaTextureObject_t rmm_input_gpu_tex, scalar_type* function_values,
-    vec_type<scalar_type, 4>* gradient_values, uint* nuc,
-    vec_type<scalar_type, 4>* density_deriv, uint points, uint m,
+    cudaTextureObject_t rmm_input_gpu_tex,
+    const scalar_type* __restrict__ function_values,
+    const vec_type<scalar_type, 4>* __restrict__ gradient_values,
+    const uint* __restrict__ nuc,
+    vec_type<scalar_type, 4>* __restrict__ density_deriv, uint points, uint m,
     uint nuc_count) {
   uint point = index_x(blockDim, blockIdx, threadIdx);
   bool valid_thread = (point < points);

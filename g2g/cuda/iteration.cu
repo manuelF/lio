@@ -367,8 +367,7 @@ void PointGroupGPU<scalar_type>::solve_closed(
     CudaMatrix<scalar_type> energy_gpu(this->number_of_points);
 
 #define compute_parameters \
-    rmm_input_gpu_tex, \
-    energy_gpu.data, factors_gpu.data, point_weights_gpu.data, this->number_of_points, function_values_transposed_ptr, \
+    rmm_input_gpu_tex, this->number_of_points, function_values_transposed_ptr, \
     gradient_values_transposed_ptr, hessian_values_transposed.data, group_m, partial_densities_gpu.data, dxyz_gpu.data, \
     dd1_gpu.data,dd2_gpu.data
 
@@ -376,13 +375,12 @@ void PointGroupGPU<scalar_type>::solve_closed(
     energy_gpu.data, factors_gpu.data, point_weights_gpu.data, this->number_of_points, block_height, \
     partial_densities_gpu.data, dxyz_gpu.data, dd1_gpu.data, dd2_gpu.data, fortran_vars.fexc
 
-    // VER QUE PASA SI SACAMOS COMPUTE_FACTOR Y COMPUTE ENERGY DE gpu_compute_density
     if (compute_forces || compute_rmm) {
       if (lda) {
-        gpu_compute_density<scalar_type, true, true, true><<<threadGrid, threadBlock>>>(compute_parameters);
+        gpu_compute_density<scalar_type, true><<<threadGrid, threadBlock>>>(compute_parameters);
         gpu_accumulate_point<scalar_type, true, true, true><<<threadGrid_accumulate, threadBlock_accumulate>>> (accumulate_parameters);
       } else {
-        gpu_compute_density<scalar_type, true, true, false><<<threadGrid, threadBlock>>>(compute_parameters);
+        gpu_compute_density<scalar_type, false><<<threadGrid, threadBlock>>>(compute_parameters);
 #if USE_LIBXC
 	      if (fortran_vars.use_libxc) {
 	        // Accumulate the data for libxc
@@ -423,10 +421,10 @@ void PointGroupGPU<scalar_type>::solve_closed(
       }
     } else {
       if (lda) {
-        gpu_compute_density<scalar_type, true, false, true><<<threadGrid, threadBlock>>>(compute_parameters);
+        gpu_compute_density<scalar_type, true><<<threadGrid, threadBlock>>>(compute_parameters);
         gpu_accumulate_point<scalar_type, true, false, true><<<threadGrid_accumulate, threadBlock_accumulate>>> (accumulate_parameters);
       } else {
-        gpu_compute_density<scalar_type, true, false, false><<<threadGrid, threadBlock>>>(compute_parameters);
+        gpu_compute_density<scalar_type, false><<<threadGrid, threadBlock>>>(compute_parameters);
 #if USE_LIBXC
         if (fortran_vars.use_libxc) {
       	  // Accumulate the data.
@@ -477,18 +475,17 @@ void PointGroupGPU<scalar_type>::solve_closed(
 #undef accumulate_parameters
 
 #define compute_parameters \
-    rmm_input_gpu_tex, \
-    NULL,factors_gpu.data,point_weights_gpu.data,this->number_of_points,function_values_transposed_ptr,gradient_values_transposed_ptr,hessian_values_transposed.data,group_m,partial_densities_gpu.data,dxyz_gpu.data,dd1_gpu.data,dd2_gpu.data
+    rmm_input_gpu_tex,this->number_of_points,function_values_transposed_ptr,gradient_values_transposed_ptr,hessian_values_transposed.data,group_m,partial_densities_gpu.data,dxyz_gpu.data,dd1_gpu.data,dd2_gpu.data
 #define accumulate_parameters \
     NULL,factors_gpu.data,point_weights_gpu.data,this->number_of_points,block_height,partial_densities_gpu.data,dxyz_gpu.data,dd1_gpu.data,dd2_gpu.data, fortran_vars.fexc
     if (lda)
     {
-        gpu_compute_density<scalar_type, false, true, true><<<threadGrid, threadBlock>>>(compute_parameters);
+        gpu_compute_density<scalar_type, true><<<threadGrid, threadBlock>>>(compute_parameters);
         gpu_accumulate_point<scalar_type, false, true, true><<<threadGrid_accumulate, threadBlock_accumulate>>>(accumulate_parameters);
     }
     else
     {
-        gpu_compute_density<scalar_type, false, true, false><<<threadGrid, threadBlock>>>(compute_parameters);
+        gpu_compute_density<scalar_type, false><<<threadGrid, threadBlock>>>(compute_parameters);
 #if USE_LIBXC
         if (fortran_vars.use_libxc) {
 	  // Accumulate the data.
@@ -880,9 +877,9 @@ void PointGroupGPU<scalar_type>::solve_opened(
     CudaMatrix<scalar_type> energy_gpu(this->number_of_points);
 
     if (compute_forces || compute_rmm) {
-      gpu_compute_density_opened<scalar_type, true, true, false><<<threadGrid, threadBlock>>>(
+      gpu_compute_density_opened<scalar_type, false><<<threadGrid, threadBlock>>>(
              rmm_input_gpu_tex, rmm_input_gpu_tex2,
-             point_weights_gpu.data,this->number_of_points, function_values_transposed_ptr,
+             this->number_of_points, function_values_transposed_ptr,
              gradient_values_transposed_ptr,hessian_values_transposed.data, group_m,
              partial_densities_a_gpu.data, dxyz_a_gpu.data, dd1_a_gpu.data, dd2_a_gpu.data,
              partial_densities_b_gpu.data, dxyz_b_gpu.data, dd1_b_gpu.data, dd2_b_gpu.data);
@@ -905,9 +902,9 @@ void PointGroupGPU<scalar_type>::solve_opened(
                                             fortran_vars.atoms, my_cdft_vars.regions, my_cdft_vars.max_nat);
       }
     } else {
-      gpu_compute_density_opened<scalar_type, true, false, false><<<threadGrid, threadBlock>>>(
+      gpu_compute_density_opened<scalar_type, false><<<threadGrid, threadBlock>>>(
              rmm_input_gpu_tex, rmm_input_gpu_tex2,
-             point_weights_gpu.data,this->number_of_points, function_values_transposed_ptr,
+             this->number_of_points, function_values_transposed_ptr,
              gradient_values_transposed_ptr,hessian_values_transposed.data, group_m,
              partial_densities_a_gpu.data, dxyz_a_gpu.data, dd1_a_gpu.data, dd2_a_gpu.data,
              partial_densities_b_gpu.data, dxyz_b_gpu.data, dd1_b_gpu.data, dd2_b_gpu.data);
@@ -946,9 +943,9 @@ void PointGroupGPU<scalar_type>::solve_opened(
       }
     }
   } else {
-    gpu_compute_density_opened<scalar_type, false, true, false><<<threadGrid, threadBlock>>>(
+    gpu_compute_density_opened<scalar_type, false><<<threadGrid, threadBlock>>>(
            rmm_input_gpu_tex, rmm_input_gpu_tex2,
-           point_weights_gpu.data, this->number_of_points, function_values_transposed_ptr,
+           this->number_of_points, function_values_transposed_ptr,
            gradient_values_transposed_ptr,hessian_values_transposed.data, group_m,
            partial_densities_a_gpu.data, dxyz_a_gpu.data, dd1_a_gpu.data, dd2_a_gpu.data,
            partial_densities_b_gpu.data, dxyz_b_gpu.data, dd1_b_gpu.data, dd2_b_gpu.data);
