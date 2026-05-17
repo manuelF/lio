@@ -639,9 +639,65 @@ void Partition::regenerate(void) {
   sort(spheres.begin(), spheres.end(), Sorter());
   sort(cubes.begin(), cubes.end(), Sorter());
 
-  // Initialize the global memory pool for CUDA, with the default safety factor
-  // If it is CPU, then this doesn't matter
-  GlobalMemoryPool::init(G2G::free_global_memory);
+  // Initialize the global memory pool for CUDA.
+  // When free_global_memory < 0 (the default sentinel), auto-detect the optimal
+  // cache budget based on available GPU memory and total cache needs.
+  double effective_fgm = G2G::free_global_memory;
+#if GPU_KERNELS
+  if (effective_fgm < 0.0) {
+    // Auto-detect: compute total cache need for all GPU groups
+    size_t total_cache_need = 0;
+    uint gpu_group_count = 0;
+    for (uint i = 0; i < cubes.size(); i++) {
+      if (cubes[i]->is_big_group()) {
+        total_cache_need += cubes[i]->size_in_gpu();
+        gpu_group_count++;
+      }
+    }
+    for (uint i = 0; i < spheres.size(); i++) {
+      if (spheres[i]->is_big_group()) {
+        total_cache_need += spheres[i]->size_in_gpu();
+        gpu_group_count++;
+      }
+    }
+
+    size_t free_mem = 0, total_mem = 0;
+    cudaGetMemoryInfo(free_mem, total_mem);
+
+    // Reserve headroom for per-group temporaries (partial_densities, dxyz, dd1,
+    // dd2, factors, rmm_output, textures, etc.) and system overhead.
+    // Empirical: ~20% of free memory or at least 200 MB.
+    size_t headroom = max((size_t)(free_mem * 0.2), (size_t)(200 * 1024 * 1024));
+
+    if (free_mem > headroom && total_cache_need > 0) {
+      size_t cache_budget = free_mem - headroom;
+      if (total_cache_need <= cache_budget) {
+        // Everything fits — set fgm to exactly cover all groups
+        effective_fgm = (double)total_cache_need / (double)free_mem;
+        // Add a small margin so rounding doesn't cause the last group to miss
+        effective_fgm = min(effective_fgm * 1.05, 0.8);
+      } else {
+        // Partial caching — use available budget
+        effective_fgm = (double)cache_budget / (double)free_mem;
+      }
+    } else {
+      effective_fgm = 0.0;  // No GPU memory available for caching
+    }
+
+    if (verbose > 0) {
+      printf("  Auto-detected fgm=%.3f (cache need: %.1f MB, free: %.1f MB, "
+             "headroom: %.1f MB, %u GPU groups)\n",
+             effective_fgm,
+             total_cache_need / (1024.0 * 1024.0),
+             free_mem / (1024.0 * 1024.0),
+             headroom / (1024.0 * 1024.0),
+             gpu_group_count);
+    }
+  }
+#else
+  if (effective_fgm < 0.0) effective_fgm = 0.0;
+#endif
+  GlobalMemoryPool::init(effective_fgm);
 
   if (timer_single) cout << "  Weights: " << tweights << endl;
 
