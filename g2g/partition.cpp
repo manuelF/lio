@@ -26,6 +26,10 @@ void gpu_scatter_download_global_fock(double* host_dst,
 void gpu_scatter_download_global_fock_open(double* host_dst_a,
                                            double* host_dst_b,
                                            unsigned int rmm_global_size);
+
+// Free the per-group cuArray + cudaTextureObject cache. Defined in
+// cuda/iteration.cu to keep CUDA runtime headers out of partition.cpp.
+void gpu_release_group_rmm_texture(void*& cuArray, unsigned long long& tex);
 #endif
 
 ostream& operator<<(ostream& io, const Timers& t) {
@@ -292,6 +296,12 @@ size_t PointGroup<scalar_type>::size_in_gpu() const {
     total_cost += (single_matrix_cost * 4);  // 4 vec_type gradient
   if (fortran_vars.gga)
     total_cost += (single_matrix_cost * 8);  // 2*4 vec_type hessian
+  // Transposed views of function_values + gradient_values cached on the
+  // PointGroupGPU when inGlobal=true (see partition.h and cuda/iteration.cu).
+  // Counted here so the auto-detect cache budget reflects the true footprint.
+  total_cost += single_matrix_cost;          // function_values_transposed (1 scalar)
+  if (fortran_vars.do_forces || fortran_vars.gga)
+    total_cost += (single_matrix_cost * 4);  // gradient_values_transposed (4 scalars)
   return total_cost *
          sizeof(scalar_type);  // size in bytes according to precision
 }
@@ -328,10 +338,19 @@ void PointGroupGPU<scalar_type>::deallocate() {
     function_values.deallocate();
     gradient_values.deallocate();
     hessian_values_transposed.deallocate();
+    function_values_transposed_cached.deallocate();
+    gradient_values_transposed_cached.deallocate();
     this->inGlobal = false;
   }
   rmm_accum_gpu.deallocate();
   dxyz_accum_gpu.deallocate();
+  point_weights_gpu_cached.deallocate();
+#if GPU_KERNELS
+  gpu_release_group_rmm_texture(this->cached_cuArray,   this->cached_tex);
+  gpu_release_group_rmm_texture(this->cached_cuArray_b, this->cached_tex_b);
+  this->cached_rmm_w = 0;
+  this->cached_rmm_h = 0;
+#endif
 }
 
 template <class scalar_type>

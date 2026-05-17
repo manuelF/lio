@@ -248,6 +248,15 @@ class PointGroupGPU: public PointGroup<scalar_type> {
     G2G::CudaMatrix<scalar_type> function_values;
     G2G::CudaMatrix<vec_type4> gradient_values;
     G2G::CudaMatrix<vec_type4> hessian_values_transposed;
+    // Transposed views of function_values and gradient_values used by
+    // gpu_compute_density (layout [m, coalesced_pts] instead of [coalesced_pts, m]).
+    // Populated once in compute_functions() and reused across all subsequent
+    // SCF iterations alongside the source matrices.
+    G2G::CudaMatrix<scalar_type> function_values_transposed_cached;
+    G2G::CudaMatrix<vec_type4>   gradient_values_transposed_cached;
+    // Quadrature weights per point — constant across all SCF iterations,
+    // uploaded once on first solve_*.
+    G2G::CudaMatrix<scalar_type> point_weights_gpu_cached;
     G2G::CudaMatrix<scalar_type> rmm_accum_gpu;
     G2G::CudaMatrix< vec_type<scalar_type,4> > dxyz_accum_gpu;
     int current_device;
@@ -259,6 +268,19 @@ class PointGroupGPU: public PointGroup<scalar_type> {
     G2G::CudaMatrix<unsigned int> rmm_bigs_gpu;
     G2G::CudaMatrix<unsigned int> rmm_rows_gpu;
     G2G::CudaMatrix<unsigned int> rmm_cols_gpu;
+
+    // Cached cudaArray + cudaTextureObject_t for the RMM-as-texture binding.
+    // The texture descriptor / array dimensions are constant per group across
+    // SCF iterations (they depend on group_m), so we allocate once on first
+    // solve_*() and reuse forever. Only the data is re-uploaded via
+    // cudaMemcpy2DToArrayAsync each iteration. Stored as opaque types so
+    // partition.h stays CUDA-free for non-GPU translation units.
+    void* cached_cuArray = 0;          // cudaArray_t (struct cudaArray*) or NULL
+    void* cached_cuArray_b = 0;        // open-shell beta channel
+    unsigned long long cached_tex = 0; // cudaTextureObject_t (uint64) or 0
+    unsigned long long cached_tex_b = 0;
+    unsigned int cached_rmm_w = 0;     // dims used to allocate the cached array
+    unsigned int cached_rmm_h = 0;
 };
 
 #if FULL_DOUBLE
