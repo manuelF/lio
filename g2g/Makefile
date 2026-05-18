@@ -30,7 +30,7 @@ LIBXC_GPU_INCLUDES=$(LIBXC_HOME_GPU)/include
 
 ifneq ($(cuda),0)
   include Makefile.cuda
-  CUDA_LIBS    := -lcudart -lcuda
+  CUDA_LIBS    := -lcudart -lcuda -lcublas
   SRCS         += $(CUDA_SOURCES)
   OBJ          += $(UGO) $(CUDA_OBJ)
   CXXFLAGS     += -DGPU_KERNELS=1

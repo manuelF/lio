@@ -259,6 +259,11 @@ class PointGroupGPU: public PointGroup<scalar_type> {
     G2G::CudaMatrix<scalar_type> point_weights_gpu_cached;
     G2G::CudaMatrix<scalar_type> rmm_accum_gpu;
     G2G::CudaMatrix< vec_type<scalar_type,4> > dxyz_accum_gpu;
+    // Scratch buffer for the cuBLAS-based update_rmm path: holds
+    // diag(factors) * function_values, sized identically to function_values
+    // (lda = COALESCED_DIM(points), height = group_m). Allocated lazily on
+    // first multi-block update_rmm call and reused across iterations.
+    G2G::CudaMatrix<scalar_type> rmm_scaled_scratch;
     int current_device;
 
     // Device-side scatter indexes (lazy uploaded from host rmm_bigs/rows/cols

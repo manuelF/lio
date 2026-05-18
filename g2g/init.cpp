@@ -280,11 +280,13 @@ extern "C" void g2g_parameter_init_(
 #endif
 }
 //============================================================================================================
+extern "C" void g2g_destroy_cublas();
 extern "C" void g2g_deinit_(void) {
   if (verbose > 3) cout << "G2G Deinitialisation." << endl;
 #if GPU_KERNELS
   if (!fortran_vars.OPEN && fortran_vars.rmm_input_ndens1.data)
     cudaHostUnregister(fortran_vars.rmm_input_ndens1.data);
+  g2g_destroy_cublas();
 #endif
   partition.clear();
 }

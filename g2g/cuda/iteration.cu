@@ -5,8 +5,10 @@
 #include <limits>
 #include <map>
 #include <math_constants.h>
+#include <mutex>
 #include <string>
 #include <vector>
+#include <cublas_v2.h>
 
 #include "../common.h"
 #include "../init.h"
@@ -51,6 +53,97 @@ using std::endl;
 static CudaMatrix<double> s_global_fock_dev;
 static CudaMatrix<double> s_global_fock_a_dev;
 static CudaMatrix<double> s_global_fock_b_dev;
+
+// cuBLAS handle used for the GEMM path that replaces the gpu_update_rmm
+// kernel on multi-block (larger group_m) groups. The kernel computes
+// rmm[i,j] = sum_p factors[p] * f[i,p] * f[j,p] which is A^T * diag(d) * A.
+// Implemented as cublas?dgmm (column scale) + cublas?gemm: the bare
+// triangular form (?syrkx) picks tiles that fill only 1-2 SMs at our
+// problem sizes, so dense GEMM (full m*m output, half of which is unused)
+// wins by ~3x on the heuristic search.
+static cublasHandle_t s_cublas_handle = nullptr;
+static std::once_flag s_cublas_init_flag;
+static cublasHandle_t get_cublas_handle() {
+  std::call_once(s_cublas_init_flag, []() {
+    cublasCreate(&s_cublas_handle);
+    cublasSetPointerMode(s_cublas_handle, CUBLAS_POINTER_MODE_HOST);
+  });
+  return s_cublas_handle;
+}
+extern "C" void g2g_destroy_cublas() {
+  if (s_cublas_handle) {
+    cublasDestroy(s_cublas_handle);
+    s_cublas_handle = nullptr;
+  }
+}
+
+// dgmm(LEFT) wrapper: B[r,c] = d[r] * A[r,c]. Column-major view, lda>=m.
+static inline cublasStatus_t cublas_dgmm_left(cublasHandle_t h, int m, int n,
+                                              const float* A, int lda,
+                                              const float* d, float* B, int ldb) {
+  return cublasSdgmm(h, CUBLAS_SIDE_LEFT, m, n, A, lda, d, 1, B, ldb);
+}
+static inline cublasStatus_t cublas_dgmm_left(cublasHandle_t h, int m, int n,
+                                              const double* A, int lda,
+                                              const double* d, double* B, int ldb) {
+  return cublasDdgmm(h, CUBLAS_SIDE_LEFT, m, n, A, lda, d, 1, B, ldb);
+}
+// gemm wrapper: C = alpha * op(A) * op(B) + beta * C.
+static inline cublasStatus_t cublas_gemm(cublasHandle_t h,
+                                         cublasOperation_t transa, cublasOperation_t transb,
+                                         int m, int n, int k,
+                                         const float* alpha,
+                                         const float* A, int lda,
+                                         const float* B, int ldb,
+                                         const float* beta,
+                                         float* C, int ldc) {
+  return cublasSgemm(h, transa, transb, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+}
+static inline cublasStatus_t cublas_gemm(cublasHandle_t h,
+                                         cublasOperation_t transa, cublasOperation_t transb,
+                                         int m, int n, int k,
+                                         const double* alpha,
+                                         const double* A, int lda,
+                                         const double* B, int ldb,
+                                         const double* beta,
+                                         double* C, int ldc) {
+  return cublasDgemm(h, transa, transb, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+}
+
+// Replacement for the multi-block gpu_update_rmm kernel using cuBLAS.
+// function_values is laid out as m rows of COALESCED_DIM(points) cols
+// (function-major, point-inner). Viewed in column-major as a (lda x m)
+// matrix with lda = COALESCED_DIM(points). With trans=T and k=points,
+// cuBLAS only iterates the first `points` entries per column, so padding
+// is automatically skipped.
+//
+// The cached scaled scratch buffer is allocated per group (lazily) and reused
+// across iterations — sized lda*m which is the same footprint as
+// function_values itself. The CudaMatrix uses the cudaMallocAsync pool so
+// growing the high-water-mark only costs in the first few iterations.
+template <class scalar_type>
+static void gpu_update_rmm_cublas(const scalar_type* factors, int points,
+                                  scalar_type* rmm_out, const scalar_type* function_values,
+                                  int group_m, int lda, int ldc,
+                                  CudaMatrix<scalar_type>& scaled_scratch) {
+  cublasHandle_t h = get_cublas_handle();
+  // scaled = diag(factors) * function_values (column-major view)
+  if (!scaled_scratch.is_allocated() || (int)scaled_scratch.width != lda ||
+      (int)scaled_scratch.height < group_m) {
+    scaled_scratch.resize(lda, group_m);
+  }
+  cublas_dgmm_left(h, points, group_m, function_values, lda, factors,
+                   scaled_scratch.data, lda);
+  const scalar_type alpha = (scalar_type)1.0;
+  const scalar_type beta = (scalar_type)0.0;
+  // C = function_values^T * scaled (column-major m x m).
+  // C[i,j] = sum_p f[p,i] * factor[p]*f[p,j] = sum_p f[i,p]*factor[p]*f[j,p].
+  // Scatter only reads the (i <= j) entries — UPPER in column-major — so the
+  // duplicate writes to the strictly-lower triangle are harmless.
+  cublas_gemm(h, CUBLAS_OP_T, CUBLAS_OP_N, group_m, group_m, points,
+              &alpha, function_values, lda,
+              scaled_scratch.data, lda, &beta, rmm_out, ldc);
+}
 
 void gpu_scatter_zero_global_fock(unsigned int rmm_global_size, bool open) {
   if (!open) {
@@ -612,9 +705,18 @@ void PointGroupGPU<scalar_type>::solve_closed(
 
     // For calls with a single block (pretty common with cubes) don't bother doing the arithmetic to get block position in the matrix
     if (blocksPerRow > 1) {
+      static const char* off = getenv("LIO_RMM_CUBLAS");
+      if (off && off[0] == '0') {
         gpu_update_rmm<scalar_type,true><<<threadGrid, threadBlock>>>(factors_gpu.data, this->number_of_points,
                                                                       rmm_output_gpu.data, function_values.data,
                                                                       group_m);
+      } else {
+        gpu_update_rmm_cublas<scalar_type>(factors_gpu.data, this->number_of_points,
+                                           rmm_output_gpu.data, function_values.data,
+                                           group_m, COALESCED_DIMENSION(this->number_of_points),
+                                           COALESCED_DIMENSION(group_m),
+                                           this->rmm_scaled_scratch);
+      }
     } else {
         gpu_update_rmm<scalar_type,false><<<threadGrid, threadBlock>>>(factors_gpu.data, this->number_of_points,
                                                                        rmm_output_gpu.data, function_values.data,
@@ -1099,12 +1201,26 @@ void PointGroupGPU<scalar_type>::solve_opened(
 
     // For calls with a single block (pretty common with cubes) don't bother doing the arithmetic to get block position in the matrix
     if (blocksPerRow > 1) {
-      gpu_update_rmm<scalar_type,true><<<threadGrid, threadBlock>>>(factors_a_gpu.data, this->number_of_points,
-                                                                    rmm_output_a_gpu.data, function_values.data,
-                                                                    group_m);
-      gpu_update_rmm<scalar_type,true><<<threadGrid, threadBlock>>>(factors_b_gpu.data, this->number_of_points,
-                                                                    rmm_output_b_gpu.data, function_values.data,
-                                                                    group_m);
+      static const char* off = getenv("LIO_RMM_CUBLAS");
+      if (off && off[0] == '0') {
+        gpu_update_rmm<scalar_type,true><<<threadGrid, threadBlock>>>(factors_a_gpu.data, this->number_of_points,
+                                                                      rmm_output_a_gpu.data, function_values.data,
+                                                                      group_m);
+        gpu_update_rmm<scalar_type,true><<<threadGrid, threadBlock>>>(factors_b_gpu.data, this->number_of_points,
+                                                                      rmm_output_b_gpu.data, function_values.data,
+                                                                      group_m);
+      } else {
+        gpu_update_rmm_cublas<scalar_type>(factors_a_gpu.data, this->number_of_points,
+                                           rmm_output_a_gpu.data, function_values.data,
+                                           group_m, COALESCED_DIMENSION(this->number_of_points),
+                                           COALESCED_DIMENSION(group_m),
+                                           this->rmm_scaled_scratch);
+        gpu_update_rmm_cublas<scalar_type>(factors_b_gpu.data, this->number_of_points,
+                                           rmm_output_b_gpu.data, function_values.data,
+                                           group_m, COALESCED_DIMENSION(this->number_of_points),
+                                           COALESCED_DIMENSION(group_m),
+                                           this->rmm_scaled_scratch);
+      }
     } else {
       gpu_update_rmm<scalar_type,false><<<threadGrid, threadBlock>>>(factors_a_gpu.data, this->number_of_points,
                                                                      rmm_output_a_gpu.data, function_values.data,
