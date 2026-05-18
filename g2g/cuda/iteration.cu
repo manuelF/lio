@@ -188,6 +188,7 @@ void gpu_release_group_rmm_texture(void*& cuArray_ptr,
   }
 }
 
+
 void gpu_scatter_download_global_fock_open(double* host_dst_a,
                                            double* host_dst_b,
                                            unsigned int rmm_global_size) {
@@ -361,7 +362,17 @@ void PointGroupGPU<scalar_type>::solve_closed(
     }
   }
   
-  HostMatrix<scalar_type> rmm_input_cpu(COALESCED_DIMENSION(group_m), group_m+DENSITY_BLOCK_SIZE);
+  // Pinned + per-group cached host scratch (see partition.h). Lazy resize on
+  // first use; size is invariant across SCF iters.
+  HostMatrix<scalar_type>& rmm_input_cpu = this->rmm_input_pinned_cached;
+  {
+    const unsigned int rw = COALESCED_DIMENSION(group_m);
+    const unsigned int rh = group_m + DENSITY_BLOCK_SIZE;
+    if (!rmm_input_cpu.is_allocated() ||
+        rmm_input_cpu.width != rw || rmm_input_cpu.height != rh) {
+      rmm_input_cpu.resize(rw, rh);
+    }
+  }
   get_rmm_input(rmm_input_cpu); //Achica la matriz densidad a la version reducida del grupo
 
   for (uint i=0; i<(group_m+DENSITY_BLOCK_SIZE); i++)
@@ -880,8 +891,22 @@ void PointGroupGPU<scalar_type>::solve_opened(
     factors_b_gpu.zero();
   }
 
-  HostMatrix<scalar_type> rmm_input_a_cpu(COALESCED_DIMENSION(group_m), group_m+DENSITY_BLOCK_SIZE);
-  HostMatrix<scalar_type> rmm_input_b_cpu(COALESCED_DIMENSION(group_m), group_m+DENSITY_BLOCK_SIZE);
+  // Pinned + per-group cached host scratch (see partition.h). Mirrors the
+  // closed-shell rmm_input_pinned_cached pattern for both alpha and beta.
+  HostMatrix<scalar_type>& rmm_input_a_cpu = this->rmm_input_pinned_cached;
+  HostMatrix<scalar_type>& rmm_input_b_cpu = this->rmm_input_b_pinned_cached;
+  {
+    const unsigned int rw = COALESCED_DIMENSION(group_m);
+    const unsigned int rh = group_m + DENSITY_BLOCK_SIZE;
+    if (!rmm_input_a_cpu.is_allocated() ||
+        rmm_input_a_cpu.width != rw || rmm_input_a_cpu.height != rh) {
+      rmm_input_a_cpu.resize(rw, rh);
+    }
+    if (!rmm_input_b_cpu.is_allocated() ||
+        rmm_input_b_cpu.width != rw || rmm_input_b_cpu.height != rh) {
+      rmm_input_b_cpu.resize(rw, rh);
+    }
+  }
    //Reduces density matrixes (Up,Down) to the reduced group version
   get_rmm_input(rmm_input_a_cpu, rmm_input_b_cpu);
 

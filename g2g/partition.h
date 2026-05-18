@@ -286,6 +286,16 @@ class PointGroupGPU: public PointGroup<scalar_type> {
     unsigned long long cached_tex_b = 0;
     unsigned int cached_rmm_w = 0;     // dims used to allocate the cached array
     unsigned int cached_rmm_h = 0;
+
+    // Pinned host scratch for the reduced RMM input fed each SCF iteration to
+    // cudaMemcpy2DToArrayAsync. With pageable memory the "Async" copy stages
+    // through a driver pinned buffer and blocks the host (≈51 µs/call on
+    // fosfato baseline, dominating cudaMemcpy2DToArrayAsync's 238 ms total).
+    // Pinning + per-group caching turns the call into a true DMA enqueue,
+    // letting the GPU thread queue more work ahead. Size is fixed per group
+    // (depends only on group_m), so allocate once and reuse.
+    G2G::HostMatrix<scalar_type> rmm_input_pinned_cached{G2G::HostMatrix<scalar_type>::Pinned};
+    G2G::HostMatrix<scalar_type> rmm_input_b_pinned_cached{G2G::HostMatrix<scalar_type>::Pinned};
 };
 
 #if FULL_DOUBLE
