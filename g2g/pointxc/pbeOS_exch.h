@@ -39,7 +39,7 @@ namespace G2G {
 // UL = UM / UK
 
 template <class scalar_type>
-__host__ __device__ void pbeOS_exch(scalar_type rho, scalar_type s,
+__forceinline__ __host__ __device__ void pbeOS_exch(scalar_type rho, scalar_type s,
                                     scalar_type u, scalar_type v,
                                     scalar_type& ex, scalar_type& vx) {
   // Construct LDA exchange energy density

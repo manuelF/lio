@@ -424,9 +424,11 @@ void PointGroupGPU<scalar_type>::solve_closed(
     cudaCreateTextureObject(&new_tex, &resDesc, &texDesc, NULL);
     this->cached_tex = static_cast<unsigned long long>(new_tex);
   }
-  cudaMemcpyToArray(cuArray, 0, 0, rmm_input_cpu.data,
-                    sizeof(scalar_type) * rmm_input_cpu.width * rmm_input_cpu.height,
-                    cudaMemcpyHostToDevice);
+  cudaMemcpy2DToArrayAsync(cuArray, 0, 0, rmm_input_cpu.data,
+                           sizeof(scalar_type) * rmm_input_cpu.width,
+                           sizeof(scalar_type) * rmm_input_cpu.width,
+                           rmm_input_cpu.height,
+                           cudaMemcpyHostToDevice, 0);
   cudaTextureObject_t rmm_input_gpu_tex = static_cast<cudaTextureObject_t>(this->cached_tex);
 
 #if USE_LIBXC
@@ -634,8 +636,11 @@ void PointGroupGPU<scalar_type>::solve_closed(
     }
 
     timers.density_derivs.start_and_sync();
-    cudaMemcpyToArray(cuArray, 0, 0,rmm_input_cpu.data,
-      sizeof(scalar_type)*rmm_input_cpu.width*rmm_input_cpu.height, cudaMemcpyHostToDevice);
+    cudaMemcpy2DToArrayAsync(cuArray, 0, 0, rmm_input_cpu.data,
+                             sizeof(scalar_type) * rmm_input_cpu.width,
+                             sizeof(scalar_type) * rmm_input_cpu.width,
+                             rmm_input_cpu.height,
+                             cudaMemcpyHostToDevice, 0);
 
     timers.density_derivs.start_and_sync();
     dim3 threads = dim3(this->number_of_points);
@@ -949,12 +954,16 @@ void PointGroupGPU<scalar_type>::solve_opened(
     this->cached_tex   = static_cast<unsigned long long>(rmm_input_gpu_tex);
     this->cached_tex_b = static_cast<unsigned long long>(rmm_input_gpu_tex2);
   }
-  cudaMemcpyToArray(cuArray1, 0, 0, rmm_input_a_cpu.data,
-                    sizeof(scalar_type) * rmm_input_a_cpu.width * rmm_input_a_cpu.height,
-                    cudaMemcpyHostToDevice);
-  cudaMemcpyToArray(cuArray2, 0, 0, rmm_input_b_cpu.data,
-                    sizeof(scalar_type) * rmm_input_b_cpu.width * rmm_input_b_cpu.height,
-                    cudaMemcpyHostToDevice);
+  cudaMemcpy2DToArrayAsync(cuArray1, 0, 0, rmm_input_a_cpu.data,
+                           sizeof(scalar_type) * rmm_input_a_cpu.width,
+                           sizeof(scalar_type) * rmm_input_a_cpu.width,
+                           rmm_input_a_cpu.height,
+                           cudaMemcpyHostToDevice, 0);
+  cudaMemcpy2DToArrayAsync(cuArray2, 0, 0, rmm_input_b_cpu.data,
+                           sizeof(scalar_type) * rmm_input_b_cpu.width,
+                           sizeof(scalar_type) * rmm_input_b_cpu.width,
+                           rmm_input_b_cpu.height,
+                           cudaMemcpyHostToDevice, 0);
   cudaTextureObject_t rmm_input_gpu_tex  = static_cast<cudaTextureObject_t>(this->cached_tex);
   cudaTextureObject_t rmm_input_gpu_tex2 = static_cast<cudaTextureObject_t>(this->cached_tex_b);
 
@@ -1091,8 +1100,16 @@ void PointGroupGPU<scalar_type>::solve_opened(
     }
     }
 
-    cudaMemcpyToArray(cuArray1, 0, 0,rmm_input_a_cpu.data,sizeof(scalar_type)*rmm_input_a_cpu.width*rmm_input_a_cpu.height, cudaMemcpyHostToDevice);
-    cudaMemcpyToArray(cuArray2, 0, 0,rmm_input_b_cpu.data,sizeof(scalar_type)*rmm_input_b_cpu.width*rmm_input_b_cpu.height, cudaMemcpyHostToDevice);
+    cudaMemcpy2DToArrayAsync(cuArray1, 0, 0, rmm_input_a_cpu.data,
+                             sizeof(scalar_type) * rmm_input_a_cpu.width,
+                             sizeof(scalar_type) * rmm_input_a_cpu.width,
+                             rmm_input_a_cpu.height,
+                             cudaMemcpyHostToDevice, 0);
+    cudaMemcpy2DToArrayAsync(cuArray2, 0, 0, rmm_input_b_cpu.data,
+                             sizeof(scalar_type) * rmm_input_b_cpu.width,
+                             sizeof(scalar_type) * rmm_input_b_cpu.width,
+                             rmm_input_b_cpu.height,
+                             cudaMemcpyHostToDevice, 0);
 
 
     dim3 threads;

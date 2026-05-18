@@ -8,7 +8,7 @@
 namespace G2G {
 
 template <class scalar_type, unsigned int width>
-__host__ __device__ void calc_ggaOS(scalar_type dens_a, scalar_type dens_b,
+__forceinline__ __host__ __device__ void calc_ggaOS(scalar_type dens_a, scalar_type dens_b,
                                     const vec_type<scalar_type, width>& grad_a,
                                     const vec_type<scalar_type, width>& grad_b,
                                     const vec_type<scalar_type, width>& hess1_a,

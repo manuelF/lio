@@ -551,12 +551,6 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
         }
       }
 
-#if GPU_KERNELS
-      if (gpu_thread) {
-        cudaDeviceSynchronize();
-      }
-#endif
-
       element.stop_and_sync();
       timeforgroup[ind] = element.getTotal();
     }

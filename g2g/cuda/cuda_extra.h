@@ -18,6 +18,7 @@
 #if CPU_KERNELS && !GPU_KERNELS
 #define __device__
 #define __host__
+#define __forceinline__ inline
 #include "datatypes/cpu_primitives.h"
 #endif
 

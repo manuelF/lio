@@ -33,7 +33,7 @@ namespace G2G {
 #define POT_DEL ((scalar_type)0.472)
 
 template <class scalar_type, int iexch, unsigned int width>
-__host__ __device__ void calc_ggaCS(scalar_type dens,
+__forceinline__ __host__ __device__ void calc_ggaCS(scalar_type dens,
                                     const vec_type<scalar_type, width>& grad,
                                     const vec_type<scalar_type, width>& hess1,
                                     const vec_type<scalar_type, width>& hess2,
@@ -261,7 +261,7 @@ __host__ __device__ void calc_ggaCS(scalar_type dens,
 }
 
 template <class scalar_type, unsigned int width>
-__host__ __device__ void calc_ggaCS_in(
+__forceinline__ __host__ __device__ void calc_ggaCS_in(
     scalar_type dens, const vec_type<scalar_type, width>& grad,
     const vec_type<scalar_type, width>& hess1,
     const vec_type<scalar_type, width>& hess2, scalar_type& ex, scalar_type& ec,

@@ -30,7 +30,7 @@ namespace G2G {
 #define POT_VOSKO_B1X0 ((scalar_type)1.0329232240928)
 
 template <class scalar_type, int iexch>
-__host__ __device__ void calc_ldaCS(scalar_type dens, scalar_type& ex,
+__forceinline__ __host__ __device__ void calc_ldaCS(scalar_type dens, scalar_type& ex,
                                     scalar_type& ec, scalar_type& y2a) {
   // data X alpha
 
@@ -102,7 +102,7 @@ __host__ __device__ void calc_ldaCS(scalar_type dens, scalar_type& ex,
 }
 
 template <class scalar_type>
-__host__ __device__ void calc_ldaCS_in(scalar_type dens, scalar_type& ex,
+__forceinline__ __host__ __device__ void calc_ldaCS_in(scalar_type dens, scalar_type& ex,
                                        scalar_type& ec, scalar_type& y2a,
                                        int iexch) {
   switch (iexch) {

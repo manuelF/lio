@@ -19,7 +19,7 @@ namespace G2G {
 #define GCORC_B3_1 ((scalar_type)1.6382f)
 #define GCORC_B4_1 ((scalar_type)0.49294f)
 template <class scalar_type>
-__host__ __device__ void gcorc1(scalar_type rtrs, scalar_type& gg,
+__forceinline__ __host__ __device__ void gcorc1(scalar_type rtrs, scalar_type& gg,
                                 scalar_type& grrs) {
   scalar_type Q0 = -2.0f * GCORC_A0_1 * (1.0f + GCORC_A1_1 * rtrs * rtrs);
   scalar_type Q1 = 2.0f * GCORC_A0_1 * rtrs *
@@ -39,7 +39,7 @@ __host__ __device__ void gcorc1(scalar_type rtrs, scalar_type& gg,
 #define GCORC_B3_2 ((scalar_type)3.3662f)
 #define GCORC_B4_2 ((scalar_type)0.62517f)
 template <class scalar_type>
-__host__ __device__ void gcorc2(scalar_type rtrs, scalar_type& gg,
+__forceinline__ __host__ __device__ void gcorc2(scalar_type rtrs, scalar_type& gg,
                                 scalar_type& grrs) {
   scalar_type Q0 = -2.0f * GCORC_A0_2 * (1.0f + GCORC_A1_2 * rtrs * rtrs);
   scalar_type Q1 =
@@ -61,7 +61,7 @@ __host__ __device__ void gcorc2(scalar_type rtrs, scalar_type& gg,
 #define GCORC_B3_3 ((scalar_type)0.88026f)
 #define GCORC_B4_3 ((scalar_type)0.49671f)
 template <class scalar_type>
-__host__ __device__ void gcorc3(scalar_type rtrs, scalar_type& gg,
+__forceinline__ __host__ __device__ void gcorc3(scalar_type rtrs, scalar_type& gg,
                                 scalar_type& grrs) {
   scalar_type Q0 = -2.0f * GCORC_A0_3 * (1.0f + GCORC_A1_3 * rtrs * rtrs);
   scalar_type Q1 =

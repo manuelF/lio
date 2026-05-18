@@ -60,7 +60,7 @@ namespace G2G {
 #define EASYPBE_ETA ((scalar_type)0.000000000001f)  // THIS
 
 template <class scalar_type>
-__host__ __device__ void pbeOS_corr(scalar_type rho, scalar_type rs,
+__forceinline__ __host__ __device__ void pbeOS_corr(scalar_type rho, scalar_type rs,
                                     scalar_type zet, scalar_type t,
                                     scalar_type uu, scalar_type vv,
                                     scalar_type ww, scalar_type& ec,

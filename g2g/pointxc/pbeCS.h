@@ -27,7 +27,7 @@ namespace G2G {
 //---------------------------------------------------------*/
 
 template <class scalar_type>
-__host__ __device__ void pbeCS(scalar_type rho, scalar_type agrad,
+__forceinline__ __host__ __device__ void pbeCS(scalar_type rho, scalar_type agrad,
                                scalar_type delgrad, scalar_type rlap,
                                scalar_type& expbe, scalar_type& vxpbe,
                                scalar_type& ecpbe, scalar_type& vcpbe) {

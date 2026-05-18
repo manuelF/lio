@@ -26,7 +26,7 @@ namespace G2G {
 #define EASYPBE_PI32 ((scalar_type)29.608813203268075856503472999628f)
 
 template <class scalar_type>
-__host__ __device__ void pbeOS_main(
+__forceinline__ __host__ __device__ void pbeOS_main(
     scalar_type dens_a, scalar_type dgrad_a, scalar_type delgrad_a,
     scalar_type rlap_a, scalar_type dens_b, scalar_type dgrad_b,
     scalar_type delgrad_b, scalar_type rlap_b, scalar_type dgrad,
