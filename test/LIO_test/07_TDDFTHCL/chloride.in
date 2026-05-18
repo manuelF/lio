@@ -11,4 +11,6 @@ propagator = 2
 
 little_cube_size = 15.5 
 sphere_radius    = 0.5 
+timers = 2
+free_global_memory = -1
 &end
