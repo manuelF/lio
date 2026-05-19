@@ -231,6 +231,9 @@ __global__ void gpu_compute_density_opened(
   }
   __syncthreads();
 
+  // DENSITY_BLOCK_SIZE (64) spans multiple warps, so this tree reduction
+  // needs a __syncthreads inside each iteration to be race-free — matches
+  // the closed-shell energy.h pattern. (Was missing on the open path.)
   for (int j = 2; j <= DENSITY_BLOCK_SIZE; j = j * 2) {
     int index = position + DENSITY_BLOCK_SIZE / j;
     if (position < DENSITY_BLOCK_SIZE / j) {
@@ -239,6 +242,7 @@ __global__ void gpu_compute_density_opened(
       fh1j_sh[position] += fh1j_sh[index];
       fh2j_sh[position] += fh2j_sh[index];
     }
+    __syncthreads();
   }
   if (threadIdx.x == 0) {
     const int myPoint = blockIdx.y * points + blockIdx.x;
@@ -271,6 +275,7 @@ __global__ void gpu_compute_density_opened(
       fh1j_sh[position] += fh1j_sh[index];
       fh2j_sh[position] += fh2j_sh[index];
     }
+    __syncthreads();
   }
   if (threadIdx.x == 0) {
     const int myPoint = blockIdx.y * points + blockIdx.x;
