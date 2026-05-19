@@ -58,4 +58,40 @@ __global__ void gpu_scatter_rmm(
   atomicAdd(&global_rmm_out[bigs[k]], val);
 }
 
+/**
+ * @brief Open-shell variant: scatter both alpha and beta local Fock submatrices
+ *        into their respective global packed Fock buffers in a single kernel
+ *        launch. Shares the row/col/bigs index loads across alpha+beta, halving
+ *        launch overhead and dedup'ing the index table fetches.
+ *
+ * Both local_rmm_a and local_rmm_b share the same row/col layout (built from
+ * the same group_m), so the same (rows[k], cols[k], bigs[k]) triple selects
+ * the corresponding entry in each.
+ */
+template <class scalar_type>
+__global__ void gpu_scatter_rmm_open(
+    const scalar_type* __restrict__ local_rmm_a,
+    const scalar_type* __restrict__ local_rmm_b,
+    const unsigned int* __restrict__ bigs,
+    const unsigned int* __restrict__ rows,
+    const unsigned int* __restrict__ cols,
+    double* __restrict__ global_rmm_a_out,
+    double* __restrict__ global_rmm_b_out,
+    unsigned int n_indexes,
+    unsigned int rmm_width) {
+  unsigned int k = blockIdx.x * blockDim.x + threadIdx.x;
+  if (k >= n_indexes) return;
+
+  unsigned int r = rows[k];
+  unsigned int c = cols[k];
+  unsigned int big = bigs[k];
+  unsigned int idx = c * rmm_width + r;
+
+  double val_a = (double)local_rmm_a[idx];
+  double val_b = (double)local_rmm_b[idx];
+
+  atomicAdd(&global_rmm_a_out[big], val_a);
+  atomicAdd(&global_rmm_b_out[big], val_b);
+}
+
 #endif  // G2G_KERNELS_RMM_SCATTER_H

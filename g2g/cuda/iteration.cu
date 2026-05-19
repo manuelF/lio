@@ -145,6 +145,39 @@ static void gpu_update_rmm_cublas(const scalar_type* factors, int points,
               scaled_scratch.data, lda, &beta, rmm_out, ldc);
 }
 
+// Open-shell fused variant: produces both rmm_a and rmm_b in one larger GEMM.
+// Layout: column-major scratch [scaled_a | scaled_b] of size (lda x 2*group_m)
+// and column-major output [rmm_a | rmm_b] of size (ldc x 2*group_m). The
+// output's first group_m columns hold rmm_a; the next group_m columns hold
+// rmm_b. One gemm with n=2*group_m roughly doubles the tile count, which at
+// our group sizes (a few SMs' worth of tiles per call) actually helps —
+// versus two separate small GEMMs each spawning 1-2 SMs of tiles.
+template <class scalar_type>
+static void gpu_update_rmm_cublas_open(
+    const scalar_type* factors_a, const scalar_type* factors_b, int points,
+    scalar_type* rmm_out_combined, const scalar_type* function_values,
+    int group_m, int lda, int ldc,
+    CudaMatrix<scalar_type>& scaled_scratch_combined) {
+  cublasHandle_t h = get_cublas_handle();
+  if (!scaled_scratch_combined.is_allocated() ||
+      (int)scaled_scratch_combined.width != lda ||
+      (int)scaled_scratch_combined.height < 2 * group_m) {
+    scaled_scratch_combined.resize(lda, 2 * group_m);
+  }
+  // First half: scaled_a = diag(factors_a) * function_values
+  cublas_dgmm_left(h, points, group_m, function_values, lda, factors_a,
+                   scaled_scratch_combined.data, lda);
+  // Second half: scaled_b = diag(factors_b) * function_values
+  cublas_dgmm_left(h, points, group_m, function_values, lda, factors_b,
+                   scaled_scratch_combined.data + (size_t)lda * group_m, lda);
+  const scalar_type alpha = (scalar_type)1.0;
+  const scalar_type beta = (scalar_type)0.0;
+  cublas_gemm(h, CUBLAS_OP_T, CUBLAS_OP_N, group_m, 2 * group_m, points,
+              &alpha, function_values, lda,
+              scaled_scratch_combined.data, lda, &beta,
+              rmm_out_combined, ldc);
+}
+
 void gpu_scatter_zero_global_fock(unsigned int rmm_global_size, bool open) {
   if (!open) {
     if (!s_global_fock_dev.is_allocated() ||
@@ -1194,11 +1227,17 @@ void PointGroupGPU<scalar_type>::solve_opened(
 
     // Only use enough blocks for lower triangle
     threadGrid = dim3(blocksPerRow*(blocksPerRow+1)/2);
-    CudaMatrix<scalar_type> rmm_output_a_gpu(COALESCED_DIMENSION(group_m), group_m);
-    CudaMatrix<scalar_type> rmm_output_b_gpu(COALESCED_DIMENSION(group_m), group_m);
 
-    rmm_output_a_gpu.zero();
-    rmm_output_b_gpu.zero();
+    // Combined alpha+beta output: columns [0..group_m) hold rmm_a,
+    // columns [group_m..2*group_m) hold rmm_b. Letting one allocation cover
+    // both spins lets us run a single fused GEMM (cuBLAS path), single fused
+    // scatter, and skip the per-iter pre-zero — gpu_update_rmm and the GEMM
+    // both fully write every entry the scatter ever reads (lower triangle).
+    const unsigned int ldc_out = COALESCED_DIMENSION(group_m);
+    CudaMatrix<scalar_type> rmm_output_ab_gpu(ldc_out, 2 * group_m);
+    scalar_type* const rmm_out_a_ptr = rmm_output_ab_gpu.data;
+    scalar_type* const rmm_out_b_ptr =
+        rmm_output_ab_gpu.data + (size_t)ldc_out * group_m;
 
     // Adds CDFT terms to RMM factors.
     CudaMatrix<scalar_type> cdft_Vc;
@@ -1245,31 +1284,31 @@ void PointGroupGPU<scalar_type>::solve_opened(
     if (blocksPerRow > 1) {
       static const char* off = getenv("LIO_RMM_CUBLAS");
       if (off && off[0] == '0') {
-        gpu_update_rmm<scalar_type,true><<<threadGrid, threadBlock>>>(factors_a_gpu.data, this->number_of_points,
-                                                                      rmm_output_a_gpu.data, function_values.data,
-                                                                      group_m);
-        gpu_update_rmm<scalar_type,true><<<threadGrid, threadBlock>>>(factors_b_gpu.data, this->number_of_points,
-                                                                      rmm_output_b_gpu.data, function_values.data,
-                                                                      group_m);
+        // Hand-kernel path retained for the env-var escape hatch. Two
+        // launches (alpha + beta) write into halves of the combined buffer.
+        gpu_update_rmm<scalar_type,true><<<threadGrid, threadBlock>>>(
+            factors_a_gpu.data, this->number_of_points,
+            rmm_out_a_ptr, function_values.data, group_m);
+        gpu_update_rmm<scalar_type,true><<<threadGrid, threadBlock>>>(
+            factors_b_gpu.data, this->number_of_points,
+            rmm_out_b_ptr, function_values.data, group_m);
       } else {
-        gpu_update_rmm_cublas<scalar_type>(factors_a_gpu.data, this->number_of_points,
-                                           rmm_output_a_gpu.data, function_values.data,
-                                           group_m, COALESCED_DIMENSION(this->number_of_points),
-                                           COALESCED_DIMENSION(group_m),
-                                           this->rmm_scaled_scratch);
-        gpu_update_rmm_cublas<scalar_type>(factors_b_gpu.data, this->number_of_points,
-                                           rmm_output_b_gpu.data, function_values.data,
-                                           group_m, COALESCED_DIMENSION(this->number_of_points),
-                                           COALESCED_DIMENSION(group_m),
-                                           this->rmm_scaled_scratch);
+        // Fused alpha+beta cuBLAS path: two dgmms + one larger GEMM, replacing
+        // the four prior cuBLAS launches and giving the GEMM 2x the tile
+        // count at our small group_m.
+        gpu_update_rmm_cublas_open<scalar_type>(
+            factors_a_gpu.data, factors_b_gpu.data, this->number_of_points,
+            rmm_out_a_ptr, function_values.data,
+            group_m, COALESCED_DIMENSION(this->number_of_points), ldc_out,
+            this->rmm_scaled_scratch);
       }
     } else {
-      gpu_update_rmm<scalar_type,false><<<threadGrid, threadBlock>>>(factors_a_gpu.data, this->number_of_points,
-                                                                     rmm_output_a_gpu.data, function_values.data,
-                                                                     group_m);
-      gpu_update_rmm<scalar_type,false><<<threadGrid, threadBlock>>>(factors_b_gpu.data, this->number_of_points,
-                                                                     rmm_output_b_gpu.data, function_values.data,
-                                                                     group_m);
+      gpu_update_rmm<scalar_type,false><<<threadGrid, threadBlock>>>(
+          factors_a_gpu.data, this->number_of_points,
+          rmm_out_a_ptr, function_values.data, group_m);
+      gpu_update_rmm<scalar_type,false><<<threadGrid, threadBlock>>>(
+          factors_b_gpu.data, this->number_of_points,
+          rmm_out_b_ptr, function_values.data, group_m);
     }
 
     cudaAssertNoError("update_rmm");
@@ -1292,17 +1331,17 @@ void PointGroupGPU<scalar_type>::solve_opened(
                      n_indexes * sizeof(unsigned int),
                      cudaMemcpyHostToDevice);
         }
-        const unsigned int rmm_width = COALESCED_DIMENSION(group_m);
+        const unsigned int rmm_width = ldc_out;
         dim3 scatter_block(256);
         dim3 scatter_grid((n_indexes + 255) / 256);
-        gpu_scatter_rmm<scalar_type><<<scatter_grid, scatter_block>>>(
-            rmm_output_a_gpu.data, this->rmm_bigs_gpu.data,
+        // Fused scatter: one launch writes both global_fock_a and _b. Shares
+        // index-table loads (bigs/rows/cols) across alpha+beta.
+        gpu_scatter_rmm_open<scalar_type><<<scatter_grid, scatter_block>>>(
+            rmm_out_a_ptr, rmm_out_b_ptr,
+            this->rmm_bigs_gpu.data,
             this->rmm_rows_gpu.data, this->rmm_cols_gpu.data,
-            s_global_fock_a_dev.data, n_indexes, rmm_width);
-        gpu_scatter_rmm<scalar_type><<<scatter_grid, scatter_block>>>(
-            rmm_output_b_gpu.data, this->rmm_bigs_gpu.data,
-            this->rmm_rows_gpu.data, this->rmm_cols_gpu.data,
-            s_global_fock_b_dev.data, n_indexes, rmm_width);
+            s_global_fock_a_dev.data, s_global_fock_b_dev.data,
+            n_indexes, rmm_width);
         cudaAssertNoError("gpu_scatter_rmm_open");
       }
     }
