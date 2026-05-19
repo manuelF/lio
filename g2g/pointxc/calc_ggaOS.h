@@ -60,34 +60,44 @@ __forceinline__ __host__ __device__ void calc_ggaOS(scalar_type dens_a, scalar_t
       hess2.y = hess2_a.y + hess2_b.y;
       hess2.z = hess2_a.z + hess2_b.z;
       
-      scalar_type grad2_a =
-          pow(grad_a.x, 2) + pow(grad_a.y, 2) + pow(grad_a.z, 2);
+      // pow(x, 2) here was lowering to __powf (exp/log) on GPU; squaring by
+      // multiply is both faster and slightly more accurate, and lets us reuse
+      // the squared components across grad2 and delgrad.
+      const scalar_type gax2 = grad_a.x * grad_a.x;
+      const scalar_type gay2 = grad_a.y * grad_a.y;
+      const scalar_type gaz2 = grad_a.z * grad_a.z;
+      scalar_type grad2_a = gax2 + gay2 + gaz2;
       dgrad_a = sqrt(grad2_a);
       delgrad_a =
-          (pow(grad_a.x, 2) * hess1_a.x +
+          (gax2 * hess1_a.x +
             (scalar_type)2.0f * grad_a.x * grad_a.y * hess2_a.x +
             (scalar_type)2.0f * grad_a.y * grad_a.z * hess2_a.z +
             (scalar_type)2.0f * grad_a.x * grad_a.z * hess2_a.y +
-            pow(grad_a.y, 2) * hess1_a.y + pow(grad_a.z, 2) * hess1_a.z) / dgrad_a;
+            gay2 * hess1_a.y + gaz2 * hess1_a.z) / dgrad_a;
       rlap_a = hess1_a.x + hess1_a.y + hess1_a.z;  // Laplacian Up
 
       // Down density
-      scalar_type grad2_b =
-          pow(grad_b.x, 2) + pow(grad_b.y, 2) + pow(grad_b.z, 2);
+      const scalar_type gbx2 = grad_b.x * grad_b.x;
+      const scalar_type gby2 = grad_b.y * grad_b.y;
+      const scalar_type gbz2 = grad_b.z * grad_b.z;
+      scalar_type grad2_b = gbx2 + gby2 + gbz2;
       dgrad_b = sqrt(grad2_b);
       delgrad_b =
-          (pow(grad_b.x, 2)  * hess1_b.x +
+          (gbx2 * hess1_b.x +
             (scalar_type)2.0f * grad_b.x * grad_b.y * hess2_b.x +
             (scalar_type)2.0f * grad_b.y * grad_b.z * hess2_b.z +
             (scalar_type)2.0f * grad_b.x * grad_b.z * hess2_b.y +
-            pow(grad_b.y, 2)  * hess1_b.y + pow(grad_b.z, 2) * hess1_b.z) / dgrad_b;
+            gby2 * hess1_b.y + gbz2 * hess1_b.z) / dgrad_b;
       rlap_b = hess1_b.x + hess1_b.y + hess1_b.z;
 
       // Up + Down densities
-      scalar_type grad2 = pow(grad.x, 2) + pow(grad.y, 2) + pow(grad.z, 2);
+      const scalar_type gx2 = grad.x * grad.x;
+      const scalar_type gy2 = grad.y * grad.y;
+      const scalar_type gz2 = grad.z * grad.z;
+      scalar_type grad2 = gx2 + gy2 + gz2;
       dgrad = sqrt(grad2);
-      delgrad = (pow(grad.x, 2) * hess1.x + pow(grad.y, 2) * hess1.y
-                  + pow(grad.z, 2) * hess1.z + 
+      delgrad = (gx2 * hess1.x + gy2 * hess1.y
+                  + gz2 * hess1.z +
                   (scalar_type)2.0f * grad.x * grad.y * hess2.x +
                   (scalar_type)2.0f * grad.y * grad.z * hess2.z +
                   (scalar_type)2.0f * grad.x * grad.z * hess2.y) / dgrad;

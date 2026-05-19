@@ -86,10 +86,21 @@ __forceinline__ __host__ __device__ void pbeOS_corr(scalar_type rho, scalar_type
   //  scalar_type ALFC = -ALFM;
   scalar_type Z2 = zet * zet;
   scalar_type Z4 = Z2 * Z2;
-  scalar_type ZET1 = cbrt(pow((scalar_type)(1.0f + zet), 4));
-  scalar_type ZET2 = cbrt(pow((scalar_type)(1.0f - zet), 4));
-  scalar_type GAM =
-      pow((scalar_type)(2.0f), (scalar_type)4.0f / 3.0f) - (scalar_type)2.0f;
+  // Common subexpressions: (1+zet) and (1-zet) appear in many forms (^2, ^4,
+  // ^(2/3), ^(4/3), cbrt) below. Cache the base and its square once; replace
+  // pow(., 2) and pow(., 4) with explicit multiplies. cbrt(x^4) = x * cbrt(x);
+  // cbrt(x^2) = cbrt(x * x). pow(2, 4/3) is a compile-time constant.
+  const scalar_type opz = (scalar_type)1.0f + zet;
+  const scalar_type omz = (scalar_type)1.0f - zet;
+  const scalar_type opz2 = opz * opz;
+  const scalar_type omz2 = omz * omz;
+  const scalar_type opz4 = opz2 * opz2;
+  const scalar_type omz4 = omz2 * omz2;
+  scalar_type ZET1 = cbrt(opz4);
+  scalar_type ZET2 = cbrt(omz4);
+  // 2^(4/3) - 2 = 2 * (2^(1/3) - 1) — compile-time constant, replaces a
+  // runtime pow() per invocation.
+  const scalar_type GAM = (scalar_type)0.5198420997897464;
 
   // F=((1.D0+ZET)**THRD4+(1.D0-ZET)**THRD4-2.D0)/GAM
   // EC = EU*(1.D0-F*Z4)+EP*F*Z4-ALFM*F*(1.D0-Z4)/FZZ
@@ -108,14 +119,15 @@ __forceinline__ __host__ __device__ void pbeOS_corr(scalar_type rho, scalar_type
 
   scalar_type ECRS =
       EURS * (1.0f - F * Z4) + EPRS * F * Z4 - ALFRSM * F * (1.0f - Z4) / FZZ;
-  scalar_type ZET3 = cbrt((scalar_type)(1.0f + zet));
-  scalar_type ZET4 = cbrt((scalar_type)(1.0f - zet));
+  scalar_type ZET3 = cbrt(opz);
+  scalar_type ZET4 = cbrt(omz);
   scalar_type FZ = (scalar_type)(4.0f / 3.0f) * (ZET3 - ZET4) / GAM;
 
   // ECZET =
   // 4.D0*(ZET**3)*F*(EP-EU+ALFM/FZZ)+FZ*(Z4*EP-Z4*EU-(1.D0-Z4)*ALFM/FZZ)
   // COMM = EC -RS*ECRS/3.D0-ZET*ECZET
-  scalar_type ECZET = (scalar_type)4.0f * pow((scalar_type)zet, 3) * F *
+  const scalar_type zet3 = zet * Z2;  // zet^3 = zet * zet^2
+  scalar_type ECZET = (scalar_type)4.0f * zet3 * F *
                           (EP - EU + ALFM / FZZ) +
                       FZ * (Z4 * EP - Z4 * EU - (1.0f - Z4) * ALFM / FZZ);
   scalar_type COMM = ec - rs * ECRS / (scalar_type)3.0f - zet * ECZET;
@@ -134,10 +146,10 @@ __forceinline__ __host__ __device__ void pbeOS_corr(scalar_type rho, scalar_type
   // G=((1.d0+ZET)**thrd2+(1.d0-ZET)**thrd2)/2.d0
   // G3 = G**3
   // PON=-EC/(G3*gama)
-  scalar_type ZET5 = cbrt(pow((scalar_type)(1.0f + zet), 2));
-  scalar_type ZET6 = cbrt(pow((scalar_type)(1.0f - zet), 2));
+  scalar_type ZET5 = cbrt(opz2);
+  scalar_type ZET6 = cbrt(omz2);
   scalar_type G = (ZET5 + ZET6) / (scalar_type)2.0f;
-  scalar_type G3 = pow(G, 3);
+  scalar_type G3 = G * G * G;
   scalar_type PON = -ec / (G3 * EASYPBE_GAMMA);
 
   // B = DELT/(DEXP(PON)-1.D0)
@@ -156,7 +168,7 @@ __forceinline__ __host__ __device__ void pbeOS_corr(scalar_type rho, scalar_type
   // Q4 = 1.D0+B*T2
   // Q5 = 1.D0+B*T2+B2*T4
   // H = G3*(BET/DELT)*DLOG(1.D0+DELT*Q4*T2/Q5)
-  scalar_type RS2 = pow(rs, 2);
+  scalar_type RS2 = rs * rs;
   scalar_type Q4 = (scalar_type)1.0f + B * T2;
   scalar_type Q5 = (scalar_type)1.0f + B * T2 + B2 * T4;
   h = G3 * (scalar_type)(EASYPBE_BETA / EASYPBE_DELTA) *
@@ -176,10 +188,12 @@ __forceinline__ __host__ __device__ void pbeOS_corr(scalar_type rho, scalar_type
   scalar_type rsthrd = rs / (scalar_type)3.0f;
 
   // GZ=(((1.d0+zet)**2+eta)**sixthm-((1.d0-zet)**2+eta)**sixthm)/3.d0
-  scalar_type ZET7 = pow((scalar_type)(1.0f + zet), 2);
-  scalar_type ZET8 = pow((scalar_type)(1.0f - zet), 2);
-  scalar_type GZ1 = pow((ZET7 + EASYPBE_ETA), (scalar_type)(-1.0f / 6.0f));
-  scalar_type GZ2 = pow((ZET8 + EASYPBE_ETA), (scalar_type)(-1.0f / 6.0f));
+  // ZET7/8 = opz^2/omz^2 already cached above as opz2/omz2.
+  // x^(-1/6) = 1 / sqrt(cbrt(x)) — replaces a pow() with sqrt+cbrt.
+  const scalar_type GZ1_arg = opz2 + (scalar_type)EASYPBE_ETA;
+  const scalar_type GZ2_arg = omz2 + (scalar_type)EASYPBE_ETA;
+  scalar_type GZ1 = (scalar_type)1.0f / sqrt(cbrt(GZ1_arg));
+  scalar_type GZ2 = (scalar_type)1.0f / sqrt(cbrt(GZ2_arg));
   scalar_type GZ = (GZ1 - GZ2) / (scalar_type)3.0f;
 
   //  FAC = DELT/B+1.D0
@@ -190,7 +204,7 @@ __forceinline__ __host__ __device__ void pbeOS_corr(scalar_type rho, scalar_type
   scalar_type FAC = EASYPBE_DELTA / B + (scalar_type)1.0f;
   scalar_type BG = -(scalar_type)3.0f * B2 * ec * FAC / (EASYPBE_BETA * G4);
   scalar_type BEC = B2 * FAC / (EASYPBE_BETA * G3);
-  scalar_type Q8 = pow(Q5, 2) + EASYPBE_DELTA * Q4 * Q5 * T2;
+  scalar_type Q8 = Q5 * Q5 + EASYPBE_DELTA * Q4 * Q5 * T2;
   scalar_type Q9 = (scalar_type)1.0f + (scalar_type)2.0f * B * T2;
 
   //      hB = -BET*G3*B*T6*(2.D0+B*T2)/Q8
