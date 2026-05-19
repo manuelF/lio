@@ -5,7 +5,7 @@ charge    = 0
 int_basis = t
 
 timedep    = 1
-ntdstep    = 50000
+ntdstep    = 5000
 tdstep     = 0.004
 propagator = 2
 
