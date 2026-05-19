@@ -110,3 +110,100 @@ __global__ void gpu_update_rmm(const scalar_type* __restrict__ factors, int poin
      rmm[COALESCED_DIMENSION(m) * j + i] = rmm_local;
   }
 }
+
+// Open-shell fused variant: produces both rmm_a and rmm_b from one launch.
+// Each thread accumulates two outputs sharing the same Fi/Fj loads, halving
+// kernel launch count for the small-group path that dominates TDDFT.
+template <class scalar_type, bool check_pos>
+__global__ void gpu_update_rmm_open(
+    const scalar_type* __restrict__ factors_a,
+    const scalar_type* __restrict__ factors_b,
+    int points,
+    scalar_type* rmm_a, scalar_type* rmm_b,
+    const scalar_type* __restrict__ function_values, int m) {
+  int i, j, first_fi, first_fj;
+  if (check_pos) {
+    int n = sqrtf(1.0f + 8.0f * blockIdx.x);
+    n -= (1 - n % 2);
+    int block_j = (n - 1) / 2;
+    int block_i = blockIdx.x - (block_j + 1) * block_j / 2;
+    first_fi = block_i * blockDim.x;
+    first_fj = block_j * blockDim.y;
+    i = first_fi + threadIdx.x;
+    j = first_fj + threadIdx.y;
+  } else {
+    uint3 pos = index(blockDim, blockIdx, threadIdx);
+    i = pos.x;
+    j = pos.y;
+    first_fi = blockIdx.x * blockDim.x;
+    first_fj = blockIdx.y * blockDim.y;
+  }
+
+  bool valid_thread = ((i < m) && (j < m) && (i <= j));
+
+  scalar_type rmm_local_a = 0.0f;
+  scalar_type rmm_local_b = 0.0f;
+
+  // Fi pre-multiplied by factor_a and factor_b respectively. Two i-tiles
+  // doubles shared usage relative to the closed-shell kernel but keeps the
+  // inner loop a pure fma + accumulate.
+  __shared__ scalar_type functions_i_a_local[RMM_BLOCK_SIZE_XY][RMM_BLOCK_SIZE_XY + 1];
+  __shared__ scalar_type functions_i_b_local[RMM_BLOCK_SIZE_XY][RMM_BLOCK_SIZE_XY + 1];
+  __shared__ scalar_type functions_j_local[RMM_BLOCK_SIZE_XY][RMM_BLOCK_SIZE_XY + 1];
+  __shared__ scalar_type factor_a_local[RMM_BLOCK_SIZE_XY * RMM_BLOCK_SIZE_XY];
+  __shared__ scalar_type factor_b_local[RMM_BLOCK_SIZE_XY * RMM_BLOCK_SIZE_XY];
+
+  int inc = RMM_BLOCK_SIZE_XY * RMM_BLOCK_SIZE_XY;
+  int abs_threadIdx = threadIdx.y * blockDim.x + threadIdx.x;
+  bool valid_fi_thread = (first_fi + threadIdx.y) < m;
+  bool valid_fj_thread = (first_fj + threadIdx.y) < m;
+  for (int point_base = 0; point_base < points; point_base += inc) {
+    __syncthreads();
+    if (point_base + abs_threadIdx < points) {
+      factor_a_local[abs_threadIdx] = factors_a[point_base + abs_threadIdx];
+      factor_b_local[abs_threadIdx] = factors_b[point_base + abs_threadIdx];
+    }
+
+    int last_point = point_base + inc;
+
+    #pragma unroll 16
+    for (int point = point_base; point < last_point;
+         point += RMM_BLOCK_SIZE_XY) {
+      if (point < points) {
+        __syncthreads();
+        bool valid_point = point + threadIdx.x < points;
+        bool validFi = valid_point * valid_fi_thread;
+        bool validFj = valid_point * valid_fj_thread;
+        int function_values_fi_index =
+            COALESCED_DIMENSION(points) * (first_fi + threadIdx.y) +
+            (point + threadIdx.x);
+        int function_values_fj_index =
+            COALESCED_DIMENSION(points) * (first_fj + threadIdx.y) +
+            (point + threadIdx.x);
+        int factor_local_fi_index = (point - point_base) + threadIdx.x;
+
+        scalar_type fi_raw = function_values[validFi * function_values_fi_index];
+        scalar_type fa = factor_a_local[validFi * factor_local_fi_index];
+        scalar_type fb = factor_b_local[validFi * factor_local_fi_index];
+
+        functions_i_a_local[threadIdx.x][threadIdx.y] = validFi * fi_raw * fa;
+        functions_i_b_local[threadIdx.x][threadIdx.y] = validFi * fi_raw * fb;
+
+        functions_j_local[threadIdx.x][threadIdx.y] =
+            validFj * function_values[validFj * function_values_fj_index];
+
+        __syncthreads();
+        for (int point_sub = 0; point_sub < RMM_BLOCK_SIZE_XY; point_sub++) {
+          scalar_type fj = functions_j_local[point_sub][threadIdx.y];
+          rmm_local_a += functions_i_a_local[point_sub][threadIdx.x] * fj;
+          rmm_local_b += functions_i_b_local[point_sub][threadIdx.x] * fj;
+        }
+      }
+    }
+  }
+
+  if (valid_thread) {
+    rmm_a[COALESCED_DIMENSION(m) * j + i] = rmm_local_a;
+    rmm_b[COALESCED_DIMENSION(m) * j + i] = rmm_local_b;
+  }
+}

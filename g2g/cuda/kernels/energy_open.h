@@ -61,9 +61,6 @@ __global__ void gpu_compute_density_opened(
     w32_b = ww12_b = ww22_b = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
   }
 
-  scalar_type Fi, Fi2;
-  vec_type<scalar_type, 3> Fgi, Fhi1, Fhi2, Fgi2, Fhi12, Fhi22;
-
   int position = threadIdx.x;
 
   __shared__ scalar_type fj_sh[DENSITY_BLOCK_SIZE];
@@ -75,27 +72,6 @@ __global__ void gpu_compute_density_opened(
   // misma cuenta
   if (min_i > m) {
     min_i = min_i - DENSITY_BLOCK_SIZE;
-  }
-
-  if (valid_thread2) {
-    Fi2 = function_values[(m)*point + i2];
-    if (!lda) {
-      Fgi2 = vec_type<scalar_type, 3>(gradient_values[(m)*point + i2]);
-      Fhi12 = vec_type<scalar_type, 3>(
-          hessian_values[(m) * 2 * point + (2 * i2 + 0)]);
-      Fhi22 = vec_type<scalar_type, 3>(
-          hessian_values[(m) * 2 * point + (2 * i2 + 1)]);
-    }
-  }
-  if (valid_thread) {
-    Fi = function_values[(m)*point + i];
-    if (!lda) {
-      Fgi = vec_type<scalar_type, 3>(gradient_values[(m)*point + i]);
-      Fhi1 = vec_type<scalar_type, 3>(
-          hessian_values[(m) * 2 * point + (2 * i + 0)]);
-      Fhi2 = vec_type<scalar_type, 3>(
-          hessian_values[(m) * 2 * point + (2 * i + 1)]);
-    }
   }
 
   for (int bj = 0; bj <= min_i; bj += DENSITY_BLOCK_SIZE) {
@@ -174,6 +150,19 @@ __global__ void gpu_compute_density_opened(
     }
   }
   if (valid_thread) {
+    // Loads relocated to after the bj loop (mirrors closed-shell energy.h):
+    // these registers are not consumed inside the loop, so holding them live
+    // across it was inflating register pressure (96 -> ~56 regs target).
+    scalar_type Fi = function_values[(m)*point + i];
+    vec_type<scalar_type, 3> Fgi, Fhi1, Fhi2;
+    if (!lda) {
+      Fgi = vec_type<scalar_type, 3>(gradient_values[(m)*point + i]);
+      Fhi1 = vec_type<scalar_type, 3>(
+          hessian_values[(m) * 2 * point + (2 * i + 0)]);
+      Fhi2 = vec_type<scalar_type, 3>(
+          hessian_values[(m) * 2 * point + (2 * i + 1)]);
+    }
+
     partial_density_a = Fi * w_a;
     partial_density_b = Fi * w_b;
     if (!lda) {
@@ -195,6 +184,16 @@ __global__ void gpu_compute_density_opened(
     }
   }
   if (valid_thread2) {
+    scalar_type Fi2 = function_values[(m)*point + i2];
+    vec_type<scalar_type, 3> Fgi2, Fhi12, Fhi22;
+    if (!lda) {
+      Fgi2 = vec_type<scalar_type, 3>(gradient_values[(m)*point + i2]);
+      Fhi12 = vec_type<scalar_type, 3>(
+          hessian_values[(m) * 2 * point + (2 * i2 + 0)]);
+      Fhi22 = vec_type<scalar_type, 3>(
+          hessian_values[(m) * 2 * point + (2 * i2 + 1)]);
+    }
+
     partial_density_a += Fi2 * w2_a;
     partial_density_b += Fi2 * w2_b;
     if (!lda) {

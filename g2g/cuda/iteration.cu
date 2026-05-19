@@ -1284,14 +1284,12 @@ void PointGroupGPU<scalar_type>::solve_opened(
     if (blocksPerRow > 1) {
       static const char* off = getenv("LIO_RMM_CUBLAS");
       if (off && off[0] == '0') {
-        // Hand-kernel path retained for the env-var escape hatch. Two
-        // launches (alpha + beta) write into halves of the combined buffer.
-        gpu_update_rmm<scalar_type,true><<<threadGrid, threadBlock>>>(
-            factors_a_gpu.data, this->number_of_points,
-            rmm_out_a_ptr, function_values.data, group_m);
-        gpu_update_rmm<scalar_type,true><<<threadGrid, threadBlock>>>(
-            factors_b_gpu.data, this->number_of_points,
-            rmm_out_b_ptr, function_values.data, group_m);
+        // Hand-kernel path retained for the env-var escape hatch. One fused
+        // launch produces both alpha and beta into halves of the combined
+        // buffer, sharing Fi/Fj loads.
+        gpu_update_rmm_open<scalar_type,true><<<threadGrid, threadBlock>>>(
+            factors_a_gpu.data, factors_b_gpu.data, this->number_of_points,
+            rmm_out_a_ptr, rmm_out_b_ptr, function_values.data, group_m);
       } else {
         // Fused alpha+beta cuBLAS path: two dgmms + one larger GEMM, replacing
         // the four prior cuBLAS launches and giving the GEMM 2x the tile
@@ -1303,12 +1301,13 @@ void PointGroupGPU<scalar_type>::solve_opened(
             this->rmm_scaled_scratch);
       }
     } else {
-      gpu_update_rmm<scalar_type,false><<<threadGrid, threadBlock>>>(
-          factors_a_gpu.data, this->number_of_points,
-          rmm_out_a_ptr, function_values.data, group_m);
-      gpu_update_rmm<scalar_type,false><<<threadGrid, threadBlock>>>(
-          factors_b_gpu.data, this->number_of_points,
-          rmm_out_b_ptr, function_values.data, group_m);
+      // Single-block path (group_m <= RMM_BLOCK_SIZE_XY): too small for cuBLAS
+      // launch overhead. Fused open kernel halves launches vs the prior
+      // alpha+beta pair, which dominates TDDFT for small molecules where most
+      // groups are cubes with group_m <= 16.
+      gpu_update_rmm_open<scalar_type,false><<<threadGrid, threadBlock>>>(
+          factors_a_gpu.data, factors_b_gpu.data, this->number_of_points,
+          rmm_out_a_ptr, rmm_out_b_ptr, function_values.data, group_m);
     }
 
     cudaAssertNoError("update_rmm");
