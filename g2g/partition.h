@@ -287,15 +287,34 @@ class PointGroupGPU: public PointGroup<scalar_type> {
     unsigned int cached_rmm_w = 0;     // dims used to allocate the cached array
     unsigned int cached_rmm_h = 0;
 
-    // Pinned host scratch for the reduced RMM input fed each SCF iteration to
-    // cudaMemcpy2DToArrayAsync. With pageable memory the "Async" copy stages
-    // through a driver pinned buffer and blocks the host (≈51 µs/call on
-    // fosfato baseline, dominating cudaMemcpy2DToArrayAsync's 238 ms total).
-    // Pinning + per-group caching turns the call into a true DMA enqueue,
-    // letting the GPU thread queue more work ahead. Size is fixed per group
-    // (depends only on group_m), so allocate once and reuse.
-    G2G::HostMatrix<scalar_type> rmm_input_pinned_cached{G2G::HostMatrix<scalar_type>::Pinned};
-    G2G::HostMatrix<scalar_type> rmm_input_b_pinned_cached{G2G::HostMatrix<scalar_type>::Pinned};
+    // Per-group cached scratch reused across SCF/TD iterations. Sizes depend
+    // only on number_of_points and group_m (both constant for the lifetime
+    // of the group), so resize() is a no-op after the first call. The _a
+    // buffers serve closed-shell; open-shell uses both _a and _b plus
+    // rmm_output_ab. Avoids ~10 cudaMallocAsync + cudaFreeAsync calls per
+    // group per iteration.
+    G2G::CudaMatrix<scalar_type>               partial_densities_a_cached;
+    G2G::CudaMatrix<scalar_type>               partial_densities_b_cached;
+    G2G::CudaMatrix< vec_type<scalar_type,4> > dxyz_a_cached;
+    G2G::CudaMatrix< vec_type<scalar_type,4> > dd1_a_cached;
+    G2G::CudaMatrix< vec_type<scalar_type,4> > dd2_a_cached;
+    G2G::CudaMatrix< vec_type<scalar_type,4> > dxyz_b_cached;
+    G2G::CudaMatrix< vec_type<scalar_type,4> > dd1_b_cached;
+    G2G::CudaMatrix< vec_type<scalar_type,4> > dd2_b_cached;
+    G2G::CudaMatrix<scalar_type>               factors_a_cached;
+    G2G::CudaMatrix<scalar_type>               factors_b_cached;
+    G2G::CudaMatrix<scalar_type>               energy_cached;
+    G2G::CudaMatrix<scalar_type>               rmm_output_cached;     // closed-shell
+    G2G::CudaMatrix<scalar_type>               rmm_output_ab_cached;  // open-shell fused [a|b]
+
+    // Per-group dense scratch holding the local P submatrix fed to the
+    // density-kernel texture. Populated each iteration by an on-GPU gather
+    // from the global packed-triangular P (uploaded once per
+    // Partition::solve), replacing the legacy CPU pack + Host→Array path.
+    // Dimensions: width = COALESCED_DIMENSION(group_m), height = group_m +
+    // DENSITY_BLOCK_SIZE.
+    G2G::CudaMatrix<scalar_type> rdm_local_dev_a_cached;
+    G2G::CudaMatrix<scalar_type> rdm_local_dev_b_cached;  // open-shell only
 };
 
 #if FULL_DOUBLE

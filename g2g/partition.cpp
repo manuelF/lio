@@ -26,6 +26,11 @@ void gpu_scatter_download_global_fock(double* host_dst,
 void gpu_scatter_download_global_fock_open(double* host_dst_a,
                                            double* host_dst_b,
                                            unsigned int rmm_global_size);
+void gpu_upload_global_rdm(const double* h_rdm,
+                           const double* h_rdm_a,
+                           const double* h_rdm_b,
+                           unsigned int rmm_global_size,
+                           bool open);
 
 // Free the per-group cuArray + cudaTextureObject cache. Defined in
 // cuda/iteration.cu to keep CUDA runtime headers out of partition.cpp.
@@ -345,6 +350,21 @@ void PointGroupGPU<scalar_type>::deallocate() {
   rmm_accum_gpu.deallocate();
   dxyz_accum_gpu.deallocate();
   point_weights_gpu_cached.deallocate();
+  partial_densities_a_cached.deallocate();
+  partial_densities_b_cached.deallocate();
+  dxyz_a_cached.deallocate();
+  dd1_a_cached.deallocate();
+  dd2_a_cached.deallocate();
+  dxyz_b_cached.deallocate();
+  dd1_b_cached.deallocate();
+  dd2_b_cached.deallocate();
+  factors_a_cached.deallocate();
+  factors_b_cached.deallocate();
+  energy_cached.deallocate();
+  rmm_output_cached.deallocate();
+  rmm_output_ab_cached.deallocate();
+  rdm_local_dev_a_cached.deallocate();
+  rdm_local_dev_b_cached.deallocate();
 #if GPU_KERNELS
   gpu_release_group_rmm_texture(this->cached_cuArray,   this->cached_tex);
   gpu_release_group_rmm_texture(this->cached_cuArray_b, this->cached_tex_b);
@@ -478,6 +498,24 @@ void Partition::solve(Timers& timers, bool compute_rmm, bool lda,
     const unsigned int rmm_global_size =
         fortran_vars.m * (fortran_vars.m + 1) / 2;
     gpu_scatter_zero_global_fock(rmm_global_size, OPEN);
+  }
+  // Upload the global packed-triangular P matrix once per solve(). Each
+  // PointGroupGPU::solve_* then runs an on-GPU gather to build its per-group
+  // local_rdm scratch, eliminating the per-group CPU pack + Host→Array
+  // round-trip.
+  if (gpu_threads > 0) {
+    const unsigned int rmm_global_size =
+        fortran_vars.m * (fortran_vars.m + 1) / 2;
+    if (OPEN) {
+      gpu_upload_global_rdm(nullptr,
+                            fortran_vars.rmm_dens_a.data,
+                            fortran_vars.rmm_dens_b.data,
+                            rmm_global_size, true);
+    } else {
+      gpu_upload_global_rdm(fortran_vars.rmm_input_ndens1.data,
+                            nullptr, nullptr,
+                            rmm_global_size, false);
+    }
   }
 #endif
 
