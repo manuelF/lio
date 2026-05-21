@@ -99,8 +99,17 @@ __global__ void gpu_compute_density_opened(
     vec_type<scalar_type, 3> fh2jreg =
         vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
 
+    // Tighter loop bound for small groups: the shared fj_sh/fgj_sh/fh1j_sh/
+    // fh2j_sh slots past index (m-bj-1) are never populated (the shared store
+    // is gated by `bj+position < m`), and the guarded fetches inside this
+    // loop short-circuit anyway. For small group_m the original 64-trip loop wastes 
+    // 40+ iterations doing dead shared loads + branch evaluation. 
+    // Uniform across the block (no divergence). Bit-exact
+    // — only skips iterations that were already no-ops.
+    int j_max = (int)m - bj;
+    if (j_max > DENSITY_BLOCK_SIZE) j_max = DENSITY_BLOCK_SIZE;
     if (valid_thread) {
-      for (int j = 0; j < DENSITY_BLOCK_SIZE; j++) {
+      for (int j = 0; j < j_max; j++) {
         fjreg = fj_sh[j];
         if (!lda) {
           fgjreg = fgj_sh[j];

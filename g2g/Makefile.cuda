@@ -103,7 +103,7 @@ ifeq ($(dbg),1)
   NVCCDBGFLAGS  += -O1 --debug --device-debug
   NVCCAINTFLAGS += -O1 --debug --generate-line-info
 else
-  NVCCFLAGS   += -O3 --compiler-options -fno-strict-aliasing
+  NVCCFLAGS   += -O3 --compiler-options -fno-strict-aliasing  --generate-line-info
 endif
 
 ifeq ($(profile),1)

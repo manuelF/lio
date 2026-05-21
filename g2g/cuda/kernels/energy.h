@@ -78,8 +78,11 @@ __launch_bounds__(DENSITY_BLOCK_SIZE, 16) __global__ void gpu_compute_density(
     vec_type<scalar_type, 3> fh1jreg;
     vec_type<scalar_type, 3> fh2jreg;
 
+    // Tighter loop bound for small groups.
+    int j_max = (int)m - bj;
+    if (j_max > DENSITY_BLOCK_SIZE) j_max = DENSITY_BLOCK_SIZE;
     if (valid_thread) {
-      for (int j = 0; j < DENSITY_BLOCK_SIZE; j++) {
+      for (int j = 0; j < j_max; j++) {
         fjreg = fj_sh[j];
 
         if (!lda) {
@@ -191,7 +194,7 @@ __launch_bounds__(DENSITY_BLOCK_SIZE, 16) __global__ void gpu_compute_density(
       fh1j_sh[position] += fh1j_sh[index];
       fh2j_sh[position] += fh2j_sh[index];
     }
-    __syncthreads();  
+    __syncthreads();
   }
 
   if (threadIdx.x == 0) {
