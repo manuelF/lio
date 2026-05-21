@@ -104,25 +104,45 @@ subroutine magnus(Fock, RhoOld, RhoNew, M, N, dt, factorial)
    TDCOMPLEX   , intent(in)  :: RhoOld(M,M)
    TDCOMPLEX   , intent(out) :: RhoNew(M,M)
 
-   integer                :: icount, jcount
-   type(cumat_x)          :: omega, comm_prev, comm_next, rho_m
-   TDCOMPLEX              :: alpha, beta, ICMPLX
-   TDCOMPLEX, allocatable :: Omega1(:,:)
-   TDCOMPLEX :: liocmplx
-   
+   integer       :: icount, jcount
+   TDCOMPLEX     :: alpha, beta, ICMPLX
+   TDCOMPLEX     :: liocmplx
+
+   ! Persistent scratch across TD steps. Sized on first call, reused.
+   ! Avoids per-call alloc/destroy of M*M complex buffers; combined with
+   ! move_alloc-based cumat_exchange this cuts ~10us per magnus call from
+   ! Fortran heap churn that dominated the inter-step CPU gap.
+   type(cumat_x), save          :: omega, comm_prev, comm_next, rho_m
+   TDCOMPLEX, allocatable, save :: Omega1(:,:)
+   integer, save :: cached_M = 0
+
+   if (cached_M /= M) then
+      if (cached_M /= 0) then
+         call omega%destroy()
+         call rho_m%destroy()
+         call comm_next%destroy()
+         call comm_prev%destroy()
+         deallocate(Omega1)
+      endif
+      call omega%allocate(M, .true.)
+      call rho_m%allocate(M, .true.)
+      call comm_prev%allocate(M, .true.)
+      call comm_next%allocate(M, .true.)
+      allocate(Omega1(M,M))
+      cached_M = M
+   endif
+
    ICMPLX = liocmplx(0.0D0, 1.0D0)
-   allocate(Omega1(M,M))
-   do icount = 1, M
    do jcount = 1, M
+   do icount = 1, M
       Omega1(icount,jcount) = - ICMPLX * real(Fock(icount,jcount) * dt,&
                                               COMPLEX_SIZE/2)
    enddo
    enddo
 
-   call omega%init(M, Omega1, .true.)
-   call rho_m%init(M, rhoOld, .true.)
-   call comm_prev%init(M, rhoOld, .true.)
-   call comm_next%init(M, rhoOld, .true.)
+   call omega%set(Omega1)
+   call rho_m%set(rhoOld)
+   call comm_prev%set(rhoOld)
 
    ! Density matrix propagation
    alpha = liocmplx(1.0D0, 0.0D0)
@@ -133,7 +153,7 @@ subroutine magnus(Fock, RhoOld, RhoNew, M, N, dt, factorial)
 
       beta  = liocmplx(-1.0D0, 0.0D0)
       call comm_next%mat_mul(comm_prev, omega    , alpha, beta)
-      
+
       beta  = liocmplx(1.0D0, 0.0D0)
       call rho_m%add_mat(comm_next, beta)
 
@@ -142,12 +162,6 @@ subroutine magnus(Fock, RhoOld, RhoNew, M, N, dt, factorial)
 
    ! Stores the new density.
    call rho_m%get(rhoNew)
-
-   call omega%destroy()
-   call rho_m%destroy()
-   call comm_next%destroy()
-   call comm_prev%destroy()
-   deallocate(Omega1)
 end subroutine magnus
 
 subroutine do_TDexactExchange(Fmat,Fmat2,Eexact,MM,M,open_shell)

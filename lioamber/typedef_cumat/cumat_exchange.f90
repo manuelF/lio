@@ -14,23 +14,15 @@ subroutine exchange_r(this, bmat)
    this%cu_pointer = tmp_pointer
 
    if ((.not. this%gpu_only) .and. (.not. bmat%gpu_only)) then
-      allocate(tmp_array(this%mat_size, this%mat_size))
-
-      tmp_array   = bmat%matrix
-      bmat%matrix = this%matrix
-      this%matrix = tmp_array
-
-      deallocate(tmp_array)
+      call move_alloc(this%matrix, tmp_array)
+      call move_alloc(bmat%matrix, this%matrix)
+      call move_alloc(tmp_array,   bmat%matrix)
    endif
 
 #else
-   allocate(tmp_array(this%mat_size, this%mat_size))
-
-   tmp_array   = bmat%matrix
-   bmat%matrix = this%matrix
-   this%matrix = tmp_array
-      
-   deallocate(tmp_array)
+   call move_alloc(this%matrix, tmp_array)
+   call move_alloc(bmat%matrix, this%matrix)
+   call move_alloc(tmp_array,   bmat%matrix)
 #endif
 
 end subroutine exchange_r
@@ -49,23 +41,15 @@ subroutine exchange_x(this, bmat)
    this%cu_pointer = tmp_pointer
 
    if ((.not. this%gpu_only) .and. (.not. bmat%gpu_only)) then
-      allocate(tmp_array(this%mat_size, this%mat_size))
-
-      tmp_array   = bmat%matrix
-      bmat%matrix = this%matrix
-      this%matrix = tmp_array
-
-      deallocate(tmp_array)
+      call move_alloc(this%matrix, tmp_array)
+      call move_alloc(bmat%matrix, this%matrix)
+      call move_alloc(tmp_array,   bmat%matrix)
    endif
 
 #else
-   allocate(tmp_array(this%mat_size, this%mat_size))
-
-   tmp_array   = bmat%matrix
-   bmat%matrix = this%matrix
-   this%matrix = tmp_array
-      
-   deallocate(tmp_array)
+   call move_alloc(this%matrix, tmp_array)
+   call move_alloc(bmat%matrix, this%matrix)
+   call move_alloc(tmp_array,   bmat%matrix)
 #endif
 
 end subroutine exchange_x
