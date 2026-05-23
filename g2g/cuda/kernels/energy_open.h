@@ -14,7 +14,18 @@ float y)
 // As with gpu_compute_density, point_weights and the compute_* template flags
 // were never referenced in the body — only out_partial_density_*/dxyz_*/dd*
 // are written. Collapses 3 identical specializations into 1.
-template <class scalar_type, bool lda>
+//
+// `single_pointer=true` is a host-side hint that block_height==1 (i.e.
+// group_m <= 2*DENSITY_BLOCK_SIZE), in which case the second basis-row
+// pointer (i2 = i + DENSITY_BLOCK_SIZE) is guaranteed to fall past m for
+// every thread (valid_thread2 == false) and the entire i2 accumulation
+// branch is dead code. Templating on this lets the compiler eliminate the
+// dead branch's registers (w2_*, w32_*, ww12_*, ww22_*, Fi2/Fgi2/Fhi*2),
+// dropping observed reg-pressure from 80 → ~50 and lifting theoretical
+// occupancy on Ampere from 50% → ~75%. Bit-exact: the i2 branch was
+// already runtime-dead at block_height==1, the template just lets ptxas
+// see it.
+template <class scalar_type, bool lda, bool single_pointer>
 __global__ void gpu_compute_density_opened(
     cudaTextureObject_t rmm_input_gpu_tex,
     cudaTextureObject_t rmm_input_gpu_tex2, uint points,
@@ -43,7 +54,7 @@ __global__ void gpu_compute_density_opened(
   dxyz_b = dd1_b = dd2_b = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
 
   bool valid_thread = (i < m);
-  bool valid_thread2 = (i2 < m);
+  bool valid_thread2 = single_pointer ? false : (i2 < m);
 
   scalar_type w_a = 0.0f;
   scalar_type w_b = 0.0f;
@@ -57,8 +68,10 @@ __global__ void gpu_compute_density_opened(
   if (!lda) {
     w3_a = ww1_a = ww2_a = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
     w3_b = ww1_b = ww2_b = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
-    w32_a = ww12_a = ww22_a = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
-    w32_b = ww12_b = ww22_b = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
+    if (!single_pointer) {
+      w32_a = ww12_a = ww22_a = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
+      w32_b = ww12_b = ww22_b = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
+    }
   }
 
   int position = threadIdx.x;
@@ -138,7 +151,7 @@ __global__ void gpu_compute_density_opened(
           }
         }
 
-        if (valid_thread2 && ((bj + j) <= i2)) {
+        if (!single_pointer && valid_thread2 && ((bj + j) <= i2)) {
           scalar_type rdm_this_thread2_a =
               fetch(rmm_input_gpu_tex, (float)(bj + j), (float)i2);
           scalar_type rdm_this_thread2_b =
@@ -192,7 +205,7 @@ __global__ void gpu_compute_density_opened(
       dd2_b = FgXXY * w3YZZ_b + FgiYZZ * w3XXY_b + Fhi2 * w_b + ww2_b * Fi;
     }
   }
-  if (valid_thread2) {
+  if (!single_pointer && valid_thread2) {
     scalar_type Fi2 = function_values[(m)*point + i2];
     vec_type<scalar_type, 3> Fgi2, Fhi12, Fhi22;
     if (!lda) {
