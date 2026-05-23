@@ -18,7 +18,11 @@ subroutine multiply_r(this, output_matrix, input_matrix)
 #ifdef CUBLAS
    call cumxp_r(input_matrix, this%cu_pointer, output_matrix, mat_size1)
 #else
-   output_matrix = matmul(this%matrix, input_matrix)
+   ! DGEMM beats gfortran's internal matmul by 3-5x at the M~few-hundred
+   ! sizes that hit this path (SCF MOC base change, TD basechange).
+   call DGEMM('N','N', mat_size1, mat_size2, mat_size1, 1.0d0, &
+              this%matrix, mat_size1, input_matrix, mat_size1, &
+              0.0d0, output_matrix, mat_size1)
 #endif
 
 end subroutine multiply_r

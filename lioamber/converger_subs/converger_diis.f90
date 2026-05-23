@@ -45,7 +45,7 @@ end subroutine diis_finalise
 subroutine diis_fock_commut(dens_op, fock_op, dens, M_in, spin, ndiist)
    use converger_data  , only: fockm, FP_PFm, ndiis
    use typedef_operator, only: operator
-   
+
    implicit none
    integer       , intent(in)    :: M_in, ndiist, spin
    LIODBLE  , intent(inout) :: dens(:,:)
@@ -59,11 +59,11 @@ subroutine diis_fock_commut(dens_op, fock_op, dens, M_in, spin, ndiist)
       fockm(:,:,jj,spin)  = fockm(:,:,jj+1,spin)
       FP_PFm(:,:,jj,spin) = FP_PFm(:,:,jj+1,spin)
    enddo
-   
+
    call dens_op%Gets_data_ON(dens)
    call fock_op%Commut_data_r(dens, FP_PFm(:,:,ndiis,spin), M_in)
    call fock_op%Gets_data_ON( fockm(:,:,ndiis,spin) )
-   
+
 end subroutine diis_fock_commut
 
 subroutine diis_get_error(M_in, spin, verbose)
@@ -117,14 +117,13 @@ end subroutine diis_update_energy
 
 subroutine diis_update_emat(niter, ndiist, M_in, open_shell)
    use converger_data, only: EMAT, ndiis, FP_PFm
-   use linear_algebra, only: matmuldiag
 
    implicit none
    integer     , intent(in)  :: niter, ndiist, M_in
    logical     , intent(in)  :: open_shell
 
-   integer                   :: ii, jj, k_ind
-   LIODBLE, allocatable :: diag1(:,:)
+   integer                   :: ii, jj, kk, k_ind
+   LIODBLE                   :: tr
 
    ! Before ndiis iterations, we just start from the old EMAT
    ! After ndiis iterations, we start shifting the oldest iteration stored
@@ -136,29 +135,31 @@ subroutine diis_update_emat(niter, ndiist, M_in, open_shell)
       enddo
    endif
 
-   allocate( diag1(M_in, M_in) )
-   diag1 = 0.0D0
+   ! EMAT(ndiist,ii) = tr( FP_PFm(:,:,ndiis,1) * FP_PFm(:,:,k_ind,1) )
+   !                   (+ same for spin=2 if open shell).
+   ! The previous version called matmuldiag which materialised the full
+   ! MxM product and then summed its diagonal. Compute the trace directly:
+   !   tr(A*B) = sum_{kk,jj} A(jj,kk) * B(kk,jj)
+   ! both inner factors are accessed along their fastest-varying index
+   ! (Fortran is column-major), so no non-contiguous strides.
    do ii = 1, ndiist
       k_ind = ii + (ndiis - ndiist)
-      EMAT(ndiist,ii) = 0.0d0
-
-      ! Make diagonal-only multiplication for the commutations of different
-      ! iterations.
-      call matmuldiag(FP_PFm(:,:, ndiis, 1), FP_PFm(:,:, k_ind, 1), &
-                      diag1, M_in)
-      do jj = 1, M_in
-         EMAT(ndiist,ii) = EMAT(ndiist,ii) + diag1(jj,jj)
+      tr = 0.0d0
+      do kk = 1, M_in
+         do jj = 1, M_in
+            tr = tr + FP_PFm(jj,kk,ndiis,1) * FP_PFm(kk,jj,k_ind,1)
+         enddo
       enddo
       if (open_shell) then
-         call matmuldiag(FP_PFm(:,:, ndiis, 2), FP_PFm(:,:, k_ind, 2), &
-                         diag1, M_in)
-         do jj = 1, M_in
-            EMAT(ndiist,ii) = EMAT(ndiist,ii) + diag1(jj,jj)
+         do kk = 1, M_in
+            do jj = 1, M_in
+               tr = tr + FP_PFm(jj,kk,ndiis,2) * FP_PFm(kk,jj,k_ind,2)
+            enddo
          enddo
       endif
-      EMAT(ii,ndiist) = EMAT(ndiist,ii)
+      EMAT(ndiist,ii) = tr
+      EMAT(ii,ndiist) = tr
    enddo
-   deallocate(diag1)
 
 end subroutine diis_update_emat
 

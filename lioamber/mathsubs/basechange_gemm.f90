@@ -17,8 +17,8 @@ function basechange_d_gemm(M,Mati,Umat,mode) result(Mato)
    LIODBLE    , allocatable :: Mato(:,:)
    
    allocate(Matm(M,M), Mato(M,M))
-   Matm = 0.0D0
-   Mato = 0.0D0
+   ! No zero-init needed: both DGEMMs below use beta=0 and overwrite the
+   ! destination outright.
 
    if (mode == 'inv') then
       call DGEMM('N','N',M,M,M,1.0D0,Umat,M,Mati,M,0.0D0,Matm,M)
