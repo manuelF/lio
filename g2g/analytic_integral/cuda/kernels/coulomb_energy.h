@@ -161,12 +161,18 @@ __global__ void gpu_coulomb_fock(
     inner_step[1] = 3;
     inner_step[2] = 6;
 
+    // gridDim.y tiles the density-function (outer i) loop across blocks so
+    // small grids (few primitive pairs) still fill the GPU.  When gridDim.y==1
+    // this collapses to the original single-block-per-pair traversal.
+    const int tile_y = blockIdx.y;
+    const int tile_n = gridDim.y;
     for (int func_type = 0; func_type < 3; func_type++) {
       //
       // Outer loop: read in block of MM atom information into shared memory
       //
-      for (int i = term_start[func_type]; i < term_end[func_type];
-           i += QMMM_BLOCK_SIZE) {
+      for (int i = term_start[func_type] + tile_y * QMMM_BLOCK_SIZE;
+           i < term_end[func_type];
+           i += tile_n * QMMM_BLOCK_SIZE) {
         if (i + tid < term_end[func_type]) {
           nuc_pos_dens_sh[tid] = nuc_pos_dens[i + tid];
           ac_val_dens_sh[tid] = ac_values_dens[i + tid];
@@ -310,9 +316,13 @@ __global__ void gpu_coulomb_fock(
             }
             // END TERM-TYPE DEPENDENT PART
           }
-
-          __syncthreads();
+          // No __syncthreads needed inside the j-loop: the body only reads
+          // shared memory (nuc_pos_dens_sh / ac_val_dens_sh / fit_dens_sh) and
+          // writes per-thread registers (my_fock[]).  A single sync after the
+          // j-loop is enough to prevent the next i-iteration from overwriting
+          // shared memory before slow warps finish their reads.
         }
+        __syncthreads();
       }
     }
   }

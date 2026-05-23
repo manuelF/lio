@@ -205,12 +205,18 @@ __global__ void gpu_coulomb_fit1(uint num_terms,
     inner_step[2] = 6;
 
     uint rc_ind = 0;
+    // gridDim.y tiles the density-function (outer i) loop across blocks so
+    // small grids (few primitive pairs) still fill the GPU.  When gridDim.y==1
+    // this collapses to the original single-block-per-pair traversal.
+    const int tile_y = blockIdx.y;
+    const int tile_n = gridDim.y;
     for (int func_type = 0; func_type < 3; func_type++) {
       //
       // Outer loop: read in block of MM atom information into shared memory
       //
-      for (int i = term_start[func_type]; i < term_end[func_type];
-           i += QMMM_BLOCK_SIZE) {
+      for (int i = term_start[func_type] + tile_y * QMMM_BLOCK_SIZE;
+           i < term_end[func_type];
+           i += tile_n * QMMM_BLOCK_SIZE) {
         if (i + tid < term_end[func_type]) {
           nuc_pos_dens_sh[tid] = nuc_pos_dens[i + tid];
           ac_val_dens_sh[tid] = ac_values_dens[i + tid];
@@ -356,6 +362,12 @@ __global__ void gpu_coulomb_fit1(uint num_terms,
             // END TERM-TYPE DEPENDENT PART
           }
           switch (func_type) {
+            // NOTE: writes to rc_partial use atomicAdd (instead of plain +=)
+            // because gridDim.y>1 lets multiple tile-blocks share the same
+            // blockIdx.x (and therefore the same rc_partial row).  On modern
+            // GPUs (SM 6.0+) atomicAdd<double> is hardware-native and the
+            // contention is bounded (at most gridDim.y blocks per address),
+            // so the overhead is negligible even when gridDim.y == 1.
             case 0:
               rc_sh[0][tid] = valid_thread * prefactor_mo * rc_sh[0][tid];
 
@@ -368,7 +380,8 @@ __global__ void gpu_coulomb_fit1(uint num_terms,
                 warpReduce<double>(rc_sh[0], tid);
               }
               if (tid == 0) {
-                rc_partial[global_stride * blockIdx.x + rc_ind] += rc_sh[0][0];
+                atomicAdd(&rc_partial[global_stride * blockIdx.x + rc_ind],
+                          rc_sh[0][0]);
               }
               break;
             case 1:
@@ -391,13 +404,16 @@ __global__ void gpu_coulomb_fit1(uint num_terms,
                 warpReduce<double>(rc_sh[2], tid - WARP_SIZE2);
               }
               if (tid == 0) {
-                rc_partial[global_stride * blockIdx.x + rc_ind] += rc_sh[0][0];
+                atomicAdd(&rc_partial[global_stride * blockIdx.x + rc_ind],
+                          rc_sh[0][0]);
               } else if (tid == WARP_SIZE) {
-                rc_partial[global_stride * blockIdx.x + (rc_ind + 1)] +=
-                    rc_sh[1][0];
+                atomicAdd(
+                    &rc_partial[global_stride * blockIdx.x + (rc_ind + 1)],
+                    rc_sh[1][0]);
               } else if (tid == WARP_SIZE2) {
-                rc_partial[global_stride * blockIdx.x + (rc_ind + 2)] +=
-                    rc_sh[2][0];
+                atomicAdd(
+                    &rc_partial[global_stride * blockIdx.x + (rc_ind + 2)],
+                    rc_sh[2][0]);
               }
               break;
             case 2:
@@ -429,20 +445,25 @@ __global__ void gpu_coulomb_fit1(uint num_terms,
                 warpReduce<double>(rc_sh[5], tid - WARP_SIZE2);
               }
               if (tid == 0) {
-                rc_partial[global_stride * blockIdx.x + (rc_ind)] +=
-                    rc_sh[0][0];
-                rc_partial[global_stride * blockIdx.x + (rc_ind + 1)] +=
-                    rc_sh[1][0];
+                atomicAdd(&rc_partial[global_stride * blockIdx.x + (rc_ind)],
+                          rc_sh[0][0]);
+                atomicAdd(
+                    &rc_partial[global_stride * blockIdx.x + (rc_ind + 1)],
+                    rc_sh[1][0]);
               } else if (tid == WARP_SIZE) {
-                rc_partial[global_stride * blockIdx.x + (rc_ind + 2)] +=
-                    rc_sh[2][0];
-                rc_partial[global_stride * blockIdx.x + (rc_ind + 3)] +=
-                    rc_sh[3][0];
+                atomicAdd(
+                    &rc_partial[global_stride * blockIdx.x + (rc_ind + 2)],
+                    rc_sh[2][0]);
+                atomicAdd(
+                    &rc_partial[global_stride * blockIdx.x + (rc_ind + 3)],
+                    rc_sh[3][0]);
               } else if (tid == WARP_SIZE2) {
-                rc_partial[global_stride * blockIdx.x + (rc_ind + 4)] +=
-                    rc_sh[4][0];
-                rc_partial[global_stride * blockIdx.x + (rc_ind + 5)] +=
-                    rc_sh[5][0];
+                atomicAdd(
+                    &rc_partial[global_stride * blockIdx.x + (rc_ind + 4)],
+                    rc_sh[4][0]);
+                atomicAdd(
+                    &rc_partial[global_stride * blockIdx.x + (rc_ind + 5)],
+                    rc_sh[5][0]);
               }
               break;
           }

@@ -188,8 +188,14 @@ __global__ void gpu_fock_reduce(double* fock, scalar_type* dens,
   }
 }
 
-// Double precision addition as an atomic operation
-// Taken from the CUDA Toolkit Documentation
+// Double precision addition as an atomic operation.
+//
+// SM 6.0 (Pascal) and newer provide a hardware-native atomicAdd(double*,
+// double); only fall back to the atomicCAS loop on older architectures.
+// Defining the CAS version unconditionally as a static __device__ shadowed
+// the built-in inside this translation unit and turned every coulomb_fit
+// atomic into a slow CAS spin loop.
+#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ < 600
 static __device__ double atomicAdd(double* address, double val) {
   unsigned long long int* address_as_ull = (unsigned long long int*)address;
   unsigned long long int old = *address_as_ull, assumed;
@@ -205,3 +211,4 @@ static __device__ double atomicAdd(double* address, double val) {
 
   return __longlong_as_double(old);
 }
+#endif

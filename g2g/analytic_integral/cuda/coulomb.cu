@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <vector>
@@ -33,6 +36,102 @@ namespace AINT {
 #include "kernels/coulomb_forces.h"
 #include "kernels/coulomb_energy.h"
 #include "kernels/coulomb_fit.h"
+
+namespace {
+// ------------------------------------------------------------------------
+// Density-loop tile factor (gridDim.y) for gpu_coulomb_fit1 / gpu_coulomb_fock.
+//
+// For small systems (e.g. HCl, chloride) the launch shape is 1-2 blocks
+// per term type, which underutilises modern GPUs (ncu shows 8% achieved
+// occupancy on an 80-SM RTX 3080 Ti with <2% compute throughput).  Tiling
+// the outer density-function loop across blockIdx.y multiplies the grid
+// without changing per-thread work.  The reductions atomically add into
+// the same partial-fock / rc_partial slots, so the math is unchanged.
+//
+// `LIO_COULOMB_TILE_Y` env var:
+//   unset / "auto" / "0" → pick based on grid_x and device SM count
+//   positive integer     → use that exact tile factor (1 disables tiling)
+// ------------------------------------------------------------------------
+struct CoulombTileConfig {
+  int mode;        // 0=auto, >0=explicit
+  int sm_count;    // cached cudaGetDeviceProperties.multiProcessorCount
+};
+
+CoulombTileConfig& coulomb_tile_config() {
+  static CoulombTileConfig cfg = [] {
+    CoulombTileConfig c{};
+    const char* env = std::getenv("LIO_COULOMB_TILE_Y");
+    if (env && *env) {
+      char* end = nullptr;
+      long v = std::strtol(env, &end, 10);
+      if (end != env && v >= 0) c.mode = static_cast<int>(v);
+    }
+    int dev = 0;
+    cudaGetDevice(&dev);
+    int sm = 0;
+    // cudaDeviceGetAttribute is ABI-stable across CUDA 11/12/13, unlike
+    // cudaGetDeviceProperties (which has a _v2 variant in CUDA 12+).
+    if (cudaDeviceGetAttribute(&sm, cudaDevAttrMultiProcessorCount, dev) !=
+        cudaSuccess) {
+      sm = 16;
+    }
+    c.sm_count = sm > 0 ? sm : 16;
+    return c;
+  }();
+  return cfg;
+}
+
+// Estimate the maximum useful tile_y for a given (s_end, p_end, d_end,
+// p_offset, d_offset).  Each func_type contributes ceil(range / 128) i-loop
+// iterations; the largest one bounds parallelism.  Adding more blocks than
+// that just gives empty work to extra blocks (still correct, but wasteful).
+inline int coulomb_tile_y_for_launch(uint grid_x, uint s_end, uint p_end,
+                                     uint d_end, uint p_offset, uint d_offset) {
+  CoulombTileConfig& cfg = coulomb_tile_config();
+  if (cfg.mode > 0) return cfg.mode;  // explicit override
+  // i-loop iteration counts per func_type
+  uint s_iters = (s_end + QMMM_BLOCK_SIZE - 1) / QMMM_BLOCK_SIZE;
+  uint p_iters =
+      (p_end > p_offset)
+          ? ((p_end - p_offset) + QMMM_BLOCK_SIZE - 1) / QMMM_BLOCK_SIZE
+          : 0;
+  uint d_iters =
+      (d_end > d_offset)
+          ? ((d_end - d_offset) + QMMM_BLOCK_SIZE - 1) / QMMM_BLOCK_SIZE
+          : 0;
+  uint max_iters = std::max({s_iters, p_iters, d_iters});
+  if (max_iters <= 1) return 1;  // no parallelism to exploit
+  // Target ~2x the SM count of live blocks; we already have grid_x.
+  uint target_blocks = static_cast<uint>(cfg.sm_count) * 2u;
+  uint tile_y = (target_blocks + std::max(grid_x, 1u) - 1u) /
+                std::max(grid_x, 1u);
+  if (tile_y < 1) tile_y = 1;
+  if (tile_y > max_iters) tile_y = max_iters;
+  // Hard cap to avoid pathologically large grids on tiny systems.
+  if (tile_y > 16) tile_y = 16;
+  return static_cast<int>(tile_y);
+}
+
+// Persistent per-term-type stream pool.  fit_aux_density / calc_fock /
+// calc_gradient used to cudaStreamCreate+cudaStreamDestroy NUM_TERM_TYPES
+// streams every call, which on TDDFT runs (hundreds of fit+fock pairs per
+// second) adds up to a measurable fraction of the host-side cost.  These
+// streams are leaked at process exit (CUDA tears them down for free).
+// NUM_TERM_TYPES is set at runtime (1, 3, or 6).  The compile-time upper
+// bound is 6 (s-s, p-s, p-p, d-s, d-p, d-d), so allocate a fixed pool.
+constexpr uint COULOMB_MAX_TERM_TYPES = 6;
+cudaStream_t* coulomb_streams() {
+  static cudaStream_t streams[COULOMB_MAX_TERM_TYPES] = {};
+  static bool initialized = false;
+  if (!initialized) {
+    for (uint i = 0; i < COULOMB_MAX_TERM_TYPES; i++) {
+      cudaStreamCreate(&streams[i]);
+    }
+    initialized = true;
+  }
+  return streams;
+}
+}  // anonymous namespace
 
 // -----------------------------------------------------------------------------------------------------------------
 template <class scalar_type>
@@ -308,11 +407,8 @@ void CoulombIntegral<scalar_type>::calc_gradient(double* qm_forces,
       COALESCED_DIMENSION(partial_out_size), factor_ac_dens_dev.data,          \
       nuc_dens_dev.data, nuc_ind_dens_dev.data, fit_dens_dev.data, s_end,      \
       p_end, d_end, p_offset, d_offset
-  // Each term type is calculated asynchronously
-  cudaStream_t stream[NUM_TERM_TYPES];
-  for (uint i = 0; i < NUM_TERM_TYPES; i++) {
-    cudaStreamCreate(&stream[i]);
-  }
+  // Each term type is calculated asynchronously on a persistent stream.
+  cudaStream_t* stream = coulomb_streams();
   //
   // Begin launching kernels (one for each type of term, 0 = s-s, 1 = p-s, etc)
   //
@@ -351,9 +447,6 @@ void CoulombIntegral<scalar_type>::calc_gradient(double* qm_forces,
     }
   }
   cudaDeviceSynchronize();
-  for (uint i = 0; i < NUM_TERM_TYPES; i++) {
-    cudaStreamDestroy(stream[i]);
-  }
 
   // cudaUnbindTexture(str_tex);
 
@@ -400,11 +493,8 @@ void CoulombIntegral<scalar_type>::fit_aux_density(void) {
       rc_partial_dev.data + rc_offset,                                         \
       COALESCED_DIMENSION(integral_vars.m_dens), factor_ac_dens_dev.data,      \
       nuc_dens_dev.data, s_end, p_end, d_end, p_offset, d_offset
-  // Each term type is calculated asynchronously
-  cudaStream_t stream[NUM_TERM_TYPES];
-  for (uint i = 0; i < NUM_TERM_TYPES; i++) {
-    cudaStreamCreate(&stream[i]);
-  }
+  // Each term type is calculated asynchronously on a persistent stream.
+  cudaStream_t* stream = coulomb_streams();
   //
   // Begin launching kernels (one for each type of term, 0 = s-s, 1 = p-s, etc)
   //
@@ -415,7 +505,10 @@ void CoulombIntegral<scalar_type>::fit_aux_density(void) {
         os_int.out_offsets[i] * COALESCED_DIMENSION(integral_vars.m_dens);
     dim3 threads = os_int.term_type_counts[i];
     dim3 blockSize(QMMM_BLOCK_SIZE);
-    dim3 gridSize = divUp(threads, blockSize);
+    uint grid_x = divUp(threads.x, blockSize.x);
+    uint tile_y = coulomb_tile_y_for_launch(grid_x, s_end, p_end, d_end,
+                                            p_offset, d_offset);
+    dim3 gridSize(grid_x, tile_y);
     switch (i) {
       case 0:
         gpu_coulomb_fit1<scalar_type, 0>
@@ -454,9 +547,6 @@ void CoulombIntegral<scalar_type>::fit_aux_density(void) {
             integral_vars.m_dens);
   }
   cudaDeviceSynchronize();
-  for (uint i = 0; i < NUM_TERM_TYPES; i++) {
-    cudaStreamDestroy(stream[i]);
-  }
 
   {
     dim3 reduceThreads = integral_vars.m_dens;
@@ -521,11 +611,8 @@ void CoulombIntegral<scalar_type>::calc_fock(double& Es) {
       os_int.partial_fock_dev.data + fock_offset, os_int.dens_values.size(),   \
       factor_ac_dens_dev.data, nuc_dens_dev.data, fit_dens_dev.data, s_end,    \
       p_end, d_end, p_offset, d_offset
-  // Each term type is calculated asynchronously
-  cudaStream_t stream[NUM_TERM_TYPES];
-  for (uint i = 0; i < NUM_TERM_TYPES; i++) {
-    cudaStreamCreate(&stream[i]);
-  }
+  // Each term type is calculated asynchronously on a persistent stream.
+  cudaStream_t* stream = coulomb_streams();
   //
   // Begin launching kernels (one for each type of term, 0 = s-s, 1 = p-s, etc)
   //
@@ -534,7 +621,10 @@ void CoulombIntegral<scalar_type>::calc_fock(double& Es) {
     uint fock_offset = os_int.dens_offsets[i];
     dim3 threads = os_int.term_type_counts[i];
     dim3 blockSize(QMMM_BLOCK_SIZE);
-    dim3 gridSize = divUp(threads, blockSize);
+    uint grid_x = divUp(threads.x, blockSize.x);
+    uint tile_y = coulomb_tile_y_for_launch(grid_x, s_end, p_end, d_end,
+                                            p_offset, d_offset);
+    dim3 gridSize(grid_x, tile_y);
     switch (i) {
       case 0:
         gpu_coulomb_fock<scalar_type, 0>
@@ -577,9 +667,6 @@ void CoulombIntegral<scalar_type>::calc_fock(double& Es) {
             os_int.dens_values.size(), max_partial_size, os_int.dens_counts[i]);
   }
   cudaDeviceSynchronize();
-  for (uint i = 0; i < NUM_TERM_TYPES; i++) {
-    cudaStreamDestroy(stream[i]);
-  }
 
   // cudaUnbindTexture(str_tex);
 
