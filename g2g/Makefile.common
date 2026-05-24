@@ -3,22 +3,27 @@
 CXXFLAGS+= -fopenmp -fPIC -Wall -Wextra -Wshadow -I. -I$(CUDAHOME)/include
 OPTIMIZECPU :=
 
+# Determine compiler based on INTEL flag
 ifeq ($(intel),0)
+  # Use default GNU compiler
   CXX          := g++
   OPTIMIZECPU  := -O3 -march=native -fno-semantic-interposition
   CXXFLAGS     := $(CXXFLAGS) -Wno-unused-variable -Wno-unused-parameter -Wno-sign-compare
 else
+  # Intel compiler requested; ensure icc is available
+  ifeq ($(shell command -v icc >/dev/null 2>&1 && echo yes),)
+    $(error Intel compiler (icc) requested but not found. Set intel=0 to fallback to gcc.)
+  endif
   CXX          := icc
   OPTIMIZECPU  := -Ofast -xHost -no-prec-div -ipo
-
-# Checks for ICC versions older than 16.0
-INTEL_OLD := $(shell echo "`icc --version | head -n 1 | awk -F'.' '{ print $$1 }' | awk '{ print $$3 }'` < 16" | bc)
-ifeq ($(INTEL_OLD),1)
-  CXXFLAGS     := $(CXXFLAGS) -opt-report 3 
-else
-  CXXFLAGS     := $(CXXFLAGS) -qopt-report 3
-endif
-
+  # Safely detect ICC version (old vs new) without bc syntax errors
+  ICC_VER_MAJOR := $(shell icc --version | head -n1 | awk -F'.' '{print $$1}' | awk '{print $$3}')
+  INTEL_OLD := $(shell echo "$$(($(ICC_VER_MAJOR) < 16))")
+  ifeq ($(INTEL_OLD),1)
+    CXXFLAGS := $(CXXFLAGS) -opt-report 3
+  else
+    CXXFLAGS := $(CXXFLAGS) -qopt-report 3
+  endif
 endif
 
 # Debug/release configuration
