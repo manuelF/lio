@@ -148,19 +148,23 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
    logical, save :: overlap_int3lu_g2g_initialized = .false.
    logical, save :: overlap_int3lu_g2g = .false.
    integer, save :: overlap_blas_threads = 4
+   integer, save :: overlap_omp_threads = 0   ! 0 = leave global OMP unchanged
    LIODBLE, allocatable, save :: fmat_xc_scratch(:)
    LIODBLE, allocatable, save :: fmat_xc_scratch_b(:)
    character(len=16) :: env_overlap_str
    integer :: env_overlap_status
    integer :: prev_blas_threads
    integer :: prev_max_levels
+   integer :: prev_omp_threads
    LIODBLE :: t_int3lu, t_g2g
    integer, external :: openblas_get_num_threads
    integer, external :: omp_get_max_active_levels
    integer, external :: omp_get_max_threads
    integer, external :: g2g_recommended_blas_threads
+   integer, external :: g2g_recommended_omp_threads
    LIODBLE, external :: omp_get_wtime
    external :: openblas_set_num_threads, omp_set_max_active_levels
+   external :: omp_set_num_threads
 
    ! Variables related to VdW
    LIODBLE :: E_dftd
@@ -420,9 +424,42 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
             else
                overlap_blas_threads = g2g_recommended_blas_threads()
             endif
-            if (verbose > 1) write(*,'(A,I0,A,I0,A)') &
+
+            ! OMP cap is applied LOCALLY around the parallel sections only.
+            ! Process-wide omp_set_num_threads() changes FP-summation order in
+            ! downstream OMP regions and causes open-shell heme to need 2-3x
+            ! more SCF iterations. Caller can override via LIO_OVERLAP_OMP_THREADS,
+            ! or pass 0 (default) to leave the ambient OMP thread count alone
+            ! when no OMP_NUM_THREADS env var is set.
+            call get_environment_variable("LIO_OVERLAP_OMP_THREADS", &
+                                          env_overlap_str, &
+                                          status=env_overlap_status)
+            if (env_overlap_status == 0) then
+               read(env_overlap_str, *, iostat=env_overlap_status) &
+                    overlap_omp_threads
+               if (env_overlap_status /= 0 .or. overlap_omp_threads < 0) &
+                    overlap_omp_threads = 0
+            else
+               call get_environment_variable("OMP_NUM_THREADS", &
+                                             env_overlap_str, &
+                                             status=env_overlap_status)
+               if (env_overlap_status == 0) then
+                  ! User set OMP_NUM_THREADS explicitly: cap to recommended
+                  ! around the sections so int3lu BLAS and g2g's CPU partition
+                  ! fit on the physical cores.
+                  overlap_omp_threads = g2g_recommended_omp_threads()
+               else
+                  ! No OMP_NUM_THREADS: ambient OMP is the runtime default
+                  ! (often #logical cores). Leave it alone; capping it
+                  ! perturbs heme convergence.
+                  overlap_omp_threads = 0
+               endif
+            endif
+
+            if (verbose > 1) write(*,'(A,I0,A,I0,A,I0,A)') &
                " [overlap] int3lu/g2g overlap ENABLED (OMP=", &
-               omp_get_max_threads(), " g2g, BLAS=", &
+               omp_get_max_threads(), " ambient, OMP_cap=", &
+               overlap_omp_threads, " g2g, BLAS=", &
                overlap_blas_threads, " int3lu)"
          endif
          overlap_int3lu_g2g_initialized = .true.
@@ -478,6 +515,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
 !        to overlap_blas_threads to leave most cores for g2g's CPU partition.
          prev_blas_threads = openblas_get_num_threads()
          prev_max_levels   = omp_get_max_active_levels()
+         prev_omp_threads  = omp_get_max_threads()
          fmat_xc_scratch(1:MM) = 0.0d0
          if (OPEN) fmat_xc_scratch_b(1:MM) = 0.0d0
 
@@ -486,6 +524,15 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
 !        Restored immediately after to avoid leaking process-wide nesting
 !        into TDDFT/Ehrenfest paths that call g2g/BLAS without expecting it.
          if (prev_max_levels < 2) call omp_set_max_active_levels(2)
+
+!        Optionally cap ambient OMP threads for the duration of the parallel
+!        sections only. Restored after the merge so other code (TD, Ehrenfest,
+!        OMP reductions in compute_functions/weight) sees the original thread
+!        count. Capping process-wide perturbs heme convergence (2-3x more iters).
+         if (overlap_omp_threads > 0 .and. &
+             overlap_omp_threads /= prev_omp_threads) then
+            call omp_set_num_threads(overlap_omp_threads)
+         endif
 
          call g2g_timer_sum_start('Coulomb fit + Fock')
          t_int3lu = 0.0d0
@@ -520,6 +567,10 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
          endif
          call openblas_set_num_threads(prev_blas_threads)
          if (prev_max_levels < 2) call omp_set_max_active_levels(prev_max_levels)
+         if (overlap_omp_threads > 0 .and. &
+             overlap_omp_threads /= prev_omp_threads) then
+            call omp_set_num_threads(prev_omp_threads)
+         endif
          if (verbose > 3) then
             write(*,'(A,F6.1,A,F6.1,A,F6.1,A)') &
                "  [overlap] int3lu=", t_int3lu*1e3, "ms  g2g=", &
