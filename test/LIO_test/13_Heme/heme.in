@@ -11,5 +11,8 @@
  nmax          = 500
  gold          = 5
  Rho_LS        = 1
+
+ free_global_memory = -1
+ timers = 2
 &end
 
