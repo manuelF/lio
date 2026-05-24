@@ -13,10 +13,19 @@ function basechange_d_gemm(M,Mati,Umat,mode) result(Mato)
    character(len=3), intent(in)  :: mode
    LIODBLE    , intent(in)  :: Umat(M,M)
    LIODBLE    , intent(in)  :: Mati(M,M)
-   LIODBLE    , allocatable :: Matm(:,:)
    LIODBLE    , allocatable :: Mato(:,:)
-   
-   allocate(Matm(M,M), Mato(M,M))
+
+   ! Persistent intermediate scratch. Avoids two M*M allocate/deallocate calls
+   ! per invocation; Reallocated only when M grows.
+   LIODBLE, allocatable, save :: Matm(:,:)
+   integer,             save :: cached_M = 0
+
+   if (cached_M /= M) then
+      if (allocated(Matm)) deallocate(Matm)
+      allocate(Matm(M,M))
+      cached_M = M
+   endif
+   allocate(Mato(M,M))
    ! No zero-init needed: both DGEMMs below use beta=0 and overwrite the
    ! destination outright.
 
@@ -27,7 +36,6 @@ function basechange_d_gemm(M,Mati,Umat,mode) result(Mato)
       call DGEMM('T','N',M,M,M,1.0D0,Umat,M,Mati,M,0.0D0,Matm,M)
       call DGEMM('N','N',M,M,M,1.0D0,Matm,M,Umat,M,0.0D0,Mato,M)
    endif
-   deallocate(Matm)
 end function
 
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!

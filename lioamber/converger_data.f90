@@ -55,6 +55,14 @@ module converger_data
    LIODBLE, allocatable :: EMAT(:,:)
    LIODBLE, allocatable :: energy_list(:)
 
+   ! Circular-buffer head for fockm / FP_PFm. The newest entry sits at slot
+   ! diis_head; subsequent older entries are at (diis_head - k) mod nDIIS,
+   ! eliminating the explicit shift loop that previously ran per iteration.
+   ! diis_head is advanced once per SCF iteration (alpha leg of the open-shell
+   ! case). Use diis_slot_index() in converger_diis.f90 to translate the legacy
+   ! "jj in [nDIIS-nDIIST+1, nDIIS]" indices into circular slot numbers.
+   integer :: diis_head = 0
+
    ! Internal variables for EDIIS
    integer                   :: nediis          = 15
    logical                   :: EDIIS_not_ADIIS = .true.

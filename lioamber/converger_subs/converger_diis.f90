@@ -1,6 +1,6 @@
 subroutine diis_init(M_in, OPshell)
    use converger_data, only: fockm, FP_PFm, conver_method, bcoef, ndiis, &
-                             EMAT, energy_list
+                             EMAT, energy_list, diis_head
    implicit none
    integer, intent(in) :: M_in
    logical, intent(in) :: OPshell
@@ -21,12 +21,22 @@ subroutine diis_init(M_in, OPshell)
    FP_PFm  = 0.0D0
    bcoef   = 0.0D0
    EMAT    = 0.0D0
+   diis_head = 0
 
    if (conver_method > 3) then
       if (.not. allocated(energy_list)) allocate(energy_list(ndiis))
       energy_list = 0.0D0
    endif
 end subroutine diis_init
+
+! Maps the legacy "newest at index ndiis, oldest at ndiis-ndiist+1" addressing
+! into the circular-buffer slot index. Requires diis_head to point at the slot
+! holding the newest entry (1..ndiis).
+pure integer function diis_slot_index(jj_legacy)
+   use converger_data, only: ndiis, diis_head
+   integer, intent(in) :: jj_legacy
+   diis_slot_index = mod(diis_head + jj_legacy - 1, ndiis) + 1
+end function diis_slot_index
 
 subroutine diis_finalise()
    use converger_data, only: fockm, FP_PFm, conver_method, bcoef, EMAT, &
@@ -43,7 +53,7 @@ subroutine diis_finalise()
 end subroutine diis_finalise
 
 subroutine diis_fock_commut(dens_op, fock_op, dens, M_in, spin, ndiist)
-   use converger_data  , only: fockm, FP_PFm, ndiis
+   use converger_data  , only: fockm, FP_PFm, ndiis, diis_head
    use typedef_operator, only: operator
 
    implicit none
@@ -51,36 +61,36 @@ subroutine diis_fock_commut(dens_op, fock_op, dens, M_in, spin, ndiist)
    LIODBLE  , intent(inout) :: dens(:,:)
    type(operator), intent(inout) :: dens_op, fock_op
 
-   integer :: jj
+   integer :: head_slot
 
-   ! If DIIS is turned on, update fockm with the current transformed F' (into ON
-   ! basis) and update FP_PFm with the current transformed [F',P']
-   do jj = ndiis-(ndiist-1), ndiis-1
-      fockm(:,:,jj,spin)  = fockm(:,:,jj+1,spin)
-      FP_PFm(:,:,jj,spin) = FP_PFm(:,:,jj+1,spin)
-   enddo
+   ! Circular-buffer layout: the alpha leg of each SCF iteration advances
+   ! diis_head once; the beta leg (open-shell) reuses the same slot so both
+   ! spin channels stay aligned within the same physical iteration. 
+   if (spin == 1) diis_head = mod(diis_head, ndiis) + 1
+   head_slot = diis_head
 
    call dens_op%Gets_data_ON(dens)
-   call fock_op%Commut_data_r(dens, FP_PFm(:,:,ndiis,spin), M_in)
-   call fock_op%Gets_data_ON( fockm(:,:,ndiis,spin) )
+   call fock_op%Commut_data_r(dens, FP_PFm(:,:,head_slot,spin), M_in)
+   call fock_op%Gets_data_ON( fockm(:,:,head_slot,spin) )
 
 end subroutine diis_fock_commut
 
 subroutine diis_get_error(M_in, spin, verbose)
-   use converger_data, only: ndiis, FP_PFm, diis_error
+   use converger_data, only: ndiis, FP_PFm, diis_error, diis_head
    integer, intent(in)  :: M_in, spin, verbose
 
-   integer      :: ii, jj
+   integer      :: ii, jj, head_slot
    LIODBLE :: max_error, avg_error
-   
-   max_error = maxval(abs(FP_PFm(:,:,ndiis,spin)))
+
+   head_slot = diis_head
+   max_error = maxval(abs(FP_PFm(:,:,head_slot,spin)))
 
    if (verbose > 3) then
       avg_error = 0.0D0
       do ii=1, M_in
       do jj=1, M_in
          avg_error = avg_error + &
-                     FP_PFm(ii,jj,ndiis,spin) * FP_PFm(ii,jj,ndiis,spin)
+                     FP_PFm(ii,jj,head_slot,spin) * FP_PFm(ii,jj,head_slot,spin)
       enddo
       enddo
       avg_error = sqrt(avg_error / M_in)
@@ -116,13 +126,13 @@ subroutine diis_update_energy(energy)
 end subroutine diis_update_energy
 
 subroutine diis_update_emat(niter, ndiist, M_in, open_shell)
-   use converger_data, only: EMAT, ndiis, FP_PFm
+   use converger_data, only: EMAT, ndiis, FP_PFm, diis_head
 
    implicit none
    integer     , intent(in)  :: niter, ndiist, M_in
    logical     , intent(in)  :: open_shell
 
-   integer                   :: ii, jj, kk, k_ind
+   integer                   :: ii, jj, kk, k_ind, head_slot, k_slot
    LIODBLE                   :: tr
 
    ! Before ndiis iterations, we just start from the old EMAT
@@ -135,25 +145,24 @@ subroutine diis_update_emat(niter, ndiist, M_in, open_shell)
       enddo
    endif
 
-   ! EMAT(ndiist,ii) = tr( FP_PFm(:,:,ndiis,1) * FP_PFm(:,:,k_ind,1) )
-   !                   (+ same for spin=2 if open shell).
-   ! The previous version called matmuldiag which materialised the full
-   ! MxM product and then summed its diagonal. Compute the trace directly:
-   !   tr(A*B) = sum_{kk,jj} A(jj,kk) * B(kk,jj)
-   ! both inner factors are accessed along their fastest-varying index
-   ! (Fortran is column-major), so no non-contiguous strides.
+   head_slot = diis_head
+   ! EMAT(ndiist,ii) = tr( FP_PFm(:,:,head,1) * FP_PFm(:,:,k_slot,1) )
+   !                   (+ same for spin=2 if open shell). k_slot is the
+   ! circular-buffer slot of the iteration that the legacy code addressed via
+   ! k_ind = ii + (ndiis - ndiist).
    do ii = 1, ndiist
       k_ind = ii + (ndiis - ndiist)
+      k_slot = mod(diis_head + k_ind - 1, ndiis) + 1
       tr = 0.0d0
       do kk = 1, M_in
          do jj = 1, M_in
-            tr = tr + FP_PFm(jj,kk,ndiis,1) * FP_PFm(kk,jj,k_ind,1)
+            tr = tr + FP_PFm(jj,kk,head_slot,1) * FP_PFm(kk,jj,k_slot,1)
          enddo
       enddo
       if (open_shell) then
          do kk = 1, M_in
             do jj = 1, M_in
-               tr = tr + FP_PFm(jj,kk,ndiis,2) * FP_PFm(kk,jj,k_ind,2)
+               tr = tr + FP_PFm(jj,kk,head_slot,2) * FP_PFm(kk,jj,k_slot,2)
             enddo
          enddo
       endif
@@ -181,12 +190,12 @@ subroutine diis_emat_bias(ndiist)
 end subroutine diis_emat_bias
 
 subroutine diis_get_new_fock(fock, ndiist, M_in, spin)
-   use converger_data, only: EMAT, ndiis, bcoef, fockm
+   use converger_data, only: EMAT, ndiis, bcoef, fockm, diis_head
    implicit none
    integer     , intent(in)  :: ndiist, M_in, spin
    LIODBLE, intent(out) :: fock(:,:)
 
-   integer :: ii, jj, kk, kknew, LWORK, INFO
+   integer :: ii, jj, kk, kknew, k_slot, LWORK, INFO
    LIODBLE, allocatable :: work(:), EMAT_aux(:,:)
 
    
@@ -231,13 +240,15 @@ subroutine diis_get_new_fock(fock, ndiist, M_in, spin)
       deallocate (work, EMAT_aux)
    endif
 
-   ! Build new Fock as an extrapolation of previous steps.
+   ! Build new Fock as an extrapolation of previous steps. 
    fock = 0.0D0
    do kk = 1, ndiist
       kknew = kk + (ndiis - ndiist)
+      ! Use circular indexing to avoid rellocations.
+      k_slot = mod(diis_head + kknew - 1, ndiis) + 1
       do ii = 1, M_in
       do jj = 1, M_in
-         fock(ii,jj) = fock(ii,jj) + bcoef(kk) * fockm(ii,jj,kknew,spin)
+         fock(ii,jj) = fock(ii,jj) + bcoef(kk) * fockm(ii,jj,k_slot,spin)
       enddo
       enddo
    enddo
