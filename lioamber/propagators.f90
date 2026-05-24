@@ -47,11 +47,15 @@ subroutine predictor(F1a, F1b, FON, rho2, factorial, Xmat, Xtrans, timestep, &
    F3      = 1.75D0 * F1b - 0.75D0 * F1a
    rho2t   = rho2
 
+   call g2g_timer_sum_start("TD - Pred inner Magnus")
    call magnus(F3(:,:,1), rho2(:,:,1), rho4(:,:,1), M_in, NBCH, tdstep1, &
                factorial)
+   if (OPEN) call magnus(F3(:,:,2), rho2(:,:,2), rho4(:,:,2), M_in, NBCH, &
+                         tdstep1, factorial)
+   call g2g_timer_sum_pause("TD - Pred inner Magnus")
+
+   call g2g_timer_sum_start("TD - Pred rho rebuild")
    if (OPEN) then
-      call magnus(F3(:,:,2), rho2(:,:,2), rho4(:,:,2), M_in, NBCH, tdstep1, &
-                  factorial)
       rho2t = rho4
       call Xtrans%change_base(rho2t(:,:,1), 'dir')
       call Xtrans%change_base(rho2t(:,:,2), 'dir')
@@ -64,14 +68,24 @@ subroutine predictor(F1a, F1b, FON, rho2, factorial, Xmat, Xtrans, timestep, &
       call Xtrans%change_base(rho2t(:,:,1), 'dir')
       call sprepack_ctr('L', M, Pmat_vec, rho2t(MTB+1:MTB+M,MTB+1:MTB+M,1))
    endif
+   call g2g_timer_sum_pause("TD - Pred rho rebuild")
 
+   call g2g_timer_sum_start("TD - Pred int3lu")
    call int3lu(E2, Pmat_vec, Fmat_vec2, Fmat_vec, Gmat_vec, Ginv_vec, &
                Hmat_vec, open, MEMO)
+   call g2g_timer_sum_pause("TD - Pred int3lu")
+   call g2g_timer_sum_start("TD - Pred XC (g2g)")
    call g2g_solve_groups(0, Ex, 0)
+   call g2g_timer_sum_pause("TD - Pred XC (g2g)")
+   call g2g_timer_sum_start("TD - Pred ExactX")
    call do_TDexactExchange(Fmat_vec,Fmat_vec2,Ehf,MM,M,open)
+   call g2g_timer_sum_pause("TD - Pred ExactX")
+   call g2g_timer_sum_start("TD - Pred field")
    call field_calc(E1, time, Pmat_vec, Fmat_vec2, Fmat_vec, r, d, &
                    natom, ntatom, open, 2*nco+nunp, iz, pc)
+   call g2g_timer_sum_pause("TD - Pred field")
 
+   call g2g_timer_sum_start("TD - Pred Fock->ON")
    ! This is performed to recover TB terms from FON. If not, TB terms
    ! in FON become zero.
    FBA(:,:,1) = FON(:,:,1)
@@ -87,6 +101,7 @@ subroutine predictor(F1a, F1b, FON, rho2, factorial, Xmat, Xtrans, timestep, &
       FON(:,:,2) = FBA(:,:,2)
       call Xmat%change_base(FON(:,:,2), 'dir')
    end if
+   call g2g_timer_sum_pause("TD - Pred Fock->ON")
 
    deallocate(rho4, rho2t, F3, FBA)
 end subroutine predictor

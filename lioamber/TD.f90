@@ -331,8 +331,10 @@ subroutine TD(fock_aop, rho_aop, fock_bop, rho_bop)
       endif
 
       call g2g_timer_start('complex_rho_on_to_ao')
+      call g2g_timer_sum_start("TD - rho ON->AO")
       call rho_aop%BChange_ONtoAO(Xtrans, M_f, .true.)
       if (OPEN) call rho_bop%BChange_ONtoAO(Xtrans, M_f, .true.)
+      call g2g_timer_sum_pause("TD - rho ON->AO")
       call g2g_timer_stop('complex_rho_on_to_ao')
       call g2g_timer_sum_pause("TD - Propagation")
 
@@ -1134,14 +1136,18 @@ subroutine td_magnus(M, dim3, OPEN, fock_aop, F1a, F1b, rho_aop, rhonew,       &
 
 
    call g2g_timer_start('predictor')
+   call g2g_timer_sum_start("TD - Predictor")
    call predictor(F1a, F1b, fock, rho, factorial, Xmat, Xtrans, dt_magnus, &
                   time, M_f, MTB, dim3)
+   call g2g_timer_sum_pause("TD - Predictor")
    call g2g_timer_stop('predictor')
    call g2g_timer_start('magnus')
+   call g2g_timer_sum_start("TD - Magnus BCH")
    call magnus(fock(:,:,1), rho(:,:,1), rhonew(:,:,1), M_f, NBCH, dt_magnus,  &
                factorial)
    if (OPEN) call magnus(fock(:,:,2), rho(:,:,2), rhonew(:,:,2), M_f, NBCH,   &
                          dt_magnus, factorial)
+   call g2g_timer_sum_pause("TD - Magnus BCH")
    call g2g_timer_stop('magnus')
 
    ! Transport: Add the driving term to the propagation.
