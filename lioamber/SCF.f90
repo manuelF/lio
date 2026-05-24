@@ -677,6 +677,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
       call rho_aop%Sets_data_AO(rho_a)
       call fock_aop%Sets_data_AO(fock_a)
 
+      call g2g_timer_sum_start('SCF acceleration setup')
       if (OPEN) then
          call rho_bop%Sets_data_AO(rho_b)
          call fock_bop%Sets_data_AO(fock_b)
@@ -685,6 +686,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
       else
          call converger_setup(niter, M_f, rho_aop, fock_aop, E,  Xmat, Ymat)
       endif
+      call g2g_timer_sum_pause('SCF acceleration setup')
 
       ! Convergence accelerator processing.
       ! In closed shell, rho_a is the total density matrix; in open shell,

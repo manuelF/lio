@@ -128,11 +128,14 @@ subroutine converger_setup(niter, M_in, dens_op, fock_op, energy, &
 
    ! Gets [F,P] and therefore the DIIS error.
    if (conver_method /= 1) then
+      call g2g_timer_sum_start('Conv setup - BChange AOtoON')
       call dens_op%BChange_AOtoON(Ymat, M_in)
       call fock_op%BChange_AOtoON(Xmat, M_in)
       if (open_shell) call dens_opb%BChange_AOtoON(Ymat, M_in)
       if (open_shell) call fock_opb%BChange_AOtoON(Xmat, M_in)
+      call g2g_timer_sum_pause('Conv setup - BChange AOtoON')
 
+      call g2g_timer_sum_start('Conv setup - DIIS commut')
       call dens_op%Gets_data_AO(rho)
       call diis_fock_commut(dens_op, fock_op, rho, M_in, 1, ndiist)
       call diis_get_error(M_in, 1, verbose)
@@ -141,13 +144,16 @@ subroutine converger_setup(niter, M_in, dens_op, fock_op, energy, &
          call diis_fock_commut(dens_opb, fock_opb, rho, M_in, 2, ndiist)
          call diis_get_error(M_in, 2, verbose)
       endif
+      call g2g_timer_sum_pause('Conv setup - DIIS commut')
    endif
 
    ! DIIS and EDIIS
    if (conver_method > 1) then
 
       ! DIIS
+      call g2g_timer_sum_start('Conv setup - DIIS update_emat')
       call diis_update_emat(niter, ndiist, M_in, open_shell)
+      call g2g_timer_sum_pause('Conv setup - DIIS update_emat')
       ! Stores energy for bDIIS
       if ((conver_method > 3) .and. (niter > 1)) call diis_update_energy(energy)
 
