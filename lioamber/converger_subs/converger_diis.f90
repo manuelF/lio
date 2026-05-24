@@ -198,7 +198,7 @@ subroutine diis_get_new_fock(fock, ndiist, M_in, spin)
    integer :: ii, jj, kk, kknew, k_slot, LWORK, INFO
    LIODBLE, allocatable :: work(:), EMAT_aux(:,:)
 
-   
+
    ! First call to this routines gets DIIS coefficients.
    if (spin == 1) then
       allocate(EMAT_aux(ndiist+1,ndiist+1))
@@ -210,7 +210,7 @@ subroutine diis_get_new_fock(fock, ndiist, M_in, spin)
          EMAT_aux(ndiist+1,ii) = -1.0D0
       enddo
       EMAT_aux(ndiist+1, ndiist+1) = 0.0D0
-      
+
       !   THE MATRIX EMAT SHOULD HAVE THE FOLLOWING SHAPE:
       !      |<E(1)*E(1)>  <E(1)*E(2)> ...   -1.0|
       !      |<E(2)*E(1)>  <E(2)*E(2)> ...   -1.0|
@@ -240,16 +240,21 @@ subroutine diis_get_new_fock(fock, ndiist, M_in, spin)
       deallocate (work, EMAT_aux)
    endif
 
-   ! Build new Fock as an extrapolation of previous steps. 
+   ! Build new Fock as an extrapolation of previous steps.
+   ! Per-element accumulation order matches the original kk-outer loop
+   ! (b1*f1 + b2*f2 + ... left to right): heme is ulp-sensitive enough
+   ! that switching to DAXPY (which may emit FMA) doubles SCF iters.
+   ! What we DO change: jj-outer (column-major access, fock contiguous
+   ! by column in Fortran), so we don't walk row-major through 470k
+   ! elements 15 times. Cache-friendly and bit-identical to the old loop.
    fock = 0.0D0
    do kk = 1, ndiist
       kknew = kk + (ndiis - ndiist)
-      ! Use circular indexing to avoid rellocations.
       k_slot = mod(diis_head + kknew - 1, ndiis) + 1
-      do ii = 1, M_in
       do jj = 1, M_in
-         fock(ii,jj) = fock(ii,jj) + bcoef(kk) * fockm(ii,jj,k_slot,spin)
-      enddo
+         do ii = 1, M_in
+            fock(ii,jj) = fock(ii,jj) + bcoef(kk) * fockm(ii,jj,k_slot,spin)
+         enddo
       enddo
    enddo
 
