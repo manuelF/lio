@@ -253,19 +253,16 @@ void gpu_scatter_download_global_fock(double* host_dst,
              rmm_global_size * sizeof(double), cudaMemcpyDeviceToHost);
 }
 
-// Free the per-PointGroupGPU cuArray + cudaTextureObject cache. Called from
+// Free the per-PointGroupGPU cudaTextureObject cache. Called from
 // PointGroupGPU::deallocate() in partition.cpp via an opaque interface so
 // partition.cpp does not need to include CUDA runtime headers.
-void gpu_release_group_rmm_texture(void*& cuArray_ptr,
-                                   unsigned long long& tex_handle) {
+void gpu_release_group_rmm_texture(unsigned long long& tex_handle,
+                                   void*& tex_src) {
   if (tex_handle) {
     cudaDestroyTextureObject(static_cast<cudaTextureObject_t>(tex_handle));
     tex_handle = 0;
   }
-  if (cuArray_ptr) {
-    cudaFreeArray(reinterpret_cast<cudaArray*>(cuArray_ptr));
-    cuArray_ptr = NULL;
-  }
+  tex_src = nullptr;
 }
 
 
@@ -494,105 +491,47 @@ void PointGroupGPU<scalar_type>::solve_closed(
    */
 
   // Bind a cudaTextureObject_t directly to the gather output buffer via
-  // cudaResourceTypePitch2D — drops the per-iter D2A copy (matches open-shell
-  // path below). LIO_DENSITY_TEX_DIRECT=0 falls back to the legacy cuArray
-  // path for debugging.
-  static const char* tex_direct_env_cs = getenv("LIO_DENSITY_TEX_DIRECT");
-  const bool tex_direct = !(tex_direct_env_cs && tex_direct_env_cs[0] == '0');
-  cudaTextureObject_t rmm_input_gpu_tex = 0;
-  if (tex_direct) {
-    void* src = static_cast<void*>(rdm_local_dev.data);
-    if (this->cached_tex == 0 ||
-        this->cached_tex_src != src ||
-        this->cached_rmm_w != rmm_width ||
-        this->cached_rmm_h != rmm_height) {
-      if (this->cached_tex) {
-        cudaDestroyTextureObject(static_cast<cudaTextureObject_t>(this->cached_tex));
-        this->cached_tex = 0;
-      }
-      if (this->cached_cuArray) {
-        cudaFreeArray(reinterpret_cast<cudaArray*>(this->cached_cuArray));
-        this->cached_cuArray = nullptr;
-      }
-      cudaChannelFormatDesc channelDesc;
-#if FULL_DOUBLE
-      channelDesc = cudaCreateChannelDesc<int2>();
-#else
-      channelDesc = cudaCreateChannelDesc<float>();
-#endif
-      cudaResourceDesc resDesc{};
-      resDesc.resType = cudaResourceTypePitch2D;
-      resDesc.res.pitch2D.devPtr = src;
-      resDesc.res.pitch2D.desc   = channelDesc;
-      resDesc.res.pitch2D.width  = rmm_width;
-      resDesc.res.pitch2D.height = rmm_height;
-      resDesc.res.pitch2D.pitchInBytes = sizeof(scalar_type) * rmm_width;
-
-      cudaTextureDesc texDesc{};
-      texDesc.addressMode[0] = cudaAddressModeClamp;
-      texDesc.addressMode[1] = cudaAddressModeClamp;
-      texDesc.filterMode = cudaFilterModePoint;
-      texDesc.readMode = cudaReadModeElementType;
-      texDesc.normalizedCoords = 0;
-
-      cudaTextureObject_t tex = 0;
-      cudaCreateTextureObject(&tex, &resDesc, &texDesc, NULL);
-      this->cached_tex     = static_cast<unsigned long long>(tex);
-      this->cached_tex_src = src;
-      this->cached_rmm_w = rmm_width;
-      this->cached_rmm_h = rmm_height;
+  // cudaResourceTypePitch2D. Rebuilt only when the buffer pointer or
+  // dimensions change (cudaMallocAsync may return a new ptr on resize).
+  void* src = static_cast<void*>(rdm_local_dev.data);
+  if (this->cached_tex == 0 ||
+      this->cached_tex_src != src ||
+      this->cached_rmm_w != rmm_width ||
+      this->cached_rmm_h != rmm_height) {
+    if (this->cached_tex) {
+      cudaDestroyTextureObject(static_cast<cudaTextureObject_t>(this->cached_tex));
+      this->cached_tex = 0;
     }
-    rmm_input_gpu_tex = static_cast<cudaTextureObject_t>(this->cached_tex);
-  } else {
-    // Legacy cuArray + D2A path.
-    cudaArray* cuArray = reinterpret_cast<cudaArray*>(this->cached_cuArray);
-    const bool was_direct = (this->cached_tex_src != nullptr);
-    if (was_direct || cuArray == NULL || this->cached_rmm_w != rmm_width ||
-        this->cached_rmm_h != rmm_height) {
-      if (this->cached_tex) {
-        cudaDestroyTextureObject(static_cast<cudaTextureObject_t>(this->cached_tex));
-        this->cached_tex = 0;
-      }
-      if (cuArray) {
-        cudaFreeArray(cuArray);
-        cuArray = NULL;
-        this->cached_cuArray = NULL;
-      }
-      this->cached_tex_src = nullptr;
-
-      cudaChannelFormatDesc channelDesc;
+    cudaChannelFormatDesc channelDesc;
 #if FULL_DOUBLE
-      channelDesc = cudaCreateChannelDesc<int2>();
+    channelDesc = cudaCreateChannelDesc<int2>();
 #else
-      channelDesc = cudaCreateChannelDesc<float>();
+    channelDesc = cudaCreateChannelDesc<float>();
 #endif
-      cudaMallocArray(&cuArray, &channelDesc, rmm_width, rmm_height);
-      this->cached_cuArray = cuArray;
-      this->cached_rmm_w = rmm_width;
-      this->cached_rmm_h = rmm_height;
+    cudaResourceDesc resDesc{};
+    resDesc.resType = cudaResourceTypePitch2D;
+    resDesc.res.pitch2D.devPtr = src;
+    resDesc.res.pitch2D.desc   = channelDesc;
+    resDesc.res.pitch2D.width  = rmm_width;
+    resDesc.res.pitch2D.height = rmm_height;
+    resDesc.res.pitch2D.pitchInBytes = sizeof(scalar_type) * rmm_width;
 
-      cudaResourceDesc resDesc{};
-      resDesc.resType = cudaResourceTypeArray;
-      resDesc.res.array.array = cuArray;
+    cudaTextureDesc texDesc{};
+    texDesc.addressMode[0] = cudaAddressModeClamp;
+    texDesc.addressMode[1] = cudaAddressModeClamp;
+    texDesc.filterMode = cudaFilterModePoint;
+    texDesc.readMode = cudaReadModeElementType;
+    texDesc.normalizedCoords = 0;
 
-      cudaTextureDesc texDesc{};
-      texDesc.addressMode[0] = cudaAddressModeClamp;
-      texDesc.addressMode[1] = cudaAddressModeClamp;
-      texDesc.filterMode = cudaFilterModePoint;
-      texDesc.readMode = cudaReadModeElementType;
-      texDesc.normalizedCoords = 0;
-
-      cudaTextureObject_t new_tex = 0;
-      cudaCreateTextureObject(&new_tex, &resDesc, &texDesc, NULL);
-      this->cached_tex = static_cast<unsigned long long>(new_tex);
-    }
-    cudaMemcpy2DToArrayAsync(cuArray, 0, 0, rdm_local_dev.data,
-                             sizeof(scalar_type) * rmm_width,
-                             sizeof(scalar_type) * rmm_width,
-                             rmm_height,
-                             cudaMemcpyDeviceToDevice, 0);
-    rmm_input_gpu_tex = static_cast<cudaTextureObject_t>(this->cached_tex);
+    cudaTextureObject_t tex = 0;
+    cudaCreateTextureObject(&tex, &resDesc, &texDesc, NULL);
+    this->cached_tex     = static_cast<unsigned long long>(tex);
+    this->cached_tex_src = src;
+    this->cached_rmm_w = rmm_width;
+    this->cached_rmm_h = rmm_height;
   }
+  cudaTextureObject_t rmm_input_gpu_tex =
+      static_cast<cudaTextureObject_t>(this->cached_tex);
 
 #if USE_LIBXC
   fortran_vars.fexc = fortran_vars.func_coef[0];
@@ -1068,149 +1007,62 @@ void PointGroupGPU<scalar_type>::solve_opened(
   **********************************************************************
   */
 
-  // Bind a cudaTextureObject_t directly to the gather output buffers via
-  // cudaResourceTypePitch2D. This drops the per-iter Device->Array copy
-  // (which was 2 launches × ~1.5µs/group and contributed to the host-issue
-  // gaps between groups on small molecules). The texture is rebuilt only
-  // when the underlying buffer changes pointer (e.g. resize) or dims.
-  // Set LIO_DENSITY_TEX_DIRECT=0 to fall back to the legacy cuArray + D2A
-  // path retained below.
-  static const char* tex_direct_env = getenv("LIO_DENSITY_TEX_DIRECT");
-  const bool tex_direct = !(tex_direct_env && tex_direct_env[0] == '0');
-  cudaTextureObject_t rmm_input_gpu_tex  = 0;
-  cudaTextureObject_t rmm_input_gpu_tex2 = 0;
-  if (tex_direct) {
-    void* src_a = static_cast<void*>(rdm_local_dev_a.data);
-    void* src_b = static_cast<void*>(rdm_local_dev_b.data);
-    if (this->cached_tex == 0 || this->cached_tex_b == 0 ||
-        this->cached_tex_src   != src_a ||
-        this->cached_tex_src_b != src_b ||
-        this->cached_rmm_w != rmm_width ||
-        this->cached_rmm_h != rmm_height) {
-      if (this->cached_tex) {
-        cudaDestroyTextureObject(static_cast<cudaTextureObject_t>(this->cached_tex));
-        this->cached_tex = 0;
-      }
-      if (this->cached_tex_b) {
-        cudaDestroyTextureObject(static_cast<cudaTextureObject_t>(this->cached_tex_b));
-        this->cached_tex_b = 0;
-      }
-      // Free any legacy cuArray from a previous toggle of the env var so the
-      // memory pool isn't wasted on a now-unused allocation.
-      if (this->cached_cuArray) {
-        cudaFreeArray(reinterpret_cast<cudaArray*>(this->cached_cuArray));
-        this->cached_cuArray = nullptr;
-      }
-      if (this->cached_cuArray_b) {
-        cudaFreeArray(reinterpret_cast<cudaArray*>(this->cached_cuArray_b));
-        this->cached_cuArray_b = nullptr;
-      }
-
-      cudaChannelFormatDesc channelDesc;
-#if FULL_DOUBLE
-      channelDesc = cudaCreateChannelDesc<int2>();
-#else
-      channelDesc = cudaCreateChannelDesc<float>();
-#endif
-      cudaResourceDesc resDesc1{}, resDesc2{};
-      resDesc1.resType = cudaResourceTypePitch2D;
-      resDesc1.res.pitch2D.devPtr = src_a;
-      resDesc1.res.pitch2D.desc   = channelDesc;
-      resDesc1.res.pitch2D.width  = rmm_width;
-      resDesc1.res.pitch2D.height = rmm_height;
-      resDesc1.res.pitch2D.pitchInBytes = sizeof(scalar_type) * rmm_width;
-      resDesc2 = resDesc1;
-      resDesc2.res.pitch2D.devPtr = src_b;
-
-      cudaTextureDesc texDesc{};
-      texDesc.addressMode[0] = cudaAddressModeClamp;
-      texDesc.addressMode[1] = cudaAddressModeClamp;
-      texDesc.filterMode = cudaFilterModePoint;
-      texDesc.readMode = cudaReadModeElementType;
-      texDesc.normalizedCoords = 0;
-
-      cudaTextureObject_t tex_a = 0, tex_b = 0;
-      cudaCreateTextureObject(&tex_a, &resDesc1, &texDesc, NULL);
-      cudaCreateTextureObject(&tex_b, &resDesc2, &texDesc, NULL);
-      this->cached_tex       = static_cast<unsigned long long>(tex_a);
-      this->cached_tex_b     = static_cast<unsigned long long>(tex_b);
-      this->cached_tex_src   = src_a;
-      this->cached_tex_src_b = src_b;
-      this->cached_rmm_w = rmm_width;
-      this->cached_rmm_h = rmm_height;
+  // Bind cudaTextureObject_ts directly to the gather output buffers via
+  // cudaResourceTypePitch2D. Rebuilt only when a buffer pointer or the
+  // dimensions change (cudaMallocAsync may return a new ptr on resize).
+  void* src_a = static_cast<void*>(rdm_local_dev_a.data);
+  void* src_b = static_cast<void*>(rdm_local_dev_b.data);
+  if (this->cached_tex == 0 || this->cached_tex_b == 0 ||
+      this->cached_tex_src   != src_a ||
+      this->cached_tex_src_b != src_b ||
+      this->cached_rmm_w != rmm_width ||
+      this->cached_rmm_h != rmm_height) {
+    if (this->cached_tex) {
+      cudaDestroyTextureObject(static_cast<cudaTextureObject_t>(this->cached_tex));
+      this->cached_tex = 0;
     }
-    rmm_input_gpu_tex  = static_cast<cudaTextureObject_t>(this->cached_tex);
-    rmm_input_gpu_tex2 = static_cast<cudaTextureObject_t>(this->cached_tex_b);
-  } else {
-    // Legacy cuArray + D2A copy path.
-    cudaArray* cuArray1 = reinterpret_cast<cudaArray*>(this->cached_cuArray);
-    cudaArray* cuArray2 = reinterpret_cast<cudaArray*>(this->cached_cuArray_b);
-    // If the texture was previously bound to a linear buffer (direct path),
-    // tear it down before rebuilding against a cuArray.
-    const bool was_direct = (this->cached_tex_src != nullptr);
-    if (was_direct || cuArray1 == nullptr ||
-        this->cached_rmm_w != rmm_width ||
-        this->cached_rmm_h != rmm_height) {
-      if (this->cached_tex) {
-        cudaDestroyTextureObject(static_cast<cudaTextureObject_t>(this->cached_tex));
-        this->cached_tex = 0;
-      }
-      if (this->cached_tex_b) {
-        cudaDestroyTextureObject(static_cast<cudaTextureObject_t>(this->cached_tex_b));
-        this->cached_tex_b = 0;
-      }
-      if (cuArray1) cudaFreeArray(cuArray1);
-      if (cuArray2) cudaFreeArray(cuArray2);
-      cuArray1 = nullptr;
-      cuArray2 = nullptr;
-      this->cached_tex_src   = nullptr;
-      this->cached_tex_src_b = nullptr;
-
-      cudaChannelFormatDesc channelDesc;
-#if FULL_DOUBLE
-      channelDesc = cudaCreateChannelDesc<int2>();
-#else
-      channelDesc = cudaCreateChannelDesc<float>();
-#endif
-      cudaMallocArray(&cuArray1, &channelDesc, rmm_width, rmm_height);
-      cudaMallocArray(&cuArray2, &channelDesc, rmm_width, rmm_height);
-      this->cached_cuArray   = cuArray1;
-      this->cached_cuArray_b = cuArray2;
-      this->cached_rmm_w = rmm_width;
-      this->cached_rmm_h = rmm_height;
-
-      cudaResourceDesc resDesc1{}, resDesc2{};
-      resDesc1.resType = cudaResourceTypeArray;
-      resDesc1.res.array.array = cuArray1;
-      resDesc2.resType = cudaResourceTypeArray;
-      resDesc2.res.array.array = cuArray2;
-
-      cudaTextureDesc texDesc{};
-      texDesc.addressMode[0] = cudaAddressModeClamp;
-      texDesc.addressMode[1] = cudaAddressModeClamp;
-      texDesc.filterMode = cudaFilterModePoint;
-      texDesc.readMode = cudaReadModeElementType;
-      texDesc.normalizedCoords = 0;
-
-      cudaTextureObject_t tex_a = 0, tex_b = 0;
-      cudaCreateTextureObject(&tex_a, &resDesc1, &texDesc, NULL);
-      cudaCreateTextureObject(&tex_b, &resDesc2, &texDesc, NULL);
-      this->cached_tex   = static_cast<unsigned long long>(tex_a);
-      this->cached_tex_b = static_cast<unsigned long long>(tex_b);
+    if (this->cached_tex_b) {
+      cudaDestroyTextureObject(static_cast<cudaTextureObject_t>(this->cached_tex_b));
+      this->cached_tex_b = 0;
     }
-    cudaMemcpy2DToArrayAsync(cuArray1, 0, 0, rdm_local_dev_a.data,
-                             sizeof(scalar_type) * rmm_width,
-                             sizeof(scalar_type) * rmm_width,
-                             rmm_height,
-                             cudaMemcpyDeviceToDevice, 0);
-    cudaMemcpy2DToArrayAsync(cuArray2, 0, 0, rdm_local_dev_b.data,
-                             sizeof(scalar_type) * rmm_width,
-                             sizeof(scalar_type) * rmm_width,
-                             rmm_height,
-                             cudaMemcpyDeviceToDevice, 0);
-    rmm_input_gpu_tex  = static_cast<cudaTextureObject_t>(this->cached_tex);
-    rmm_input_gpu_tex2 = static_cast<cudaTextureObject_t>(this->cached_tex_b);
+
+    cudaChannelFormatDesc channelDesc;
+#if FULL_DOUBLE
+    channelDesc = cudaCreateChannelDesc<int2>();
+#else
+    channelDesc = cudaCreateChannelDesc<float>();
+#endif
+    cudaResourceDesc resDesc1{}, resDesc2{};
+    resDesc1.resType = cudaResourceTypePitch2D;
+    resDesc1.res.pitch2D.devPtr = src_a;
+    resDesc1.res.pitch2D.desc   = channelDesc;
+    resDesc1.res.pitch2D.width  = rmm_width;
+    resDesc1.res.pitch2D.height = rmm_height;
+    resDesc1.res.pitch2D.pitchInBytes = sizeof(scalar_type) * rmm_width;
+    resDesc2 = resDesc1;
+    resDesc2.res.pitch2D.devPtr = src_b;
+
+    cudaTextureDesc texDesc{};
+    texDesc.addressMode[0] = cudaAddressModeClamp;
+    texDesc.addressMode[1] = cudaAddressModeClamp;
+    texDesc.filterMode = cudaFilterModePoint;
+    texDesc.readMode = cudaReadModeElementType;
+    texDesc.normalizedCoords = 0;
+
+    cudaTextureObject_t tex_a = 0, tex_b = 0;
+    cudaCreateTextureObject(&tex_a, &resDesc1, &texDesc, NULL);
+    cudaCreateTextureObject(&tex_b, &resDesc2, &texDesc, NULL);
+    this->cached_tex       = static_cast<unsigned long long>(tex_a);
+    this->cached_tex_b     = static_cast<unsigned long long>(tex_b);
+    this->cached_tex_src   = src_a;
+    this->cached_tex_src_b = src_b;
+    this->cached_rmm_w = rmm_width;
+    this->cached_rmm_h = rmm_height;
   }
+  cudaTextureObject_t rmm_input_gpu_tex  =
+      static_cast<cudaTextureObject_t>(this->cached_tex);
+  cudaTextureObject_t rmm_input_gpu_tex2 =
+      static_cast<cudaTextureObject_t>(this->cached_tex_b);
 
   // For CDFT and becke partitioning.
   CudaMatrix<scalar_type> becke_w_gpu;

@@ -34,7 +34,7 @@ void gpu_upload_global_rdm(const double* h_rdm,
 
 // Free the per-group cuArray + cudaTextureObject cache. Defined in
 // cuda/iteration.cu to keep CUDA runtime headers out of partition.cpp.
-void gpu_release_group_rmm_texture(void*& cuArray, unsigned long long& tex);
+void gpu_release_group_rmm_texture(unsigned long long& tex, void*& tex_src);
 #endif
 
 ostream& operator<<(ostream& io, const Timers& t) {
@@ -366,8 +366,8 @@ void PointGroupGPU<scalar_type>::deallocate() {
   rdm_local_dev_a_cached.deallocate();
   rdm_local_dev_b_cached.deallocate();
 #if GPU_KERNELS
-  gpu_release_group_rmm_texture(this->cached_cuArray,   this->cached_tex);
-  gpu_release_group_rmm_texture(this->cached_cuArray_b, this->cached_tex_b);
+  gpu_release_group_rmm_texture(this->cached_tex,   this->cached_tex_src);
+  gpu_release_group_rmm_texture(this->cached_tex_b, this->cached_tex_src_b);
   this->cached_rmm_w = 0;
   this->cached_rmm_h = 0;
 #endif

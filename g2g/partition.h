@@ -275,23 +275,17 @@ class PointGroupGPU: public PointGroup<scalar_type> {
     G2G::CudaMatrix<unsigned int> rmm_cols_gpu;
 
     // Cached cudaArray + cudaTextureObject_t for the RMM-as-texture binding.
-    // The texture descriptor / array dimensions are constant per group across
-    // SCF iterations (they depend on group_m), so we allocate once on first
-    // solve_*() and reuse forever. The default path binds a 2D texture object
-    // directly to the gather output buffer via cudaResourceTypePitch2D, so no
-    // per-iteration Device->Array copy is needed. The legacy cuArray + D2A
-    // copy path is kept as an env-var escape hatch (LIO_DENSITY_TEX_DIRECT=0).
-    // cached_tex_src_* stores the device pointer the texture is currently
-    // bound to so we re-create it only when the buffer is reallocated.
-    // Stored as opaque types so partition.h stays CUDA-free for non-GPU TUs.
-    void* cached_cuArray = 0;          // legacy: cudaArray_t or NULL
-    void* cached_cuArray_b = 0;        // legacy: open-shell beta channel
+    // A cudaTextureObject_t bound directly to the gather output buffer via
+    // cudaResourceTypePitch2D. Reused across SCF iterations and rebuilt only
+    // when the underlying buffer pointer or dimensions change (cudaMallocAsync
+    // may return a new ptr on resize). Stored as opaque types so partition.h
+    // stays CUDA-free for non-GPU TUs.
     unsigned long long cached_tex = 0; // cudaTextureObject_t (uint64) or 0
     unsigned long long cached_tex_b = 0;
-    unsigned int cached_rmm_w = 0;     // dims the cached tex/array were built for
+    unsigned int cached_rmm_w = 0;     // dims the cached texture was built for
     unsigned int cached_rmm_h = 0;
-    void* cached_tex_src   = 0;        // direct-bind: device ptr backing cached_tex
-    void* cached_tex_src_b = 0;        // direct-bind: device ptr backing cached_tex_b
+    void* cached_tex_src   = 0;        // device ptr backing cached_tex
+    void* cached_tex_src_b = 0;        // device ptr backing cached_tex_b
 
     // Per-group cached scratch reused across SCF/TD iterations. Sizes depend
     // only on number_of_points and group_m (both constant for the lifetime
