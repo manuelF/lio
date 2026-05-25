@@ -85,6 +85,11 @@ subroutine TD(fock_aop, rho_aop, fock_bop, rho_bop)
    integer :: lpfrg_steps = 200, chkpntF1a = 185, chkpntF1b = 195
    logical :: is_lpfrg = .false. , fock_restart = .false.
    character(len=20) :: restart_filename
+   integer :: prev_blas_threads, td_blas_threads, prev_omp_threads
+   integer, external :: openblas_get_num_threads
+   integer, external :: omp_get_max_threads
+   integer, external :: g2g_recommended_omp_threads
+   external :: openblas_set_num_threads, omp_set_num_threads
 
    LIODBLE , allocatable, dimension(:)   :: factorial
    LIODBLE , allocatable, dimension(:,:) :: overlap, Smat_initial
@@ -249,6 +254,25 @@ subroutine TD(fock_aop, rho_aop, fock_bop, rho_bop)
 
    call g2g_timer_stop('td-inicio')
    ! End of TD initialization.
+
+!  Cap OpenMP + OpenBLAS thread counts for the TD time loop. The per-step
+!  int3lu dgemv/dspmv/ddot are small reductions; with the default 16-thread
+!  pool the per-launch sync cost dominates the work (~25x slower on chloride
+!  5000 steps). Capping BLAS alone is not enough: OpenBLAS built with
+!  USE_OPENMP=1 reads omp_get_max_threads internally, and idle OMP workers
+!  also fight for the cores. The hardware-topology recommendation (e.g. 6
+!  on an 8-physical-core box) restores the pre-b4a7d451 behavior. Scoped
+!  to the loop so SCF (which is FP-summation-order-sensitive on heme) and
+!  any post-TD code see the original ambient pool size.
+   prev_blas_threads = openblas_get_num_threads()
+   prev_omp_threads = omp_get_max_threads()
+   td_blas_threads = g2g_recommended_omp_threads()
+   if (td_blas_threads > 0 .and. td_blas_threads < prev_blas_threads) then
+      call openblas_set_num_threads(td_blas_threads)
+   endif
+   if (td_blas_threads > 0 .and. td_blas_threads < prev_omp_threads) then
+      call omp_set_num_threads(td_blas_threads)
+   endif
 
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 !%% TD EVOLUTION %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
@@ -426,6 +450,13 @@ subroutine TD(fock_aop, rho_aop, fock_bop, rho_bop)
       call g2g_timer_sum_pause("TD - TD Step")
 
  999  continue
+
+   if (td_blas_threads > 0 .and. td_blas_threads < prev_blas_threads) then
+      call openblas_set_num_threads(prev_blas_threads)
+   endif
+   if (td_blas_threads > 0 .and. td_blas_threads < prev_omp_threads) then
+      call omp_set_num_threads(prev_omp_threads)
+   endif
 
    ! Finalization.
    call write_energies(E1, E2, En, Ens, 0.0D0, Ex, .false., 0.0D0, 0, nsol, &
