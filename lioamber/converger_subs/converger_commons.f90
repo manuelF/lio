@@ -55,7 +55,8 @@ end subroutine converger_options_check
 
 subroutine converger_init( M_in, OPshell )
    ! Initialises and allocates matrices.
-   use converger_data, only: fock_damped, told, etold
+   use converger_data, only: fock_damped, told, etold, scf_prev_was_diis, &
+                             scf_prev_energy_rise
    implicit none
    integer         , intent(in) :: M_in
    logical         , intent(in) :: OPshell
@@ -71,6 +72,9 @@ subroutine converger_init( M_in, OPshell )
       if (.not. allocated(fock_damped) ) allocate(fock_damped(M_in, M_in, 1))
    end if
    fock_damped(:,:,:) = 0.0D0
+
+   scf_prev_was_diis    = .false.
+   scf_prev_energy_rise = 0.0D0
 
    call diis_init(M_in, OPshell)
    call ediis_init(M_in, OPshell)
@@ -175,7 +179,7 @@ subroutine converger_fock(niter, M_in, fock_op, spin, n_orbs, HL_gap, Xmat)
    ! Gets new Fock using convergence acceleration.
    use converger_data  , only: damping_factor, fock_damped, conver_method, &
                                  level_shift, lvl_shift_en, lvl_shift_cut,   &
-                                 ndiis, nediis
+                                 ndiis, nediis, scf_prev_was_diis
    use fileio_data     , only: verbose
    use typedef_operator, only: operator
    use typedef_cumat   , only: cumat_r
@@ -242,6 +246,12 @@ subroutine converger_fock(niter, M_in, fock_op, spin, n_orbs, HL_gap, Xmat)
          if (verbose > 3) write(*,'(2x,A)') "Applying level shift."
    endif
 
+   ! Record whether this iter used DIIS extrapolation. Used by the next iter's
+   ! energy-rejection rollback check in select_methods. Only the alpha pass
+   ! (spin == 1) writes the flag; beta uses the same diis_on decision via
+   ! select_methods, so they're always consistent.
+   if (spin == 1) scf_prev_was_diis = diis_on .or. ediis_on
+
    deallocate(fock)
 end subroutine converger_fock
 
@@ -250,7 +260,9 @@ subroutine select_methods(diis_on, ediis_on, bdiis_on, niter, verbose, spin)
    use converger_data, only: good_cut, rho_diff, rho_LS, EDIIS_start, &
                              DIIS_start, bDIIS_start, conver_method,  &
                              ediis_started, diis_started, diis_error, &
-                             bdiis_started
+                             bdiis_started, scf_prev_energy_rise,     &
+                             scf_prev_was_diis, scf_rollback_threshold, &
+                             scf_rollback_rho_gate
    implicit none
    integer, intent(in)      :: niter, verbose, spin
    logical, intent(out)     :: diis_on, ediis_on, bdiis_on
@@ -320,6 +332,25 @@ subroutine select_methods(diis_on, ediis_on, bdiis_on, niter, verbose, spin)
       ediis_on = .false.
       diis_on  = .false.
    endif
+
+   ! Energy-rejection rollback: if the previous iter used DIIS *with a small
+   ! error vector* (so DIIS should have worked) and the energy still jumped
+   ! upward by more than scf_rollback_threshold, fall back to damping this
+   ! iter so the trajectory can recover before re-engaging DIIS. Gating on
+   ! scf_prev_diis_error blocks the rollback from firing during the initial
+   ! wild iters of a poorly-initialised SCF (where huge ΔE swings are normal
+   ! SCF turbulence, not a true DIIS failure).
+   if (scf_prev_was_diis .and. &
+       (rho_diff < scf_rollback_rho_gate) .and. &
+       (scf_prev_energy_rise > scf_rollback_threshold)) then
+      diis_on  = .false.
+      ediis_on = .false.
+      bdiis_on = .false.
+      if (verbose > 3 .and. spin == 1) write(*,'(2x,A,ES10.3,A,ES10.3,A)') &
+         "  DIIS rollback: previous step raised E by ", &
+         scf_prev_energy_rise, " Eh (rho_diff ", rho_diff, &
+         "); damping this iter."
+   endif
 end subroutine select_methods
 
 subroutine converger_check(rho_old, rho_new, energy_old, energy_new, &
@@ -327,7 +358,7 @@ subroutine converger_check(rho_old, rho_new, energy_old, energy_new, &
    ! Checks convergence
    use fileio        , only: write_energy_convergence
    use converger_data, only: told, Etold, rho_diff, diis_error, conver_method, &
-                             rho_LS, nMax
+                             rho_LS, nMax, scf_prev_energy_rise
 
    ! Calculates convergence criteria in density matrix, and
    ! store new density matrix in Pmat_vec.
@@ -343,6 +374,11 @@ subroutine converger_check(rho_old, rho_new, energy_old, energy_new, &
 
    M2       = 2 * size(rho_new,1)
    e_diff   = abs(energy_new - energy_old)
+
+   ! Signed energy delta drives the DIIS rollback heuristic in select_methods.
+   ! Positive => energy rose; if the previous iter was a DIIS step, next iter
+   ! will fall back to damping.
+   scf_prev_energy_rise = energy_new - energy_old
 
    rho_diff = 0.0D0
    do jj = 1 , size(rho_new,1)

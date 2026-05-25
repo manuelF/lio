@@ -63,6 +63,25 @@ module converger_data
    ! "jj in [nDIIS-nDIIST+1, nDIIS]" indices into circular slot numbers.
    integer :: diis_head = 0
 
+   ! Energy-rejection DIIS rollback. When a DIIS extrapolation produces a
+   ! catastrophic upward energy jump (e.g., open-shell transition metals like
+   ! heme: +26 Eh at iter 4), the next iter falls back to damping instead of
+   ! DIIS. This lets the trajectory recover before resuming DIIS. The bad fockm
+   ! entry stays in the subspace but is naturally de-weighted by its large
+   ! commutator. Threshold is conservative (1 Eh) so it never fires in a well-
+   ! behaved SCF.
+   LIODBLE :: scf_prev_energy_rise   = 0.0D0
+   logical :: scf_prev_was_diis      = .false.
+   LIODBLE :: scf_rollback_threshold = 10.0D0
+   ! Only fire rollback when the system is close enough to converged that
+   ! DIIS *should* have produced a near-stationary step. rho_diff at the
+   ! previous iter being small (e.g., < 0.1) means we're in the smooth
+   ! regime where a sudden +ΔE > threshold is a real DIIS failure rather
+   ! than normal early-SCF turbulence (heme catastrophe at iter 4: rho_diff
+   ! ~ 0.02; fosfato no-restart wild iters: rho_diff > 0.4). This single
+   ! gate cleanly separates the two cases without per-system tuning.
+   LIODBLE :: scf_rollback_rho_gate  = 0.1D0
+
    ! Internal variables for EDIIS
    integer                   :: nediis          = 15
    logical                   :: EDIIS_not_ADIIS = .true.
