@@ -51,6 +51,13 @@ module converger_data
    ! Internal variables for DIIS (and variants)
    LIODBLE, allocatable :: fockm(:,:,:,:)
    LIODBLE, allocatable :: FP_PFm(:,:,:,:)
+   ! Transposed mirror of FP_PFm. Maintained alongside FP_PFm so that
+   ! diis_update_emat can compute tr(A*B) = sum A(j,k)*B(k,j) as a single
+   ! stride-1 DDOT over flattened M*M elements (A_flat .* B_T_flat) instead
+   ! of the original strided triple loop. Costs +ndiis*M^2 doubles of memory
+   ! and one M^2 transpose write per SCF iter; saves the M*M*ndiist*nspin
+   ! strided multiplies of the legacy loop.
+   LIODBLE, allocatable :: FP_PFm_T(:,:,:,:)
    LIODBLE, allocatable :: bcoef(:)
    LIODBLE, allocatable :: EMAT(:,:)
    LIODBLE, allocatable :: energy_list(:)

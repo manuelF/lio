@@ -140,11 +140,12 @@ subroutine converger_setup(niter, M_in, dens_op, fock_op, energy, &
       call g2g_timer_sum_pause('Conv setup - BChange AOtoON')
 
       call g2g_timer_sum_start('Conv setup - DIIS commut')
-      call dens_op%Gets_data_AO(rho)
+      ! `rho` here is just scratch for diis_fock_commut, which overwrites it
+      ! immediately via Gets_data_ON. The earlier Gets_data_AO(rho) calls
+      ! were wasted M*M copies; removed.
       call diis_fock_commut(dens_op, fock_op, rho, M_in, 1, ndiist)
       call diis_get_error(M_in, 1, verbose)
       if (open_shell) then
-         call dens_opb%Gets_data_AO(rho)
          call diis_fock_commut(dens_opb, fock_opb, rho, M_in, 2, ndiist)
          call diis_get_error(M_in, 2, verbose)
       endif

@@ -1,6 +1,6 @@
 subroutine diis_init(M_in, OPshell)
-   use converger_data, only: fockm, FP_PFm, conver_method, bcoef, ndiis, &
-                             EMAT, energy_list, diis_head
+   use converger_data, only: fockm, FP_PFm, FP_PFm_T, conver_method, bcoef, &
+                             ndiis, EMAT, energy_list, diis_head
    implicit none
    integer, intent(in) :: M_in
    logical, intent(in) :: OPshell
@@ -13,14 +13,17 @@ subroutine diis_init(M_in, OPshell)
    if (OPshell) then
       if (.not. allocated(fockm) ) allocate(fockm (M_in, M_in, ndiis, 2))
       if (.not. allocated(FP_PFm)) allocate(FP_PFm(M_in, M_in, ndiis, 2))
+      if (.not. allocated(FP_PFm_T)) allocate(FP_PFm_T(M_in, M_in, ndiis, 2))
    else
       if (.not. allocated(fockm) ) allocate(fockm (M_in, M_in, ndiis, 1))
       if (.not. allocated(FP_PFm)) allocate(FP_PFm(M_in, M_in, ndiis, 1))
+      if (.not. allocated(FP_PFm_T)) allocate(FP_PFm_T(M_in, M_in, ndiis, 1))
    end if
-   fockm   = 0.0D0
-   FP_PFm  = 0.0D0
-   bcoef   = 0.0D0
-   EMAT    = 0.0D0
+   fockm    = 0.0D0
+   FP_PFm   = 0.0D0
+   FP_PFm_T = 0.0D0
+   bcoef    = 0.0D0
+   EMAT     = 0.0D0
    diis_head = 0
 
    if (conver_method > 3) then
@@ -39,21 +42,22 @@ pure integer function diis_slot_index(jj_legacy)
 end function diis_slot_index
 
 subroutine diis_finalise()
-   use converger_data, only: fockm, FP_PFm, conver_method, bcoef, EMAT, &
-                             energy_list
+   use converger_data, only: fockm, FP_PFm, FP_PFm_T, conver_method, bcoef, &
+                             EMAT, energy_list
 
    if (conver_method < 1) return
 
-   if (allocated(fockm) ) deallocate(fockm )
-   if (allocated(FP_PFm)) deallocate(FP_PFm)
-   if (allocated(bcoef) ) deallocate(bcoef )
-   if (allocated(EMAT ) ) deallocate(EMAT  )
+   if (allocated(fockm) )    deallocate(fockm )
+   if (allocated(FP_PFm))    deallocate(FP_PFm)
+   if (allocated(FP_PFm_T))  deallocate(FP_PFm_T)
+   if (allocated(bcoef) )    deallocate(bcoef )
+   if (allocated(EMAT ) )    deallocate(EMAT  )
    if ((conver_method > 3) .and. allocated(energy_list)) deallocate(energy_list)
 
 end subroutine diis_finalise
 
 subroutine diis_fock_commut(dens_op, fock_op, dens, M_in, spin, ndiist)
-   use converger_data  , only: fockm, FP_PFm, ndiis, diis_head
+   use converger_data  , only: fockm, FP_PFm, FP_PFm_T, ndiis, diis_head
    use typedef_operator, only: operator
 
    implicit none
@@ -61,17 +65,27 @@ subroutine diis_fock_commut(dens_op, fock_op, dens, M_in, spin, ndiist)
    LIODBLE  , intent(inout) :: dens(:,:)
    type(operator), intent(inout) :: dens_op, fock_op
 
-   integer :: head_slot
+   integer :: head_slot, ii, jj
 
    ! Circular-buffer layout: the alpha leg of each SCF iteration advances
    ! diis_head once; the beta leg (open-shell) reuses the same slot so both
-   ! spin channels stay aligned within the same physical iteration. 
+   ! spin channels stay aligned within the same physical iteration.
    if (spin == 1) diis_head = mod(diis_head, ndiis) + 1
    head_slot = diis_head
 
    call dens_op%Gets_data_ON(dens)
    call fock_op%Commut_data_r(dens, FP_PFm(:,:,head_slot,spin), M_in)
    call fock_op%Gets_data_ON( fockm(:,:,head_slot,spin) )
+
+   ! Mirror the new FP_PFm slot into FP_PFm_T so that diis_update_emat can
+   ! compute tr(A*B) = sum_{j,k} A(j,k)*B(k,j) via a single stride-1 DDOT.
+   ! Transpose by hand (column-major write) so we don't pay the temporary
+   ! that gfortran allocates for `transpose(...)` expression.
+   do jj = 1, M_in
+      do ii = 1, M_in
+         FP_PFm_T(ii,jj,head_slot,spin) = FP_PFm(jj,ii,head_slot,spin)
+      enddo
+   enddo
 
 end subroutine diis_fock_commut
 
@@ -126,7 +140,7 @@ subroutine diis_update_energy(energy)
 end subroutine diis_update_energy
 
 subroutine diis_update_emat(niter, ndiist, M_in, open_shell)
-   use converger_data, only: EMAT, ndiis, FP_PFm, diis_head
+   use converger_data, only: EMAT, ndiis, FP_PFm, FP_PFm_T, diis_head
 
    implicit none
    integer     , intent(in)  :: niter, ndiist, M_in
@@ -150,19 +164,20 @@ subroutine diis_update_emat(niter, ndiist, M_in, open_shell)
    !                   (+ same for spin=2 if open shell). k_slot is the
    ! circular-buffer slot of the iteration that the legacy code addressed via
    ! k_ind = ii + (ndiis - ndiist).
+   !
    do ii = 1, ndiist
-      k_ind = ii + (ndiis - ndiist)
+      k_ind  = ii + (ndiis - ndiist)
       k_slot = mod(diis_head + k_ind - 1, ndiis) + 1
       tr = 0.0d0
       do kk = 1, M_in
          do jj = 1, M_in
-            tr = tr + FP_PFm(jj,kk,head_slot,1) * FP_PFm(kk,jj,k_slot,1)
+            tr = tr + FP_PFm(jj,kk,head_slot,1) * FP_PFm_T(jj,kk,k_slot,1)
          enddo
       enddo
       if (open_shell) then
          do kk = 1, M_in
             do jj = 1, M_in
-               tr = tr + FP_PFm(jj,kk,head_slot,2) * FP_PFm(kk,jj,k_slot,2)
+               tr = tr + FP_PFm(jj,kk,head_slot,2) * FP_PFm_T(jj,kk,k_slot,2)
             enddo
          enddo
       endif
