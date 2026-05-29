@@ -74,6 +74,11 @@ CWARN_FLAGS := $(CXXWARN_FLAGS) \
 
 # Compiler-specific flags
 NVCCFLAGS   := $(ARCHFLAGS) --compiler-options -fPIC --compiler-options -Wall
+
+# Header dependency generation for the per-object device-compile (-dc) rules
+# only. Deliberately NOT added to NVCCFLAGS so the -dlink step does not try to
+# emit a spurious .d file. The .d files are -include'd from g2g/Makefile.
+NVCC_DEPFLAGS := -MMD -MP
 ifeq ($(intel),0)
   CXXFLAGS    += $(CXXWARN_FLAGS)
 endif
@@ -120,6 +125,11 @@ endif
 ################################################################################
 # Check for input flags and set compiler flags appropriately
 ################################################################################
+# REPRODUCIBILITY NOTE: -use_fast_math relaxes IEEE semantics on the GPU
+# (fast/flushed denormals, approximate div & sqrt, contraction). LIO's hybrid
+# float32 SCF is documented to be sensitive to ULP-level perturbations, so this
+# flag affects energies/convergence trajectories. It is ON by default for speed;
+# build with `fastmath=0` for the most reproducible (slower) numerics.
 ifneq ($(fastmath), 0)
   NVCCFLAGS += -use_fast_math
 endif
@@ -216,8 +226,10 @@ ifeq ($(GENCODE_FLAGS),)
   endif
 endif
 
-# Checks for versions older than 8.0
-CUDA_OLD := $(shell echo "`nvcc --version | tail -n 1 | awk -F',' '{ print $$2 }' | awk '{ print $$2 }'` < 8" | bc)
+# Checks for versions older than 8.0. Use the integer major version with a
+# pure-shell `test` comparison instead of `bc` (which is frequently absent).
+CUDA_MAJOR := $(shell nvcc --version | grep -oE 'release [0-9]+' | grep -oE '[0-9]+')
+CUDA_OLD   := $(shell test "$(CUDA_MAJOR)" -lt 8 2>/dev/null && echo 1)
 ifeq ($(CUDA_OLD),1)
   GENCODE_FLAGS ?= $(GENCODE_SM30)
 else
@@ -286,13 +298,13 @@ $(UGO): $(CUDA_OBJ)
 	nvcc $(NVCCFLAGS) -dlink $(CUDA_OBJ) -o $@
 
 pointxc/%.o:pointxc/%.cpp
-	nvcc $(NVCCFLAGS) -o $@ -dc $<
+	nvcc $(NVCCFLAGS) $(NVCC_DEPFLAGS) -o $@ -dc $<
 
 cuda/%.o:cuda/%.cu
-	nvcc $(NVCCFLAGS) $(NVCCDBGFLAGS) -o $@ -dc $<
+	nvcc $(NVCCFLAGS) $(NVCC_DEPFLAGS) $(NVCCDBGFLAGS) -o $@ -dc $<
 
 analytic_integral/cuda/%.o:analytic_integral/cuda/%.cu
-	nvcc $(NVCCFLAGS) $(NVCCAINTFLAGS) -o $@ -dc $<
+	nvcc $(NVCCFLAGS) $(NVCC_DEPFLAGS) $(NVCCAINTFLAGS) -o $@ -dc $<
 
 excited/cuda/%.o:excited/cuda/%.cu
-	nvcc $(NVCCFLAGS) $(NVCCAINTFLAGS) -o $@ -dc $<
+	nvcc $(NVCCFLAGS) $(NVCC_DEPFLAGS) $(NVCCAINTFLAGS) -o $@ -dc $<

@@ -46,6 +46,7 @@ endif
 
 
 ################################################################################
+.PHONY: all clean
 all: liosolo liomd.x
 
 liosolo: liosolo.f90 ../lioamber/liblio-g2g.so

@@ -1,13 +1,21 @@
 # -*- mode: make -*-
 
-CXXFLAGS+= -fopenmp -fPIC -Wall -Wextra -Wshadow -I. -I$(CUDAHOME)/include
+# Auto-generate header dependencies (.d files) alongside every object so that
+# touching a header forces a rebuild of all dependents. Supersedes the manually
+# maintained Makefile.depends (which could only ever go stale).
+CXXFLAGS+= -fopenmp -fPIC -Wall -Wextra -Wshadow -I. -I$(CUDA_HOME)/include -MMD -MP
 OPTIMIZECPU :=
+
+# CPU micro-architecture flags. Overridable so release/packaging builds can
+# target a baseline ISA instead of the build host (-march=native binaries
+# SIGILL on older CPUs and are not reproducible across machines).
+ARCHFLAGS_CPU ?= -march=native
 
 # Determine compiler based on INTEL flag
 ifeq ($(intel),0)
   # Use default GNU compiler
   CXX          := g++
-  OPTIMIZECPU  := -O3 -march=native -fno-semantic-interposition
+  OPTIMIZECPU  := -O3 $(ARCHFLAGS_CPU) -fno-semantic-interposition
   CXXFLAGS     := $(CXXFLAGS) -Wno-unused-variable -Wno-unused-parameter -Wno-sign-compare
 else
   # Intel compiler requested; ensure icc is available
@@ -33,11 +41,8 @@ else
   CXXFLAGS += -D_DEBUG -g -ggdb
 endif
 
-%.o:%.cpp %.h
-	$(CXX) $(CXXFLAGS) -c $< -o $@
-
+# Header prerequisites now come from the auto-generated .d files (-MMD -MP),
+# so a single .cpp rule suffices. (The old `%.o:%.c %.h` rule was dead — there
+# are no .c sources and CC/CFLAGS were never set.)
 %.o:%.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
-
-%.o:%.c %.h
-	$(CC) $(CFLAGS) -c $< -o $@

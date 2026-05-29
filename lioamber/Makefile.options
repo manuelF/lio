@@ -106,7 +106,10 @@ ifeq ($(intel),0)
   FFLAGS += -fipa-pta
   FFLAGS += -fgraphite-identity -floop-nest-optimize
   FFLAGS += -ffrontend-optimize
-  FFLAGS += -march=native -mtune=native
+  # Overridable CPU arch flags (see g2g/Makefile.common). Default targets the
+  # build host; override ARCHFLAGS_FC for portable/reproducible release builds.
+  ARCHFLAGS_FC ?= -march=native -mtune=native
+  FFLAGS += $(ARCHFLAGS_FC)
   FFLAGS += -fstack-arrays
   FFLAGS += -Warray-temporaries -Wimplicit-interface -Waliasing
   LFLAGS += -L/usr/lib -fopenmp

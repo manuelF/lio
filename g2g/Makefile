@@ -35,7 +35,6 @@ ifneq ($(cuda),0)
   OBJ          += $(UGO) $(CUDA_OBJ)
   CXXFLAGS     += -DGPU_KERNELS=1
   NVCCFLAGS    += -DGPU_KERNELS=1
-  LIBRARIES    := $(CUDA_LDFLAGS) $(CUDA_LIBS) -lrt
 endif
 
 ifeq ($(libxc),1)
@@ -48,8 +47,8 @@ ifeq ($(libxc),2)
     LIBXC_LIBRARIES := -L$(LIBXC_GPU_LIBS) -lxc_cuda -L$(LIBXC_CPU_LIBS) -lxc
     CXXFLAGS += -DUSE_LIBXC=1 -DLIBXC_CPU=0 -I$(LIBXC_GPU_INCLUDES) -I$(LIBXC_CPU_INCLUDES)
 else
-#NO LIBXC
-    LIBXC_LIBRARIES := -L$(LIBXC_LIBS) -lxc
+#NO LIBXC -- do not link libxc at all (the fake stubs are compiled instead).
+    LIBXC_LIBRARIES :=
     CXXFLAGS += -DUSE_LIBXC=0 -DLIBXC_CPU=1
 endif
 endif
@@ -86,7 +85,13 @@ endif
 ## Define libraries
 LIBRARIES := $(CUDA_LDFLAGS) $(CUDA_LIBS) $(LIBXC_LIBRARIES) -lrt
 ifeq ($(intel),0)
-  LIBRARIES += -L$(PACK_LIB_DIR) -lcblas
+  # Only link cblas from PACK_LIB_DIR when that path is actually provided.
+  # Historically PACK_LIB_DIR was unset, which left a bare `-L` that swallowed
+  # the following `-lcblas` token as its directory argument -- so cblas was
+  # never really linked into libg2g.so (its symbols resolve at the final
+  # executable link against -lopenblas). Make that explicit instead of relying
+  # on the accidental drop; set PACK_LIB_DIR to link a standalone cblas.
+  LIBRARIES += $(if $(PACK_LIB_DIR),-L$(PACK_LIB_DIR) -lcblas)
   CXXFLAGS += -DINTEL_COMP=0
 else 
   CXXFLAGS += -DINTEL_COMP=1
@@ -114,10 +119,15 @@ endif
 include Makefile.excited
 include Makefile.cioverlap
 
+# Pull in the auto-generated header dependencies (.d files emitted by -MMD -MP).
+# Declared after every Makefile.* include so $(OBJ) is fully populated. The
+# leading '-' silences the missing-file warnings on a clean tree.
+-include $(OBJ:.o=.d)
+
 # Split targets so the top-level Makefile can overlap g2g and lioamber
 # object compilation under `make -j`. Declared after every Makefile.* include
 # so $(OBJ) is fully populated (libint, excited, cioverlap, ...).
-.PHONY: compile link
+.PHONY: all compile link depend clean
 compile: $(OBJ)
 link: $(LIBRARY)
 
@@ -131,7 +141,7 @@ libg2g.so: $(OBJ)
 	$(CXX) -fopenmp -shared $(LDFLAGS) -o libg2g.so $(OBJ) $(LIBRARIES)
 
 clean:
-	@echo "Removing objects"; rm -f *.o* libg2g.so *.a cpu/*.o* cuda/*.o* pointxc/*.o*
+	@echo "Removing objects"; rm -f *.o* *.d libg2g.so *.a cpu/*.o* cpu/*.d cuda/*.o* cuda/*.d pointxc/*.o* pointxc/*.d
 	@rm -f cuda/*.cu_o cuda/*.cudafe* cuda/*.ptx cuda/*.hash cuda/*.cubin cuda/*.i cuda/*.ii cuda/*.fatbin.* cuda/*.cu.c
-	@rm -f analytic_integral/*.o* analytic_integral/cuda/*.o*
-	@rm -f excited/*.o* excited/cuda/*.o* libint/*o
+	@rm -f analytic_integral/*.o* analytic_integral/*.d analytic_integral/cuda/*.o* analytic_integral/cuda/*.d
+	@rm -f excited/*.o* excited/*.d excited/cuda/*.o* excited/cuda/*.d libint/*o libint/*.d
