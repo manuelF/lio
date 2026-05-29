@@ -1,28 +1,41 @@
 # This action compiles only the different variants of CPU and GPU.
 #
-# It does not run tests since the workers are CPU-only Virtual Machines.
-# To enable GPU tests it would have to build a GPU version and run it on
-# an external Github worker in some other cloud.
+# It does not run tests since the workers are CPU-only Virtual Machines
+# (GitHub-hosted GPU runners are not free). It also only proves the code
+# *compiles*: the cuda=1 jobs use Ubuntu's nvidia-cuda-toolkit (CUDA 11.x),
+# NOT the CUDA 12.0/13.1 + specific SM flags used for real GPU builds
+# (see g2g/Makefile.cuda and CLAUDE.md). A green cuda=1 job catches CUDA
+# syntax/compat breaks; it does not guarantee the production GPU build links.
 
 name: Compile-only CPU and CPU-GPU variants
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [master, develop]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   build:
     name: 'Build with ${{ matrix.cuda_option }} ${{ matrix.precision }} ${{ matrix.analytics }}'
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
         cuda_option: ['cuda=0', 'cuda=1']
         precision: ['precision=0', 'precision=1']
         analytics: ['analytics=0', 'analytics=2']
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: get packages
-      run: sudo apt install -y gfortran liblapack-dev libblas-dev python3.9 linux-headers-$(uname -r) nvidia-cuda-toolkit
-    - name: configure
-      run: ./configure
+      run: sudo apt-get update && sudo apt-get install -y gfortran liblapack-dev libblas-dev python3 linux-headers-$(uname -r) nvidia-cuda-toolkit
     - name: make ${{ matrix.cuda_option }} ${{ matrix.precision }} ${{ matrix.analytics }}
       run: make -j ${{ matrix.cuda_option}} ${{ matrix.precision }} ${{ matrix.analytics }}

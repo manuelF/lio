@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 # An example hook script to verify what is about to be pushed.  Called by "git
 # push" after it has checked the remote status, but before anything has been
@@ -16,11 +16,9 @@
 #
 #   <local ref> <local sha1> <remote ref> <remote sha1>
 
-import fileinput
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -29,7 +27,8 @@ remote, url = sys.argv[1:]
 
 def call(cmd, cwd=os.getcwd(), save_output=True):
     if save_output:
-        proc = subprocess.Popen(cmd.split(" "), stdout=subprocess.PIPE, cwd=cwd)
+        proc = subprocess.Popen(cmd.split(" "), stdout=subprocess.PIPE,
+                                cwd=cwd, universal_newlines=True)
         stdout, stderr = proc.communicate()
         return stdout, stderr, proc.returncode
     else:
@@ -40,10 +39,10 @@ def call(cmd, cwd=os.getcwd(), save_output=True):
 class GitRepo(object):
     def __init__(self, directory):
         dir = os.path.abspath(directory)
-        cwd, _, pid = call("git rev-parse --show-toplevel".format(directory))
+        cwd, _, pid = call("git rev-parse --show-toplevel")
 
         if pid != 0:
-            print "Not in a git repo: {}".format(cwd)
+            print("Not in a git repo: {}".format(cwd))
             sys.exit(1)
 
         self.cwd = cwd.strip()
@@ -68,12 +67,12 @@ for line in sys.stdin.readlines():
         call("make clean", cwd=tmpdir, save_output=False)
         _, _, pid = call("make -j3 cpu=1 time=1", cwd=tmpdir, save_output=False)
         if pid != 0:
-            print "\033[1;31mError! Fallo la compilacion de LIO ergo no se debe pushear a master\033[0m"
+            print("\033[1;31mError! Fallo la compilacion de LIO ergo no se debe pushear a master\033[0m")
             sys.exit(1)
 
-        _, _, pid = call("python test/run_tests.py --filter_rx aguaCPU", cwd=tmpdir, save_output=False)
+        _, _, pid = call("python3 run_travis_test.py --filter_rx agua", cwd=os.path.join(tmpdir, "test"), save_output=False)
         if pid != 0:
-            print "\033[1;31mError! Los tests de CPU no pasan!\033[0m"
+            print("\033[1;31mError! Los tests de CPU no pasan!\033[0m")
             sys.exit(1)
 
 sys.exit(0)

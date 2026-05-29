@@ -29,7 +29,7 @@ def error(dip,dip_ok):
    for num in range(dim1):
       value = abs(dip[num] - dip_ok[num])
       if value > 1e-3:
-         src = -1
+         scr = -1
          print("Error in dipole:")
          print("Value of dipole moment",dip[num])
          print("Value of ideal dipole moment",dip_ok[num])
@@ -46,6 +46,10 @@ def Check(*opt):
       file_in = "dipole_moment"
 
    dip = []
+   # Not applicable: this test exercises no dipole moment.
+   if not os.path.isfile(file_in) and not os.path.isfile(file_in + ".ok"):
+      print("Test Dipole:     SKIP (not applicable)")
+      return 0
    is_file = os.path.isfile(file_in)
    if is_file == False:
       print("The %s file is missing." % file_in)
@@ -75,5 +79,7 @@ def Check(*opt):
    ok_output = error(dip,dipok)
    if ok_output != 0:
       print("Test Dipole:     ERROR")
+      return 1
    else:
       print("Test Dipole:     OK")
+      return 0

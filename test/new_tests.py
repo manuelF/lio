@@ -2,6 +2,7 @@
 
 import re
 import os
+import sys
 import argparse
 import subprocess
 
@@ -24,8 +25,9 @@ def lio_env():
 
 
 def run_lio(dirs_with_tests):
-   "Runs all Tests"
+   "Runs all Tests. Returns True if every test passed, False otherwise."
    lioenv = lio_env()
+   all_passed = True
 
    for dir in dirs_with_tests:
       is_file = os.path.isfile(os.path.abspath(dir) + "/run.sh")
@@ -36,7 +38,8 @@ def run_lio(dirs_with_tests):
         process = subprocess.Popen(execpath, env=lioenv, cwd=os.path.abspath(dir))
         process.wait()
         if process.returncode != 0:
-           print("Error in this folder.")
+           print("Error running LIO in", dir)
+           all_passed = False
            continue
         else:
            is_file = os.path.isfile(os.path.abspath(dir) + "/check_test.py")
@@ -44,10 +47,15 @@ def run_lio(dirs_with_tests):
               execpath = ["./check_test.py"]
               check = subprocess.Popen(execpath, env=lioenv, cwd=os.path.abspath(dir))
               check.wait()
+              if check.returncode != 0:
+                 print("Test check FAILED in", dir)
+                 all_passed = False
            else:
               print("check_test.py not found.")
       else:
         print("Nothing to do.")
+
+   return all_passed
 
 
 if __name__ == "__main__":
@@ -64,5 +72,10 @@ if __name__ == "__main__":
       dirs_with_tests[i] = "LIO_test/" + dirs_with_tests[i]
 
    # Run lio
-   filed = run_lio(dirs_with_tests)
+   all_passed = run_lio(dirs_with_tests)
+   if not all_passed:
+      print("\033[1;31mOne or more tests FAILED.\033[0m")
+      sys.exit(1)
+   print("\033[1;32mAll tests passed.\033[0m")
+   sys.exit(0)
 

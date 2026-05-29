@@ -26,7 +26,7 @@ def error(mull,mull_ok):
    for num in range(dim1):
       value = abs(mull[num] - mull_ok[num])
       if value > 1e-2:
-         src = -1
+         scr = -1
          print("Error in mulliken charges:")
          print("Valor en mulliken",mull[num])
          print("Valor en mulliken.ok",mull_ok[num])
@@ -37,6 +37,10 @@ def error(mull,mull_ok):
 def Check():
    # Output
    mull = []
+   # Not applicable: this test exercises no mulliken charges.
+   if not os.path.isfile("mulliken") and not os.path.isfile("mulliken.ok"):
+      print("Test Mulliken:   SKIP (not applicable)")
+      return 0
    is_file = os.path.isfile("mulliken")
    if is_file == False:
       print("The mulliken file is missing.")
@@ -66,5 +70,7 @@ def Check():
    ok_output = error(mull,mullok)
    if ok_output != 0:
       print("Test Mulliken:   ERROR")
+      return 1
    else:
       print("Test Mulliken:   OK")
+      return 0

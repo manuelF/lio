@@ -1,27 +1,53 @@
 # This action compiles and runs tests in CPU-only variant.
 #
-# To enable GPU tests it would have to build a GPU version and run it on 
-# an external Github worker in some other cloud.
+# GitHub-hosted GPU runners are not free, so tests run only on a CPU-only
+# (cuda=0) build. run_travis_test.py runs a curated CPU subset and exits
+# non-zero if any test fails.
 
 name: Compile and run CPU tests
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [master, develop]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   build:
     name: 'Build and run tests with ${{ matrix.cuda_option }}'
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
         cuda_option: ['cuda=0']
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: get packages
-      run: sudo apt install -y gfortran liblapack-dev libblas-dev python3.9
-    - name: configure
-      run: ./configure
-    - name: make ${{ matrix.cuda_option }} 
+      run: sudo apt-get update && sudo apt-get install -y gfortran liblapack-dev libblas-dev python3
+    - name: make ${{ matrix.cuda_option }}
       run: make -j ${{ matrix.cuda_option}}
     - name: run tests
       run: cd test && ./run_travis_test.py
+    - name: upload test outputs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-outputs-${{ matrix.cuda_option }}
+        path: |
+          test/LIO_test/**/output
+          test/LIO_test/**/output.ok
+          test/LIO_test/**/dipole_moment*
+          test/LIO_test/**/forces*
+          test/LIO_test/**/mulliken*
+          test/LIO_test/**/fukui*
+          test/LIO_test/**/becke*
+        if-no-files-found: ignore
+        retention-days: 7

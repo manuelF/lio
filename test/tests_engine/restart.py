@@ -28,8 +28,11 @@ def Check():
    f = open("output","r")
    
    error = read_restart(f)
+   f.close()
    if error != 0:
       print("Test Restart:    ERROR")
+      return 1
    else:
       print("Test Restart:    OK")
+      return 0
 

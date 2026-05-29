@@ -39,6 +39,10 @@ def error(fuk,fukok):
 def Check():
    # Output
    fuk = []
+   # Not applicable: this test exercises no fukui (neither produced nor expected).
+   if not os.path.isfile("fukui") and not os.path.isfile("fukui.ok"):
+      print("Test Fukui:      SKIP (not applicable)")
+      return 0
    is_file = os.path.isfile("fukui")
    if is_file == False:
       print("The fukui file is missing.")
@@ -46,27 +50,31 @@ def Check():
 
    f = open("fukui","r")
    fuk = obtain_fukui(f)
-   f.close
+   f.close()
    if not fuk:
       print("Error in reading fukui.")
+      return -1
 
    # Ideal Output
    fukok = []
-   is_file = os.path.isfile("fukui")
+   is_file = os.path.isfile("fukui.ok")
    if is_file == False:
       print("The fukui.ok file is missing.")
       return -1
 
    f = open("fukui.ok","r")
    fukok = obtain_fukui(f)
-   f.close
+   f.close()
    if not fukok:
       print("Error in reading fukui.ok.")
+      return -1
 
    ok_output = error(fuk,fukok)
-  
+
    if ok_output != 0:
       print("Test Fukui:      ERROR")
+      return 1
    else:
       print("Test Fukui:      OK")
+      return 0
 

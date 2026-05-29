@@ -2,6 +2,9 @@
 import sys
 
 sys.path.insert(0,"../../tests_engine")
-import energy 
+import energy
 
-energy.Check()
+failed = False
+failed |= bool(energy.Check())
+
+sys.exit(1 if failed else 0)

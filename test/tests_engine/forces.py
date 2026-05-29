@@ -34,6 +34,10 @@ def error(fc,fc_ok):
 def Check():
    # Output
    fc = []
+   # Not applicable: this test exercises no forces (neither produced nor expected).
+   if not os.path.isfile("forces") and not os.path.isfile("forces.ok"):
+      print("Test Forces:     SKIP (not applicable)")
+      return 0
    is_file = os.path.isfile("forces")
    if is_file == False:
       print("The forces file is missing.")
@@ -62,5 +66,7 @@ def Check():
    ok_output = error(fc,fcok)
    if ok_output != 0:
       print("Test Forces:     ERROR")
+      return 1
    else:
       print("Test Forces:     OK")
+      return 0

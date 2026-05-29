@@ -8,18 +8,29 @@ on:
   pull_request:
     branches: [master, develop]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# super-linter needs read access to the code and write access to commit
+# statuses; nothing more.
+permissions:
+  contents: read
+  statuses: write
+
 jobs:
   build:
     name: Lint Code Base
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           # Full git history is needed to get a proper list of changed files within `super-linter`
           fetch-depth: 0
       - name: Lint Code Base
-        uses: github/super-linter/slim@v4
+        uses: super-linter/super-linter/slim@v6
         env:
           VALIDATE_ALL_CODEBASE: false
           DEFAULT_BRANCH: master

@@ -5,6 +5,8 @@ sys.path.insert(0,"../../tests_engine")
 import mulliken
 import becke
 
-mulliken.Check()
-becke.Check()
+failed = False
+failed |= bool(mulliken.Check())
+failed |= bool(becke.Check())
 
+sys.exit(1 if failed else 0)

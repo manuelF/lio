@@ -2,15 +2,17 @@
 import sys
 
 sys.path.insert(0,"../../tests_engine")
-import energy 
+import energy
 import fukui
 import mulliken
 import forces
 import dipole
 
-energy.Check()
-fukui.Check()
-mulliken.Check()
-forces.Check()
-dipole.Check()
+failed = False
+failed |= bool(energy.Check())
+failed |= bool(fukui.Check())
+failed |= bool(mulliken.Check())
+failed |= bool(forces.Check())
+failed |= bool(dipole.Check())
 
+sys.exit(1 if failed else 0)

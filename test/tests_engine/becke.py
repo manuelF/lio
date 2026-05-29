@@ -26,7 +26,7 @@ def error(mull,mull_ok):
    for num in range(dim1):
       value = abs(mull[num] - mull_ok[num])
       if value > 1e-2:
-         src = -1
+         scr = -1
          print("Error in becke charges:")
          print("Valor en becke",mull[num])
          print("Valor en becke.ok",mull_ok[num])
@@ -37,6 +37,10 @@ def error(mull,mull_ok):
 def Check():
    # Output
    mull = []
+   # Not applicable: this test exercises no becke charges.
+   if not os.path.isfile("becke") and not os.path.isfile("becke.ok"):
+      print("Test Becke:      SKIP (not applicable)")
+      return 0
    is_file = os.path.isfile("becke")
    if is_file == False:
       print("The becke file is missing.")
@@ -66,5 +70,7 @@ def Check():
    ok_output = error(mull,mullok)
    if ok_output != 0:
       print("Test Becke:      ERROR")
+      return 1
    else:
       print("Test Becke:      OK")
+      return 0

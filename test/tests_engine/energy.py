@@ -109,8 +109,10 @@ def Check():
       return -1
 
    ok_output = error(energies,energiesok)
-   
+
    if ok_output != 0:
       print("Test Energy:     ERROR")
+      return 1
    else:
       print("Test Energy:     OK")
+      return 0
