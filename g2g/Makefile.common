@@ -36,7 +36,8 @@ endif
 
 # Debug/release configuration
 ifneq ($(dbg),1)
-  CXXFLAGS  += $(OPTIMIZECPU)
+  # -DNDEBUG strips assert() from release builds (g2g asserts on hot paths).
+  CXXFLAGS  += $(OPTIMIZECPU) -DNDEBUG
 else
   CXXFLAGS += -D_DEBUG -g -ggdb
 endif

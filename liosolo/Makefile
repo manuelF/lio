@@ -14,7 +14,11 @@ LIBS += -L$(CUDA_HOME)/lib64 -lcudart -lcuda
 endif
 
 
-FLAGS = -fopenmp
+# -O3 (driver was previously unoptimized) + -Wl,-O1 (symbol hash table).
+# No --as-needed: liosolo.o references no CUDA symbol directly (libg2g.so does),
+# and ld's --as-needed ignores undefined refs from a shared lib, so it would
+# drop a -lcudart that libg2g.so still needs transitively.
+FLAGS = -fopenmp -O3 -Wl,-O1
 
 
 ################################################################################

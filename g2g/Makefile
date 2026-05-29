@@ -102,7 +102,6 @@ LIBRARY=libg2g.so
 ## Targets
 all: $(LIBRARY)
 
-include Makefile.depends
 ifeq ($(libint),1)
     LIBS_LIBINT = -L/$(LIBINT_HOME)/lib -lint2
     INCS_LIBINT = -I/$(LIBINT_HOME)/include -I/$(LIBINT_HOME)/include/libint2 -I/$(EIGEN_HOME)
@@ -127,18 +126,15 @@ include Makefile.cioverlap
 # Split targets so the top-level Makefile can overlap g2g and lioamber
 # object compilation under `make -j`. Declared after every Makefile.* include
 # so $(OBJ) is fully populated (libint, excited, cioverlap, ...).
-.PHONY: all compile link depend clean
+.PHONY: all compile link clean
 compile: $(OBJ)
 link: $(LIBRARY)
 
-depend:
-	@touch Makefile.depends
-	@makedepend -Y -fMakefile.depends $(SRCS) > /dev/null 2>&1
-	#@sed -ri 's|(cuda/.*)\.o|\1.cu_o|g' Makefile.depends
-	@rm -f Makefile.depends.bak
-
-libg2g.so: $(OBJ)
-	$(CXX) -fopenmp -shared $(LDFLAGS) -o libg2g.so $(OBJ) $(LIBRARIES)
+# --version-script limits exports to the bridge API (libg2g.map); -Wl,-O1
+# optimizes the symbol hash table. No --as-needed: this link has no
+# --no-undefined guard, so a dropped-but-needed lib would only fail at runtime.
+libg2g.so: $(OBJ) libg2g.map
+	$(CXX) -fopenmp -shared $(LDFLAGS) -Wl,-O1 -Wl,--version-script=libg2g.map -o libg2g.so $(OBJ) $(LIBRARIES)
 
 clean:
 	@echo "Removing objects"; rm -f *.o* *.d libg2g.so *.a cpu/*.o* cpu/*.d cuda/*.o* cuda/*.d pointxc/*.o* pointxc/*.d

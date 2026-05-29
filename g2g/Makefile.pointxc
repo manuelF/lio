@@ -1,5 +1,0 @@
-# EXTERNALS
-vpath 
-cpu/iteration.o : pointxc/calc_ggaCS.h pointxc/calc_ggaOS.h pointxc/calc_ldaCS.h pointxc/pbeCS.h pointxc/pbeOS_main.h pointxc/pbeOS_corr.h pointxc/pbeOS_exch.h pointxc/gcorc.h
-cuda/iteration.o: pointxc/calc_ggaCS.h pointxc/calc_ggaOS.h pointxc/calc_ldaCS.h pointxc/pbeCS.h pointxc/pbeOS_main.h pointxc/pbeOS_corr.h pointxc/pbeOS_exch.h pointxc/gcorc.h
-

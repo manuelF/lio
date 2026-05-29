@@ -51,6 +51,9 @@ FFLAGS += -fPIC $(DEFINE)
 
 LFLAGS += -fPIC -shared
 LFLAGS += -Wl,--no-undefined
+# --as-needed drops unused libs (safe under --no-undefined); -Wl,-O1 optimizes
+# the symbol hash table.
+LFLAGS += -Wl,--as-needed -Wl,-O1
 LFLAGS += -Wl,-rpath='$$ORIGIN/'
 LFLAGS += -Wl,-rpath='$$ORIGIN/../g2g'
 
@@ -237,7 +240,7 @@ $(tmplist:%.o=$(OBJPATH)/%.o) : private_flag := -O1
 
 tmplist :=
 tmplist += mathsubs.o matmuldiag.o subm_int3lu.o fock_commuts.o
-$(tmplist:%.o=$(OBJPATH)/%.o) : private_flag := -O3 $(OPTIMP)
+$(tmplist:%.o=$(OBJPATH)/%.o) : private_flag := -O3 $(OPTIM0P)
 
 tmplist :=
 tmplist += SCF.o TD.o ehrenfest.o magnus.o predictor.o
@@ -247,7 +250,7 @@ tmplist += dft_get_mm_forces.o dft_get_qm_forces.o
 tmplist += alg.o drive.o func.o grid.o dipmem.o jarz.o
 tmplist += subm_int1.o subm_int2.o subm_int2G.o subm_int3mem.o subm_intSG.o
 tmplist += garcha_mod.o cubegen.o density.o
-$(tmplist:%.o=$(OBJPATH)/%.o) : private_flag := -O3 $(OPTIMI)
+$(tmplist:%.o=$(OBJPATH)/%.o) : private_flag := -O3 $(OPTIM0I)
 
 FFLAGS += $(private_flag)
 

@@ -1,0 +1,10 @@
+# Export only the extern "C" Fortran bridge (g2g*/aint_*); hide everything else.
+# A new bridge symbol not matching these globs breaks the liblio-g2g.so link
+# (--no-undefined) -- add it here to fix.
+{
+  global:
+    g2g*;
+    aint_*;
+  local:
+    *;
+};
