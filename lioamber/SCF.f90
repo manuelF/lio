@@ -315,6 +315,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
 
         allocate(X_min(M,M), Y_min(M,M), X_min_trans(M,M), Y_min_trans(M,M))
 
+        call g2g_timer_sum_start('Overlap diagonalization')
         call overop%Sets_smat( Smat )
         if (do_lowdin()) then
 !          TODO: inputs insuficient; there is also the symetric orthog using
@@ -347,6 +348,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
    call getXY_TBDFT(M, X_min, Y_min, fock_a, rho_a)
    call Xmat%init(M_f, fock_a)
    call Ymat%init(M_f, rho_a)
+   call g2g_timer_sum_stop('Overlap diagonalization')
 
    deallocate(X_min, Y_min, X_min_trans, Y_min_trans)
 
