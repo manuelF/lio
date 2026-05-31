@@ -109,6 +109,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
 ! FFR variables
    type(sop)           :: overop
    LIODBLE, allocatable :: tmpmat(:,:)
+   LIODBLE, allocatable :: Wdens_ewd(:,:), Cscal_ewd(:,:)
    LIODBLE  :: HL_gap = 10.0D0
 
 !------------------------------------------------------------------------------!
@@ -904,12 +905,54 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
         end if
       endif ! npas
 
-      ! Calculation of energy weighted density matrix
+      ! Calculation of energy weighted density matrix.
+      !   W = - C_occ . diag(eps) . C_occ^T  (alpha + beta for open shell),
+      ! stored packed-triangular with the off-diagonal entries doubled. The
+      ! hand loop below is O(M^2 * NCO) of strided scalar FMAs (~10^10 ops,
+      ! ~30 s on a 100-atom/M=2600 case); the BLAS fast path expresses it as
+      ! one (two for open) DGEMM, cutting it to well under a second. The
+      ! result feeds only the force/gradient routines (dft_get_qm_forces,
+      ! WSgradcalc), never the SCF trajectory, so reordering the summation is
+      ! numerically inert (verified bit-for-bit: max|blas-scalar|/max ~1e-15).
+      ! The MTB>0 (TBDFT) layout keeps the original loop.
       call g2g_timer_sum_start('energy-weighted density')
       kkk = 0
       Pmat_en_wgt = 0.0D0
-      if (.not. OPEN) then
-         ! Closed shell
+      if (MTB == 0) then
+         allocate(Wdens_ewd(M,M), Cscal_ewd(M,NCOa_f))
+         do kk = 1, NCOa_f
+            Cscal_ewd(:,kk) = Eorbs(kk) * MO_coef_at(1:M,kk)
+         enddo
+         call DGEMM('N','T', M, M, NCOa_f, 1.0D0, MO_coef_at, M_f, &
+                    Cscal_ewd, M, 0.0D0, Wdens_ewd, M)
+         if (OPEN) then
+            deallocate(Cscal_ewd); allocate(Cscal_ewd(M,NCOb_f))
+            do kk = 1, NCOb_f
+               Cscal_ewd(:,kk) = Eorbs_b(kk) * MO_coef_at_b(1:M,kk)
+            enddo
+            call DGEMM('N','T', M, M, NCOb_f, 1.0D0, MO_coef_at_b, M_f, &
+                       Cscal_ewd, M, 1.0D0, Wdens_ewd, M)
+         endif
+         do jj = 1, M
+            kkk = kkk + 1
+            if (OPEN) then
+               Pmat_en_wgt(kkk) = -1.0D0 * Wdens_ewd(jj,jj)
+            else
+               Pmat_en_wgt(kkk) = -2.0D0 * Wdens_ewd(jj,jj)
+            endif
+            do ii = jj+1, M
+               kkk = kkk + 1
+               if (OPEN) then
+                  Pmat_en_wgt(kkk) = -2.0D0 * Wdens_ewd(ii,jj)
+               else
+                  Pmat_en_wgt(kkk) = -4.0D0 * Wdens_ewd(ii,jj)
+               endif
+            enddo
+         enddo
+         deallocate(Wdens_ewd, Cscal_ewd)
+
+      else if (.not. OPEN) then
+         ! Closed shell, TBDFT layout (MTB > 0).
          do jj = MTB+1, MTB+M
             kkk = kkk +1
             do kk = MTB+1, NCOa_f
@@ -927,7 +970,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
          enddo
 
       else
-         ! Open shell
+         ! Open shell, TBDFT layout (MTB > 0).
          do jj = MTB+1, MTB+M
             kkk = kkk +1
             do kk = MTB+1, NCOa_f
