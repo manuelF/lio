@@ -54,7 +54,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
    use fileio       , only: write_energies, write_energy_convergence, &
                             write_final_convergence, write_ls_convergence, &
                             movieprint
-   use fileio_data  , only: verbose
+   use fileio_data  , only: verbose, movie_nfreq
    use basis_data   , only: kkinds, kkind, cools, cool, Nuc, nshell, M, MM, c_raw
    use basis_subs, only: neighbour_list_2e
    use excited_data,  only: libint_recalc
@@ -110,6 +110,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
    type(sop)           :: overop
    LIODBLE, allocatable :: tmpmat(:,:)
    LIODBLE, allocatable :: Wdens_ewd(:,:), Cscal_ewd(:,:)
+   complex(kind=8), allocatable :: rho_movie(:,:)
    LIODBLE  :: HL_gap = 10.0D0
 
 !------------------------------------------------------------------------------!
@@ -1042,9 +1043,19 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
       endif
 !------------------------------------------------------------------------------!
 ! MovieMaker
-      call spunpack('L',M,Pmat_vec,RealRho)
-      call fix_densmat(RealRho)
-      call movieprint( natom, M, npas-1, Iz, r, dcmplx( RealRho ) )
+!     Skip entirely when movie output is off (movie_nfreq == 0, the default):
+!     movieprint() early-returns in that case, so the spunpack/fix_densmat and
+!     the dcmplx() temporary were pure waste. The complex copy is also kept on
+!     the heap (named allocatable, not an expression temporary) so it does not
+!     overflow the stack on large-M systems under -fstack-arrays.
+      if (movie_nfreq /= 0) then
+         call spunpack('L',M,Pmat_vec,RealRho)
+         call fix_densmat(RealRho)
+         allocate(rho_movie(M,M))
+         rho_movie = dcmplx(RealRho)
+         call movieprint( natom, M, npas-1, Iz, r, rho_movie )
+         deallocate(rho_movie)
+      endif
 
       call Xmat%destroy()
       call Ymat%destroy()
