@@ -1,5 +1,13 @@
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 function matmul3_ddd( Amat, Bmat, Cmat ) result( Dmat )
+!  Dmat = Amat * Bmat * Cmat, evaluated as two DGEMM calls. gfortran's
+!  intrinsic matmul is its own (non-BLAS) routine and is several times slower
+!  than DGEMM at the M~1e3 sizes this is used at (the overlap orthogonalization
+!  spent ~15 s here on a M=2600 case). The complex variant below keeps the
+!  generic matmul body.
+!  NOTE: the DGEMM leading dimensions assume contiguous arguments (LDA =
+!  size(,1)); all current callers pass full arrays. A future caller passing a
+!  non-contiguous array slice would need a packed copy first.
    implicit none
    LIODBLE, intent(in)  :: Amat(:,:)
    LIODBLE, intent(in)  :: Bmat(:,:)
@@ -7,7 +15,29 @@ function matmul3_ddd( Amat, Bmat, Cmat ) result( Dmat )
    LIODBLE, allocatable :: Dmat(:,:)
    LIODBLE, allocatable :: Xmat(:,:)
    logical :: error_found
-#  include "matmul3_body.f90"
+   integer :: ma, ka, kb, nb, nc, pc
+
+   ma = size(Amat,1); ka = size(Amat,2)
+   kb = size(Bmat,1); nb = size(Bmat,2)
+   nc = size(Cmat,1); pc = size(Cmat,2)
+
+   error_found = .false.
+   error_found = (error_found) .or. ( ka /= kb )
+   error_found = (error_found) .or. ( nb /= nc )
+   if (error_found) then
+      print*, 'ERROR INSIDE matmul3_ddd'
+      print*, 'Wrong sizes of input/output'
+      print*; stop
+   endif
+
+   allocate( Xmat(ma, nb) )
+   if (allocated(Dmat)) deallocate(Dmat)
+   allocate( Dmat(ma, pc) )
+
+   call DGEMM('N', 'N', ma, nb, ka, 1.0D0, Amat, ma, Bmat, kb, 0.0D0, Xmat, ma)
+   call DGEMM('N', 'N', ma, pc, nb, 1.0D0, Xmat, ma, Cmat, nc, 0.0D0, Dmat, ma)
+
+   deallocate( Xmat )
 end function matmul3_ddd
 
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
