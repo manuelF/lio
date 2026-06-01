@@ -10,6 +10,9 @@
  gold     = 0.0D0
  Rho_LS   = 2
  told     = 1.0e-8
+
+ free_global_memory = -1
+ timers = 2
 &end
 
 
