@@ -409,7 +409,26 @@ subroutine int3mem(r, d, natom, ntatom)
 
    total_d = kknumd
    total_s = kknums
-   cool   = 0.0D0; cools  = 0.0
+
+   ! Parallel first-touch zeroing of the (potentially multi-GB) integral
+   ! tables. A serial `cool = 0` is page-fault bound (~2 GB/s) on the fresh
+   ! allocation: on 100-Zn it took 2.9s, ~half of int3mem, and did not scale.
+   ! Spreading the first touch across threads parallelizes the kernel fault
+   ! handling (measured 2.9s -> 0.7s at 8 threads). Bit-exact: zeroing is
+   ! independent of thread count, so the resulting cool/cools (and every Fock
+   ! element built from them) are identical to the serial version.
+   !$omp parallel default(shared) private(cool_ind)
+   !$omp do schedule(static)
+   do cool_ind = 1, size(cool)
+      cool(cool_ind) = 0.0D0
+   enddo
+   !$omp end do nowait
+   !$omp do schedule(static)
+   do cool_ind = 1, size(cools)
+      cools(cool_ind) = 0.0
+   enddo
+   !$omp end do
+   !$omp end parallel
 
    ! Start of integrals.
    ! (ss|X) terms (X = s,p,d)
