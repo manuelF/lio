@@ -267,7 +267,7 @@ subroutine give_me_energy(E, En, E1, E2, Ex, Pmat_vec, Hmat_vec, Fmat_vec, &
    LIODBLE, intent(inout) :: Pmat_vec(:), Hmat_vec(:), Fmat_vec(:), &
                                   Fmat_vec2(:), Gmat_vec(:), Ginv_vec(:)
    integer :: kk
-      
+
    E  = 0.0D0; E1 = 0.0D0
    E2 = 0.0D0; Ex = 0.0D0
    
@@ -276,11 +276,17 @@ subroutine give_me_energy(E, En, E1, E2, Ex, Pmat_vec, Hmat_vec, Fmat_vec, &
    enddo
 
    ! Computes Coulomb part of Fock, and energy on E2.
+   ! The Fock matrix built by int3lu is unused here (the line search only needs
+   ! the energy and the next SCF iteration rebuilds it), so skip its assembly.
+   call g2g_timer_sum_start('LS - int3lu')
    call int3lu(E2, Pmat_vec, Fmat_vec2, Fmat_vec, Gmat_vec, Ginv_vec, &
-               Hmat_vec, open_shell, int_memo)
+               Hmat_vec, open_shell, int_memo, energy_only=.true.)
+   call g2g_timer_sum_pause('LS - int3lu')
 
    ! Computes XC integration / Fock elements.
+   call g2g_timer_sum_start('LS - XC g2g')
    call g2g_solve_groups(1,Ex,0)
+   call g2g_timer_sum_pause('LS - XC g2g')
 
    ! Adds all energy components.
    E = E1 + E2 + En + Ex

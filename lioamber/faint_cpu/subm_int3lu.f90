@@ -64,7 +64,8 @@ module subm_int3lu
    integer, save :: saved_Md = 0, saved_kknumd = 0, saved_kknums = 0
 
 contains
-subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo)
+subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo, &
+                  energy_only)
    use basis_data, only: M, Md, cool, cools, kkind, kkinds, kknumd, kknums, &
                          af, MM, MMd
 
@@ -72,6 +73,12 @@ subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo)
    logical         , intent(in) :: open_shell, memo
    double precision, intent(in) :: rho(:), Gmat(:), Ginv(:), Hmat(:)
    double precision, intent(inout) :: E2, Fmat_b(:), Fmat(:)
+   ! When present and .true., skips the Coulomb Fock build (STEP 4): E2 is
+   ! fully determined by STEPS 1-3, so callers that only need the energy
+   ! (e.g. the Rho linear search) avoid the wasted 'T' GEMVs + scatter.
+   logical, intent(in), optional :: energy_only
+
+   logical :: do_fock
 
    double precision :: Ea, Eb
    integer          :: ll(3), k_ind, kk_ind, m_ind
@@ -80,6 +87,8 @@ subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo)
    double precision, external :: ddot
 
    Ea = 0.D0 ; Eb = 0.D0
+   do_fock = .true.
+   if (present(energy_only)) do_fock = .not. energy_only
 
    MM = M * (M + 1) / 2
    MMd = Md * (Md + 1) / 2
@@ -146,8 +155,10 @@ subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo)
       call dspmv('L', Md, 1.0D0, Ginv, Rc_w, 1, 0.0D0, af, 1)
 
       ! Initialize Fock matrix from one-electron integrals
-      Fmat(1:MM) = Hmat(1:MM)
-      if (open_shell) Fmat_b(1:MM) = Hmat(1:MM)
+      if (do_fock) then
+         Fmat(1:MM) = Hmat(1:MM)
+         if (open_shell) Fmat_b(1:MM) = Hmat(1:MM)
+      endif
 
       !--------------------------------------------------------------------
       ! STEP 3: Two-electron Coulomb energy
@@ -162,6 +173,7 @@ subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo)
       !--------------------------------------------------------------------
       ! STEP 4: Fock matrix update (Coulomb contribution)
       !--------------------------------------------------------------------
+      if (do_fock) then
       if (open_shell) then
          ! Double-precision Fock update (open-shell)
          if (kknumd > 0) then
@@ -209,6 +221,7 @@ subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo)
                                       dble(terms_s_w(kk_ind))
             enddo
          endif
+      endif
       endif
       call g2g_timer_stop('int3lu')
    else
