@@ -635,7 +635,8 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
       E = E1 + E2 + En + Exc
       call g2g_timer_sum_pause('Fock integrals')
 
-
+      ! Unpacks Fock/density, applies bias + LJ + exact-exchange terms.
+      call g2g_timer_sum_start('Fock matrix build')
       if (OPEN) then
          call spunpack_rho('L', M, rhoalpha , rho_a0)
          call spunpack_rho('L', M, rhobeta  , rho_b0)
@@ -680,6 +681,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
       ! acceleration algorithms (DIIS/EDIIS).
       call rho_aop%Sets_data_AO(rho_a)
       call fock_aop%Sets_data_AO(fock_a)
+      call g2g_timer_sum_pause('Fock matrix build')
 
       call g2g_timer_sum_start('SCF acceleration setup')
       if (OPEN) then
@@ -714,10 +716,13 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
       call standard_coefs( morb_coefat )
       call g2g_timer_sum_pause('SCF - MOC base change (sum)')
 
+      ! Builds the new AO density matrix from the MO coefficients.
+      call g2g_timer_sum_start('Density build')
       if ( allocated(morb_coefon) ) deallocate(morb_coefon)
       call rho_aop%Dens_build(M_f, NCOa_f, ocupF, morb_coefat)
       call rho_aop%Gets_data_AO(rho_a)
       call messup_densmat(rho_a)
+      call g2g_timer_sum_pause('Density build')
 
       Eorbs      = morb_energy
       MO_coef_at = morb_coefat
@@ -743,10 +748,12 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
          call standard_coefs( morb_coefat )
          call g2g_timer_sum_pause('SCF - MOC base change (sum)')
 
+         call g2g_timer_sum_start('Density build')
          if ( allocated(morb_coefon) ) deallocate(morb_coefon)
          call rho_bop%Dens_build(M_f, NCOb_f, ocupF, morb_coefat)
          call rho_bop%Gets_data_AO(rho_b)
          call messup_densmat( rho_b )
+         call g2g_timer_sum_pause('Density build')
 
          Eorbs_b      = morb_energy
          MO_coef_at_b = morb_coefat
@@ -764,6 +771,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
 
       ! Perfoms TBDFT checks and extracts density matrices. Allocates xnano,
       ! which contains the total (alpha+beta) density matrix.
+      call g2g_timer_sum_start('Rho update & check')
       allocate ( xnano(M,M) )
 
       if (tbdft_calc == 0) then
@@ -781,6 +789,9 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
          endif
       endif
 
+      ! Optional linear search in Rho; each step re-evaluates the energy
+      ! (int3lu + g2g), so it can dominate the iteration when active.
+      call g2g_timer_sum_start('Rho linear search')
       if ((rho_LS > 1) .and. (niter > 10)) then
          ! Performs a linear search in Rho if activated. This uses the
          ! vector-form densities as the old densities, and matrix-form
@@ -794,6 +805,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
                            Fmat_vec, Fmat_vec2, Gmat_vec, Ginv_vec, memo)
          endif
       endif
+      call g2g_timer_sum_pause('Rho linear search')
 
       E = E + Eexact
       ! Checks convergence criteria and starts linear search if able.
@@ -813,6 +825,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
       endif
       deallocate ( xnano )
       Evieja = E
+      call g2g_timer_sum_pause('Rho update & check')
 
       call g2g_timer_stop('Total iter')
       call g2g_timer_sum_pause('Iteration')
