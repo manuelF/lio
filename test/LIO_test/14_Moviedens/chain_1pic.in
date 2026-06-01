@@ -47,4 +47,6 @@
   cube_dens = T
   cube_dens_file = "chain_1pic.cube"
 
+! PERF
+  free_global_memory = -1
 &end
