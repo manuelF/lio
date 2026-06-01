@@ -7,4 +7,7 @@ timers = 2
 nmax                  = 2
 initial_guess         = 1
 energy_all_iterations = t
+
+free_global_memory = -1
+timers = 2
 &end
