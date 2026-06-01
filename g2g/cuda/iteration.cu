@@ -733,28 +733,61 @@ void PointGroupGPU<scalar_type>::solve_closed(
     // re-upload needed.
 
     timers.density_derivs.start_and_sync();
-    dim3 threads = dim3(this->number_of_points);
-    threadBlock = dim3(DENSITY_DERIV_BLOCK_SIZE);
-    threadGrid = divUp(threads, threadBlock);
-
-    CudaMatrix<vec_type4> dd_gpu(COALESCED_DIMENSION(this->number_of_points), this->total_nucleii()); dd_gpu.zero();
+    const uint pts = this->number_of_points;
     CudaMatrixUInt nuc_gpu(this->func2local_nuc);  // TODO: esto en realidad se podria guardar una sola vez durante su construccion
-
-    gpu_compute_density_derivs<<<threadGrid, threadBlock>>>(
-        rmm_input_gpu_tex, function_values.data, gradient_values.data, nuc_gpu.data, dd_gpu.data, this->number_of_points, group_m, this->total_nucleii());
-    cudaAssertNoError("density_derivs");
-    timers.density_derivs.pause_and_sync();
-
-    timers.forces.start_and_sync();
     CudaMatrix<vec_type4> forces_gpu(this->total_nucleii());
     forces_gpu.zero();
 
-    threads = dim3(this->total_nucleii());
-    threadBlock = dim3(FORCE_BLOCK_SIZE);
-    threadGrid = divUp(threads, threadBlock);
-    gpu_compute_forces<<<threadGrid, threadBlock>>>(
-        this->number_of_points, factors_gpu.data, dd_gpu.data, forces_gpu.data, this->total_nucleii());
-    cudaAssertNoError("forces");
+    // Large groups: compute the diagonal-doubled weighting matrix W = F * RDM''
+    // as one dense cuBLAS GEMM (full-GPU tiled, reads F once), then a single
+    // fused per-basis-function reduction scatters straight into the nuclear
+    // force with no [nuc x points] dd intermediate. Small groups stay on the
+    // hand kernels below, where cuBLAS/launch overhead would lose.
+    if (pts >= 1024 && group_m >= 32) {
+      const int ld = COALESCED_DIMENSION(pts);
+      CudaMatrix<scalar_type> rdmpp(group_m, group_m);
+      CudaMatrix<scalar_type> wmat(ld, group_m);
+
+      dim3 build_block(16, 16);
+      dim3 build_grid(divUp((uint)group_m, 16u), divUp((uint)group_m, 16u));
+      gpu_build_rdm_doubled_diag<scalar_type><<<build_grid, build_block>>>(
+          rdm_local_dev.data, rdmpp.data, group_m, rmm_width);
+
+      const scalar_type alpha = (scalar_type)1.0;
+      const scalar_type beta = (scalar_type)0.0;
+      // W[point, i] = sum_j F[point, j] * RDM''[j, i]   (points x m)
+      cublas_gemm(get_cublas_handle(), CUBLAS_OP_N, CUBLAS_OP_N,
+                  (int)pts, (int)group_m, (int)group_m, &alpha,
+                  function_values.data, ld, rdmpp.data, (int)group_m,
+                  &beta, wmat.data, ld);
+
+      // One block per basis function; reduces over points and atomic-scatters
+      // -G_i into forces[nuc_i]. FORCE_BLOCK_SIZE is a power of two.
+      gpu_forces_fused_gemm<scalar_type><<<group_m, FORCE_BLOCK_SIZE>>>(
+          wmat.data, gradient_values.data, factors_gpu.data, nuc_gpu.data,
+          forces_gpu.data, pts, group_m);
+      cudaAssertNoError("forces_fused");
+      timers.density_derivs.pause_and_sync();
+    } else {
+      dim3 threads = dim3(pts);
+      threadBlock = dim3(DENSITY_DERIV_BLOCK_SIZE);
+      threadGrid = divUp(threads, threadBlock);
+
+      CudaMatrix<vec_type4> dd_gpu(COALESCED_DIMENSION(pts), this->total_nucleii()); dd_gpu.zero();
+      gpu_compute_density_derivs<<<threadGrid, threadBlock>>>(
+          rmm_input_gpu_tex, function_values.data, gradient_values.data, nuc_gpu.data, dd_gpu.data, pts, group_m, this->total_nucleii());
+      cudaAssertNoError("density_derivs");
+      timers.density_derivs.pause_and_sync();
+
+      timers.forces.start_and_sync();
+      threads = dim3(this->total_nucleii());
+      threadBlock = dim3(FORCE_BLOCK_SIZE);
+      threadGrid = divUp(threads, threadBlock);
+      gpu_compute_forces<<<threadGrid, threadBlock>>>(
+          pts, factors_gpu.data, dd_gpu.data, forces_gpu.data, this->total_nucleii());
+      cudaAssertNoError("forces");
+      timers.forces.pause_and_sync();
+    }
 
     HostMatrix<vec_type4> forces_cpu(forces_gpu);
 
@@ -766,7 +799,6 @@ void PointGroupGPU<scalar_type>::solve_closed(
       fort_forces_ms(global_nuc, 2) += atom_force.z;
 
     }
-    timers.forces.pause_and_sync();
   }
 
   timers.rmm.start_and_sync();

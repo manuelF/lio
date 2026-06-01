@@ -59,6 +59,87 @@ __global__ void gpu_compute_density_derivs(
 }
 
 //===================================================================================================================
+// GEMM-path helpers for the closed-shell forces gradient on large groups.
+//
+// The weighting matvec  W[i][point] = sum_j RDM''[i][j]*f_j[point]  is computed
+// as a single dense cuBLAS GEMM  W = F * RDM''  (full-GPU tiled, reads F once),
+// then the light kernel below applies the gradient and scatters per nucleus.
+
+// Build a dense column-major (m x m) copy of the gathered symmetric local
+// density matrix with its diagonal doubled (the "(i==j ? 2 : 1)" factor).
+// rdm_local is the pitch2D gather buffer: element RDM[a][b] lives at
+// rdm_local[b*ld + a] (ld = rmm_width). The cuBLAS GEMM consumes rdmpp as the
+// (K x N) right operand with leading dimension m, so rdmpp[j + m*i] = RDM''[j][i].
+// RDM is symmetric, so the row/col convention is immaterial except on the
+// (doubled) diagonal.
+template <class scalar_type>
+__global__ void gpu_build_rdm_doubled_diag(
+    const scalar_type* __restrict__ rdm_local, scalar_type* __restrict__ rdmpp,
+    uint m, uint ld) {
+  uint i = blockIdx.x * blockDim.x + threadIdx.x;  // GEMM column (basis fn i)
+  uint j = blockIdx.y * blockDim.y + threadIdx.y;  // GEMM row    (basis fn j)
+  if (i >= m || j >= m) return;
+  scalar_type v = rdm_local[i * ld + j];  // RDM[j][i]
+  if (i == j) v *= (scalar_type)2.0;
+  rdmpp[j + m * i] = v;
+}
+
+// Fused gradient-apply + point-reduction + per-nucleus scatter, consuming the
+// pre-weighted W matrix (column-major, same layout as function_values: element
+// W[i][point] at wmat[ld*i + point], ld = COALESCED_DIMENSION(points)).
+//
+// One block per basis function i reduces over points with coalesced reads:
+//   G_i         = sum_point factor[point] * W[i][point] * grad_i[point]   (vec3)
+//   forces[nuc] = -sum_{i : nuc_i = nuc} G_i
+// then thread 0 atomic-accumulates -G_i into forces[nuc_i]. Launch with a
+// power-of-two block size (FORCE_BLOCK_SIZE).
+template <class scalar_type>
+__global__ void gpu_forces_fused_gemm(
+    const scalar_type* __restrict__ wmat,
+    const vec_type<scalar_type, 4>* __restrict__ gradient_values,
+    const scalar_type* __restrict__ factors, const uint* __restrict__ nuc,
+    vec_type<scalar_type, 4>* __restrict__ forces, uint points, uint m) {
+  const uint i = blockIdx.x;
+  if (i >= m) return;
+  const uint ld = COALESCED_DIMENSION(points);
+  const scalar_type* __restrict__ wrow = wmat + (size_t)ld * i;
+  const vec_type<scalar_type, 4>* __restrict__ grow =
+      gradient_values + (size_t)ld * i;
+
+  scalar_type sx = 0, sy = 0, sz = 0;
+  for (uint p = threadIdx.x; p < points; p += blockDim.x) {
+    scalar_type fw = factors[p] * wrow[p];
+    vec_type<scalar_type, 4> g = grow[p];
+    sx += fw * g.x;
+    sy += fw * g.y;
+    sz += fw * g.z;
+  }
+
+  __shared__ scalar_type rx[FORCE_BLOCK_SIZE];
+  __shared__ scalar_type ry[FORCE_BLOCK_SIZE];
+  __shared__ scalar_type rz[FORCE_BLOCK_SIZE];
+  rx[threadIdx.x] = sx;
+  ry[threadIdx.x] = sy;
+  rz[threadIdx.x] = sz;
+  __syncthreads();
+  for (uint s = blockDim.x >> 1; s > 0; s >>= 1) {
+    if (threadIdx.x < s) {
+      rx[threadIdx.x] += rx[threadIdx.x + s];
+      ry[threadIdx.x] += ry[threadIdx.x + s];
+      rz[threadIdx.x] += rz[threadIdx.x + s];
+    }
+    __syncthreads();
+  }
+
+  if (threadIdx.x == 0) {
+    uint nuci = nuc[i];
+    atomicAdd(&forces[nuci].x, -rx[0]);
+    atomicAdd(&forces[nuci].y, -ry[0]);
+    atomicAdd(&forces[nuci].z, -rz[0]);
+  }
+}
+
+//===================================================================================================================
 template <class scalar_type>
 __global__ void gpu_compute_density_derivs_open(
     cudaTextureObject_t rmm_input_gpu_tex,
