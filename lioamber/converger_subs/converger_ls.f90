@@ -131,6 +131,14 @@ subroutine rho_linear_calc(En, E1, E2, Ex, rho_new, rho_old, Hmat_vec, Fmat_vec,
    logical :: open_shell, exit_cycle
    LIODBLE, allocatable :: RMM_temp(:), E_lambda(:)
 
+   ! Endpoint-density reuse: caches the grid densities at lambda=0 and lambda=1
+   ! once per line search, so each lambda eval only blends + evaluates the XC
+   ! functional instead of recomputing the density. ls_reuse is false when the
+   ! g2g fast path is unavailable (GPU groups / libxc), falling back to recompute.
+   integer            :: ls_status
+   logical            :: ls_reuse
+   integer, external  :: g2g_ls_set_endpoints, g2g_ls_set_endpoints_open
+
    M  = size(rho_new,1)
    MM = size(rho_old,1)
    M2 = 2 * M
@@ -162,9 +170,20 @@ subroutine rho_linear_calc(En, E1, E2, Ex, rho_new, rho_old, Hmat_vec, Fmat_vec,
    rho_old = rho_lambda1
    if (open_shell) rhoa_old = rhoa_lambda1
    if (open_shell) rhob_old = rhob_lambda1
-   
+
+   ! Cache endpoint grid densities once. The lambda arrays are fixed for the
+   ! whole line search, so all subsequent give_me_energy calls reuse them.
+   if (open_shell) then
+      ls_status = g2g_ls_set_endpoints_open(rhoa_lambda0, rhob_lambda0, &
+                                            rhoa_lambda1, rhob_lambda1)
+   else
+      ls_status = g2g_ls_set_endpoints(rho_lambda0, rho_lambda1)
+   endif
+   ls_reuse = (ls_status == 1)
+
    call give_me_energy(Enew, En, E1, E2, Ex, rho_old, Hmat_vec, Fmat_vec,  &
-                       Fmat_vec2, Gmat_vec, Ginv_vec, open_shell, int_memo)
+                       Fmat_vec2, Gmat_vec, Ginv_vec, open_shell, int_memo, &
+                       1.0d0, ls_reuse)
    E_lambda(10) = Enew
    
    exit_cycle = .false.
@@ -187,7 +206,8 @@ subroutine rho_linear_calc(En, E1, E2, Ex, rho_new, rho_old, Hmat_vec, Fmat_vec,
                endif
                call give_me_energy(E_lambda(ilambda), En, E1, E2, Ex, rho_old, &
                                  Hmat_vec, Fmat_vec, Fmat_vec2, Gmat_vec,      &
-                                 Ginv_vec, open_shell, int_memo)
+                                 Ginv_vec, open_shell, int_memo, dlambda,      &
+                                 ls_reuse)
                write(*,'(4x,A7,I2,A10,F14.7)') "Step n°", ilambda, ", energy: ",&
                                                E_lambda(ilambda)
             enddo
@@ -236,7 +256,7 @@ subroutine rho_linear_calc(En, E1, E2, Ex, rho_new, rho_old, Hmat_vec, Fmat_vec,
 
    call give_me_energy(Elast, En, E1, E2, Ex, rho_old, Hmat_vec, &
                        Fmat_vec, Fmat_vec2, Gmat_vec, Ginv_vec,  &
-                       open_shell, int_memo)
+                       open_shell, int_memo, Blambda, ls_reuse)
       
    RMM_temp    = rho_old
    rho_old     = rho_lambda0
@@ -257,7 +277,8 @@ subroutine rho_linear_calc(En, E1, E2, Ex, rho_new, rho_old, Hmat_vec, Fmat_vec,
 end subroutine rho_linear_calc
 
 subroutine give_me_energy(E, En, E1, E2, Ex, Pmat_vec, Hmat_vec, Fmat_vec, &
-                          Fmat_vec2, Gmat_vec, Ginv_vec, open_shell, int_memo)
+                          Fmat_vec2, Gmat_vec, Ginv_vec, open_shell, int_memo, &
+                          ls_lambda, ls_reuse)
    !  return Energy components for a density matrix stored in Pmat_vec
    use faint_cpu, only: int3lu
    implicit none
@@ -266,11 +287,16 @@ subroutine give_me_energy(E, En, E1, E2, Ex, Pmat_vec, Hmat_vec, Fmat_vec, &
    LIODBLE, intent(out)   :: E, E1, E2, Ex
    LIODBLE, intent(inout) :: Pmat_vec(:), Hmat_vec(:), Fmat_vec(:), &
                                   Fmat_vec2(:), Gmat_vec(:), Ginv_vec(:)
+   ! ls_lambda: position along the rho(lambda)=(1-l)*P0+l*P1 segment for this
+   ! density. ls_reuse: when true, evaluate the XC energy by blending the cached
+   ! endpoint grid densities (g2g_ls_energy) instead of recomputing them.
+   LIODBLE, intent(in)    :: ls_lambda
+   logical     , intent(in)    :: ls_reuse
    integer :: kk
 
    E  = 0.0D0; E1 = 0.0D0
    E2 = 0.0D0; Ex = 0.0D0
-   
+
    do kk = 1, size(Pmat_vec,1)
       E1 = E1 + Pmat_vec(kk) * Hmat_vec(kk) !Computes 1e energy
    enddo
@@ -283,9 +309,14 @@ subroutine give_me_energy(E, En, E1, E2, Ex, Pmat_vec, Hmat_vec, Fmat_vec, &
                Hmat_vec, open_shell, int_memo, energy_only=.true.)
    call g2g_timer_sum_pause('LS - int3lu')
 
-   ! Computes XC integration / Fock elements.
+   ! Computes XC energy. With endpoint reuse the dominant grid-density
+   ! contraction is skipped (computed once per line search at the endpoints).
    call g2g_timer_sum_start('LS - XC g2g')
-   call g2g_solve_groups(1,Ex,0)
+   if (ls_reuse) then
+      call g2g_ls_energy(ls_lambda, Ex)
+   else
+      call g2g_solve_groups(1,Ex,0)
+   endif
    call g2g_timer_sum_pause('LS - XC g2g')
 
    ! Adds all energy components.

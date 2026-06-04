@@ -213,6 +213,19 @@ class PointGroupCPU : public PointGroup<scalar_type> {
   // Reused scratch for batched GGA density outputs (10 vectors per spin),
   // sized to the group's point count. Avoids per-iteration heap churn.
   std::vector<scalar_type> density_scratch_a, density_scratch_b;
+
+  // Rho linear-search endpoint reuse: cached grid densities (10 vectors each:
+  // pd + 9 gradient/hessian terms) at the two endpoint density matrices
+  // lambda=0 and lambda=1. Because the grid density is linear in the density
+  // matrix, every intermediate-lambda energy eval blends these instead of
+  // recomputing the O(npoints*m^2) contraction. _b buffers used for open shell.
+  std::vector<scalar_type> ls_d0a, ls_d1a, ls_d0b, ls_d1b;
+  // Compute the 10 density-output vectors for `rmm_input` into `out` (10*np).
+  void ls_compute_density(const HostMatrix<scalar_type>& rmm_input,
+                          std::vector<scalar_type>& out);
+  // Blend the cached endpoints at `lambda` and accumulate the XC energy for
+  // this group's points (closed or open shell). Returns the group energy.
+  double ls_energy_at_lambda(double lambda, bool open);
 };
 
 template<class scalar_type>
@@ -337,6 +350,15 @@ class Partition {
     void solve(Timers& timers, bool compute_rmm,bool lda,bool compute_forces, bool compute_energy,
                double* fort_energy_ptr, double* fort_forces_ptr, bool OPEN);
     void compute_functions(bool forces, bool gga);
+    // Rho linear-search endpoint reuse (CPU-only fast path). Returns 1 if the
+    // fast path is usable (all groups CPU, no libxc), 0 to signal the caller to
+    // fall back to per-lambda recompute. ls_set_endpoints caches the grid
+    // densities at the two endpoint density matrices; ls_energy(lambda) blends
+    // them and returns the total XC energy for that lambda.
+    int ls_set_endpoints(double* p0a, double* p1a, double* p0b, double* p1b,
+                         bool open);
+    double ls_energy(double lambda, bool open);
+    bool ls_open;  // spin mode of the currently cached LS endpoints
     void compute_Wmat_global(HostMatrix<double>& fort_Wmat);
     void rebalance(std::vector<double> &, std::vector<double> &);
 

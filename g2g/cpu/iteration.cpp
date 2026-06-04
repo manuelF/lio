@@ -570,6 +570,151 @@ void PointGroupCPU<scalar_type>::solve_opened(
 #endif
 }
 
+// ============================================================================
+// Rho linear-search endpoint reuse (see partition.h declarations).
+// The line search evaluates the XC energy at many lambda along the segment
+// rho(lambda) = (1-lambda)*P0 + lambda*P1. The grid density (and its gradients)
+// is linear in the density matrix, so we compute the per-point density vectors
+// once at each endpoint and blend them per lambda, evaluating only the (cheap,
+// non-linear) XC functional each time -- instead of recomputing the dominant
+// O(npoints*m^2) density contraction for every lambda.
+// ============================================================================
+
+template <class scalar_type>
+void PointGroupCPU<scalar_type>::ls_compute_density(
+    const HostMatrix<scalar_type>& rmm_input, std::vector<scalar_type>& out) {
+  const int np = (int)this->points.size();
+  const uint group_m = this->total_functions();
+  out.resize((size_t)10 * np);
+  scalar_type* const pd    = out.data();
+  scalar_type* const tdx   = pd    + np;
+  scalar_type* const tdy   = tdx   + np;
+  scalar_type* const tdz   = tdy   + np;
+  scalar_type* const td1x  = tdz   + np;
+  scalar_type* const td1y  = td1x  + np;
+  scalar_type* const td1z  = td1y  + np;
+  scalar_type* const td2x  = td1z  + np;
+  scalar_type* const td2y  = td2x  + np;
+  scalar_type* const td2z  = td2y  + np;
+  cpu_compute_density_gga_batch<scalar_type>(
+      function_values.asArray(), gX.asArray(), gY.asArray(), gZ.asArray(),
+      hPX.asArray(), hPY.asArray(), hPZ.asArray(),
+      hIX.asArray(), hIY.asArray(), hIZ.asArray(),
+      rmm_input.asArray(), group_m, rmm_input.stride, np, function_values.stride,
+      pd, tdx, tdy, tdz, td1x, td1y, td1z, td2x, td2y, td2z);
+}
+
+template <class scalar_type>
+double PointGroupCPU<scalar_type>::ls_energy_at_lambda(double lambda, bool open) {
+  const int np = (int)this->points.size();
+  // Blend the cached endpoint grid densities. The blend is done in double
+  // precision (then cast to scalar_type for the functional, matching the
+  // recompute path's functional precision): near SCF convergence the E(lambda)
+  // curve flattens to ~1e-6 variation, so a float-precision blend coefficient
+  // would inject noise of the same magnitude and break the line search at tight
+  // told. At lambda=0/1 the blend is exactly d0/d1 (1*x+0*y == x).
+  const double s0 = 1.0 - lambda;
+  const double s1 = lambda;
+  const scalar_type* const d0a = ls_d0a.data();
+  const scalar_type* const d1a = ls_d1a.data();
+  const scalar_type* const d0b = open ? ls_d0b.data() : 0;
+  const scalar_type* const d1b = open ? ls_d1b.data() : 0;
+  const int iexch = fortran_vars.iexch;
+  double localenergy = 0.0;
+
+#define LS_BLEND(buf0, buf1, k) \
+  (scalar_type)(s0 * (double)(buf0)[(size_t)(k) * np + p] + \
+                s1 * (double)(buf1)[(size_t)(k) * np + p])
+
+  if (open) {
+    for (int p = 0; p < np; ++p) {
+      const scalar_type pd_a = LS_BLEND(d0a, d1a, 0);
+      const vec_type3 dxyz_a(LS_BLEND(d0a, d1a, 1), LS_BLEND(d0a, d1a, 2), LS_BLEND(d0a, d1a, 3));
+      const vec_type3 dd1_a (LS_BLEND(d0a, d1a, 4), LS_BLEND(d0a, d1a, 5), LS_BLEND(d0a, d1a, 6));
+      const vec_type3 dd2_a (LS_BLEND(d0a, d1a, 7), LS_BLEND(d0a, d1a, 8), LS_BLEND(d0a, d1a, 9));
+      const scalar_type pd_b = LS_BLEND(d0b, d1b, 0);
+      const vec_type3 dxyz_b(LS_BLEND(d0b, d1b, 1), LS_BLEND(d0b, d1b, 2), LS_BLEND(d0b, d1b, 3));
+      const vec_type3 dd1_b (LS_BLEND(d0b, d1b, 4), LS_BLEND(d0b, d1b, 5), LS_BLEND(d0b, d1b, 6));
+      const vec_type3 dd2_b (LS_BLEND(d0b, d1b, 7), LS_BLEND(d0b, d1b, 8), LS_BLEND(d0b, d1b, 9));
+      scalar_type exc_corr = 0.0, corr1 = 0.0, corr2 = 0.0;
+      scalar_type exc = 0.0, corr = 0.0, y2a = 0.0, y2b = 0.0;
+      calc_ggaOS<scalar_type, 3>(pd_a, pd_b, dxyz_a, dxyz_b, dd1_a, dd1_b,
+                                 dd2_a, dd2_b, exc_corr, exc, corr, corr1,
+                                 corr2, y2a, y2b, 9, fortran_vars.fexc);
+      localenergy += ((pd_a + pd_b) * this->points[p].weight) * (exc + corr);
+    }
+  } else {
+    for (int p = 0; p < np; ++p) {
+      const scalar_type pd = LS_BLEND(d0a, d1a, 0);
+      const vec_type3 dxyz(LS_BLEND(d0a, d1a, 1), LS_BLEND(d0a, d1a, 2), LS_BLEND(d0a, d1a, 3));
+      const vec_type3 dd1 (LS_BLEND(d0a, d1a, 4), LS_BLEND(d0a, d1a, 5), LS_BLEND(d0a, d1a, 6));
+      const vec_type3 dd2 (LS_BLEND(d0a, d1a, 7), LS_BLEND(d0a, d1a, 8), LS_BLEND(d0a, d1a, 9));
+      scalar_type exc = 0.0, corr = 0.0, y2a = 0.0;
+      calc_ggaCS_in<scalar_type, 3>(pd, dxyz, dd1, dd2, exc, corr, y2a, iexch,
+                                    fortran_vars.fexc);
+      localenergy += (pd * this->points[p].weight) * (exc + corr);
+    }
+  }
+#undef LS_BLEND
+  return localenergy;
+}
+
+int Partition::ls_set_endpoints(double* p0a, double* p1a, double* p0b,
+                                double* p1b, bool open) {
+  ls_open = open;
+#if USE_LIBXC
+  (void)p0a; (void)p1a; (void)p0b; (void)p1b; (void)open;
+  return 0;  // libxc CPU functional path not wired into the reuse kernel
+#else
+  // Only the all-CPU partition is handled here. GPU groups (hybrid/GPU builds)
+  // fall back to the per-lambda recompute path in the caller.
+  if (G2G::gpu_threads > 0) return 0;
+
+  const uint m = fortran_vars.m;
+  FortranMatrix<double> P0a(p0a, m, m, m), P1a(p1a, m, m, m);
+  FortranMatrix<double> P0b, P1b;
+  if (open) {
+    P0b = FortranMatrix<double>(p0b, m, m, m);
+    P1b = FortranMatrix<double>(p1b, m, m, m);
+  }
+
+  std::vector<PointGroup<base_scalar_type>*>* lists[2] = {&cubes, &spheres};
+  for (int L = 0; L < 2; ++L) {
+    std::vector<PointGroup<base_scalar_type>*>& gl = *lists[L];
+#pragma omp parallel for schedule(guided, 8)
+    for (int gi = 0; gi < (int)gl.size(); ++gi) {
+      PointGroupCPU<base_scalar_type>* g =
+          static_cast<PointGroupCPU<base_scalar_type>*>(gl[gi]);
+      g->compute_functions(false, true);  // ensure cached (early-returns)
+      const uint gm = g->total_functions();
+      HostMatrix<base_scalar_type> rmm(gm, gm);
+      g->get_rmm_input(rmm, P0a); g->ls_compute_density(rmm, g->ls_d0a);
+      g->get_rmm_input(rmm, P1a); g->ls_compute_density(rmm, g->ls_d1a);
+      if (open) {
+        g->get_rmm_input(rmm, P0b); g->ls_compute_density(rmm, g->ls_d0b);
+        g->get_rmm_input(rmm, P1b); g->ls_compute_density(rmm, g->ls_d1b);
+      }
+    }
+  }
+  return 1;
+#endif
+}
+
+double Partition::ls_energy(double lambda, bool open) {
+  double energy = 0.0;
+  std::vector<PointGroup<base_scalar_type>*>* lists[2] = {&cubes, &spheres};
+  for (int L = 0; L < 2; ++L) {
+    std::vector<PointGroup<base_scalar_type>*>& gl = *lists[L];
+#pragma omp parallel for schedule(guided, 8) reduction(+ : energy)
+    for (int gi = 0; gi < (int)gl.size(); ++gi) {
+      PointGroupCPU<base_scalar_type>* g =
+          static_cast<PointGroupCPU<base_scalar_type>*>(gl[gi]);
+      energy += g->ls_energy_at_lambda(lambda, open);
+    }
+  }
+  return energy;
+}
+
 #if FULL_DOUBLE
 template class PointGroup<double>;
 template class PointGroupCPU<double>;
@@ -577,4 +722,23 @@ template class PointGroupCPU<double>;
 template class PointGroup<float>;
 template class PointGroupCPU<float>;
 #endif
+}  // namespace G2G
+
+// The active partition is the global ::partition defined in init.cpp (the
+// one g2g_solve_groups drives); G2G::partition in partition.cpp is a separate,
+// unused object. Reference the global one here.
+extern G2G::Partition partition;
+
+// Compute and cache the endpoint grid densities for the Rho line search.
+// Returns 1 if the CPU fast path is active, 0 if the caller must fall back.
+extern "C" int g2g_ls_set_endpoints_(double* rho0, double* rho1) {
+  return partition.ls_set_endpoints(rho0, rho1, 0, 0, false);
+}
+extern "C" int g2g_ls_set_endpoints_open_(double* rho0a, double* rho0b,
+                                          double* rho1a, double* rho1b) {
+  return partition.ls_set_endpoints(rho0a, rho1a, rho0b, rho1b, true);
+}
+// XC energy at the given lambda using the cached endpoint densities.
+extern "C" void g2g_ls_energy_(double* lambda, double* Ex) {
+  *Ex = partition.ls_energy(*lambda, partition.ls_open);
 }
