@@ -12,6 +12,7 @@
 //   cpu_compute_density_lda()    — LDA electron density for one point (iteration.cpp)
 
 #include <cmath>
+#include <vector>
 
 namespace G2G {
 
@@ -459,6 +460,158 @@ GGADensity<scalar_type> cpu_compute_density_gga(
         res.tdd2z  += gy * w3zc + gz * w3yc + hiz * w + ww2zc * Fi;
     }
     return res;
+}
+
+// ============================================================================
+// Batched GGA density + gradients for ALL points in a group at once.
+// ============================================================================
+//
+// Computes, for every integration point p, exactly the same quantities as
+// cpu_compute_density_gga() above (pd and the 9 gradient/hessian components),
+// but vectorized over the *points* dimension instead of doing one scalar
+// reduction per point.
+//
+// Why this is faster: the per-point kernel's inner loop is a float reduction
+// (`w += fv[j]*rmm`), which the compiler cannot auto-vectorize without
+// -ffast-math (reassociation is not value-safe). Here we transpose the input
+// arrays to [function x point] layout so the inner accumulation runs over the
+// independent point index — a pure axpy with no cross-iteration dependency,
+// which -O3 -march=native vectorizes (AVX2+FMA) with no reassociation.
+//
+// Why it is bit-exact: each individual point p accumulates its w_k vectors over
+// j in the same order (0..i) and its pd/grad outputs over i in the same order
+// (0..m) as the scalar kernel. Vectorization only runs distinct points in
+// distinct SIMD lanes; it never reorders a single point's summation.
+//
+// Inputs (point-major, element (p, j) = arr[p*src_stride + j]) match the
+// HostMatrix arrays produced by compute_functions(): fv, gradients gx/gy/gz,
+// hessian-diagonal hpx/hpy/hpz, hessian-offdiag hix/hiy/hiz.
+//   rmm[m*m]      : symmetric density submatrix (off-diagonals pre-doubled),
+//                   row-major rmm[i*rmm_stride + j]
+//   m             : number of basis functions in the group
+//   np            : number of integration points in the group
+// Outputs (each length np, caller-allocated): pd and the 9 gradient terms,
+// indexed by point.
+template <typename scalar_type>
+void cpu_compute_density_gga_batch(
+    const scalar_type* __restrict__ fv,
+    const scalar_type* __restrict__ gx,  const scalar_type* __restrict__ gy,  const scalar_type* __restrict__ gz,
+    const scalar_type* __restrict__ hpx, const scalar_type* __restrict__ hpy, const scalar_type* __restrict__ hpz,
+    const scalar_type* __restrict__ hix, const scalar_type* __restrict__ hiy, const scalar_type* __restrict__ hiz,
+    const scalar_type* __restrict__ rmm, int m, int rmm_stride, int np, int src_stride,
+    scalar_type* __restrict__ pd,
+    scalar_type* __restrict__ tdx,   scalar_type* __restrict__ tdy,   scalar_type* __restrict__ tdz,
+    scalar_type* __restrict__ tdd1x, scalar_type* __restrict__ tdd1y, scalar_type* __restrict__ tdd1z,
+    scalar_type* __restrict__ tdd2x, scalar_type* __restrict__ tdd2y, scalar_type* __restrict__ tdd2z) {
+
+  if (rmm_stride == 0) rmm_stride = m;
+
+  // Point-tiling: process B points at a time. Within a tile, rmm (the shared
+  // operand) is read once and stays L1/L2-resident across all i, while the
+  // tile's transposed function data (10 * m * B) is small enough to fit L1.
+  // This keeps the kernel compute-bound (as the scalar per-point version was)
+  // while exposing the points dimension to the vectorizer as an axpy.
+  constexpr int B = 8;  // one AVX-256 float vector (or 2 doubles); no remainder
+
+  static thread_local std::vector<scalar_type> tbuf;  // 10 * m * B transposed tile
+  const size_t tneed = (size_t)10 * m * B;
+  if (tbuf.size() < tneed) tbuf.resize(tneed);
+
+  scalar_type* const Tfv  = tbuf.data();
+  scalar_type* const Tgx  = Tfv  + (size_t)m * B;
+  scalar_type* const Tgy  = Tgx  + (size_t)m * B;
+  scalar_type* const Tgz  = Tgy  + (size_t)m * B;
+  scalar_type* const Thpx = Tgz  + (size_t)m * B;
+  scalar_type* const Thpy = Thpx + (size_t)m * B;
+  scalar_type* const Thpz = Thpy + (size_t)m * B;
+  scalar_type* const Thix = Thpz + (size_t)m * B;
+  scalar_type* const Thiy = Thix + (size_t)m * B;
+  scalar_type* const Thiz = Thiy + (size_t)m * B;
+  scalar_type* const Tk[10] = {Tfv, Tgx, Tgy, Tgz, Thpx, Thpy, Thpz, Thix, Thiy, Thiz};
+  const scalar_type* const src[10] = {fv, gx, gy, gz, hpx, hpy, hpz, hix, hiy, hiz};
+
+  for (int p0 = 0; p0 < np; p0 += B) {
+    const int bn = (np - p0 < B) ? (np - p0) : B;
+
+    // Transpose this tile: Tk[k][j*B + b] = src[k][(p0+b)*src_stride + j].
+    for (int k = 0; k < 10; ++k) {
+      scalar_type* __restrict__ Tkk = Tk[k];
+      const scalar_type* __restrict__ s = src[k];
+      for (int b = 0; b < bn; ++b) {
+        const scalar_type* __restrict__ srow = s + (size_t)(p0 + b) * src_stride;
+        for (int j = 0; j < m; ++j) Tkk[(size_t)j * B + b] = srow[j];
+      }
+      for (int b = bn; b < B; ++b)
+        for (int j = 0; j < m; ++j) Tkk[(size_t)j * B + b] = scalar_type(0);
+    }
+
+    scalar_type acc_pd[B], acc_tdx[B], acc_tdy[B], acc_tdz[B];
+    scalar_type acc_d1x[B], acc_d1y[B], acc_d1z[B];
+    scalar_type acc_d2x[B], acc_d2y[B], acc_d2z[B];
+    for (int b = 0; b < B; ++b) {
+      acc_pd[b] = acc_tdx[b] = acc_tdy[b] = acc_tdz[b] = scalar_type(0);
+      acc_d1x[b] = acc_d1y[b] = acc_d1z[b] = scalar_type(0);
+      acc_d2x[b] = acc_d2y[b] = acc_d2z[b] = scalar_type(0);
+    }
+
+    for (int i = 0; i < m; ++i) {
+      scalar_type Wfv[B], Wgx[B], Wgy[B], Wgz[B];
+      scalar_type Whpx[B], Whpy[B], Whpz[B], Whix[B], Whiy[B], Whiz[B];
+      for (int b = 0; b < B; ++b) {
+        Wfv[b] = Wgx[b] = Wgy[b] = Wgz[b] = scalar_type(0);
+        Whpx[b] = Whpy[b] = Whpz[b] = scalar_type(0);
+        Whix[b] = Whiy[b] = Whiz[b] = scalar_type(0);
+      }
+      const scalar_type* __restrict__ rmm_row = &rmm[(size_t)i * rmm_stride];
+      for (int j = 0; j <= i; ++j) {
+        const scalar_type rmj = rmm_row[j];
+        const size_t off = (size_t)j * B;
+        for (int b = 0; b < B; ++b) {
+          Wfv[b]  += Tfv[off + b]  * rmj;
+          Wgx[b]  += Tgx[off + b]  * rmj;
+          Wgy[b]  += Tgy[off + b]  * rmj;
+          Wgz[b]  += Tgz[off + b]  * rmj;
+          Whpx[b] += Thpx[off + b] * rmj;
+          Whpy[b] += Thpy[off + b] * rmj;
+          Whpz[b] += Thpz[off + b] * rmj;
+          Whix[b] += Thix[off + b] * rmj;
+          Whiy[b] += Thiy[off + b] * rmj;
+          Whiz[b] += Thiz[off + b] * rmj;
+        }
+      }
+      const size_t ioff = (size_t)i * B;
+      for (int b = 0; b < B; ++b) {
+        const scalar_type Fi  = Tfv[ioff + b];
+        const scalar_type igx = Tgx[ioff + b],  igy = Tgy[ioff + b],  igz = Tgz[ioff + b];
+        const scalar_type ihpx = Thpx[ioff + b], ihpy = Thpy[ioff + b], ihpz = Thpz[ioff + b];
+        const scalar_type ihix = Thix[ioff + b], ihiy = Thiy[ioff + b], ihiz = Thiz[ioff + b];
+        const scalar_type w = Wfv[b];
+        acc_pd[b]  += Fi * w;
+        acc_tdx[b] += igx * w + Wgx[b] * Fi;
+        acc_tdy[b] += igy * w + Wgy[b] * Fi;
+        acc_tdz[b] += igz * w + Wgz[b] * Fi;
+        acc_d1x[b] += igx * Wgx[b] * 2 + ihpx * w + Whpx[b] * Fi;
+        acc_d1y[b] += igy * Wgy[b] * 2 + ihpy * w + Whpy[b] * Fi;
+        acc_d1z[b] += igz * Wgz[b] * 2 + ihpz * w + Whpz[b] * Fi;
+        acc_d2x[b] += igx * Wgy[b] + igy * Wgx[b] + ihix * w + Whix[b] * Fi;
+        acc_d2y[b] += igx * Wgz[b] + igz * Wgx[b] + ihiy * w + Whiy[b] * Fi;
+        acc_d2z[b] += igy * Wgz[b] + igz * Wgy[b] + ihiz * w + Whiz[b] * Fi;
+      }
+    }
+
+    for (int b = 0; b < bn; ++b) {
+      pd[p0 + b]    = acc_pd[b];
+      tdx[p0 + b]   = acc_tdx[b];
+      tdy[p0 + b]   = acc_tdy[b];
+      tdz[p0 + b]   = acc_tdz[b];
+      tdd1x[p0 + b] = acc_d1x[b];
+      tdd1y[p0 + b] = acc_d1y[b];
+      tdd1z[p0 + b] = acc_d1z[b];
+      tdd2x[p0 + b] = acc_d2x[b];
+      tdd2y[p0 + b] = acc_d2y[b];
+      tdd2z[p0 + b] = acc_d2z[b];
+    }
+  }
 }
 
 // ============================================================================

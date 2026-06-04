@@ -40,9 +40,22 @@ namespace G2G {
 /* methods */
 //===========================================================================================
 extern "C" void g2g_init_(void) {
-  int max_threads = 1;
+  // Size g2g's CPU partition (cpu_threads) from the OpenMP thread budget.
+  // Previously this defaulted to 1 unless OMP_NUM_THREADS was set, leaving g2g
+  // single-threaded out of the box (and cpu_threads = max_threads - gpu_threads
+  // even went to 0 on hybrid builds) — a large CPU underutilization.
+  //
+  // When the caller sets OMP_NUM_THREADS we honor it (omp_get_max_threads()).
+  // Otherwise we default to the *physical* core count, not every logical CPU:
+  // the XC kernels are FP/cache-bound and SMT oversubscription measurably slows
+  // them (on a 8C/16T Zen3, all-16-threads is ~7% slower per SCF iteration than
+  // 8). detect_physical_cores() falls back to the logical count if it cannot
+  // read the topology, so this is never worse than the libgomp default.
+  int max_threads;
   if (getenv("OMP_NUM_THREADS")) {
     max_threads = omp_get_max_threads();
+  } else {
+    max_threads = detect_physical_cores();
   }
 
 #if GPU_KERNELS

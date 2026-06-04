@@ -14,7 +14,13 @@ namespace G2G {
 
 template <class scalar_type>
 void PointGroupCPU<scalar_type>::compute_functions(bool forces, bool gga) {
-#if !CPU_RECOMPUTE && GPU_KERNELS
+#if !CPU_RECOMPUTE
+  // Cache basis-function values across SCF iterations. Geometry is fixed during
+  // the SCF loop, so these are identical every iteration; only rmm_input (the
+  // density matrix) changes. Bit-exact vs. recomputing. The cache is invalidated
+  // per geometry: regenerate_partition() destroys and recreates the PointGroup
+  // objects (constructor sets inGlobal=false). Previously gated on GPU_KERNELS,
+  // so only hybrid builds cached their CPU groups; now CPU-only builds cache too.
   if (this->inGlobal) return;
   this->inGlobal = true;
   forces = gga = true;  // Vamos a cachear asi que guardemos todo y listo

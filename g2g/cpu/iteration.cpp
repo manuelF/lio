@@ -119,22 +119,39 @@ void PointGroupCPU<scalar_type>::solve_closed(
       }
     }
   } else {
+    // Batched density: compute pd and all gradient/hessian terms for every
+    // point at once, vectorized over the point index (see
+    // cpu_compute_density_gga_batch). Bit-exact with the per-point kernel.
+    this->density_scratch_a.resize((size_t)10 * npoints);
+    scalar_type* const pd_v    = this->density_scratch_a.data();
+    scalar_type* const tdx_v   = pd_v    + npoints;
+    scalar_type* const tdy_v   = tdx_v   + npoints;
+    scalar_type* const tdz_v   = tdy_v   + npoints;
+    scalar_type* const tdd1x_v = tdz_v   + npoints;
+    scalar_type* const tdd1y_v = tdd1x_v + npoints;
+    scalar_type* const tdd1z_v = tdd1y_v + npoints;
+    scalar_type* const tdd2x_v = tdd1z_v + npoints;
+    scalar_type* const tdd2y_v = tdd2x_v + npoints;
+    scalar_type* const tdd2z_v = tdd2y_v + npoints;
+
+    cpu_compute_density_gga_batch<scalar_type>(
+        function_values.asArray(), gX.asArray(), gY.asArray(), gZ.asArray(),
+        hPX.asArray(), hPY.asArray(), hPZ.asArray(),
+        hIX.asArray(), hIY.asArray(), hIZ.asArray(),
+        rmm_input.asArray(), group_m, rmm_input.stride, npoints,
+        function_values.stride,
+        pd_v, tdx_v, tdy_v, tdz_v, tdd1x_v, tdd1y_v, tdd1z_v,
+        tdd2x_v, tdd2y_v, tdd2z_v);
+
 #pragma omp parallel for num_threads(inner_threads) \
     reduction(+ : localenergy) schedule(static)
     for (int point = 0; point < npoints; point++) {
-      GGADensity<scalar_type> d = cpu_compute_density_gga(
-          function_values.row(point),
-          gX.row(point), gY.row(point), gZ.row(point),
-          hPX.row(point), hPY.row(point), hPZ.row(point),
-          hIX.row(point), hIY.row(point), hIZ.row(point),
-          rmm_input.asArray(), group_m, rmm_input.stride);
-
       /** energy / potential **/
       scalar_type exc = 0.0, corr = 0.0, y2a = 0.0;
-      const vec_type3 dxyz(d.tdx, d.tdy, d.tdz);
-      const vec_type3 dd1(d.tdd1x, d.tdd1y, d.tdd1z);
-      const vec_type3 dd2(d.tdd2x, d.tdd2y, d.tdd2z);
-      scalar_type pd = d.pd;
+      const vec_type3 dxyz(tdx_v[point], tdy_v[point], tdz_v[point]);
+      const vec_type3 dd1(tdd1x_v[point], tdd1y_v[point], tdd1z_v[point]);
+      const vec_type3 dd2(tdd2x_v[point], tdd2y_v[point], tdd2z_v[point]);
+      scalar_type pd = pd_v[point];
 
 #if USE_LIBXC
     /** Libxc CPU - version **/
@@ -256,8 +273,9 @@ void PointGroupCPU<scalar_type>::solve_closed(
 
   energy += localenergy;
 
-#if CPU_RECOMPUTE or !GPU_KERNELS
-  /* clear functions */
+#if CPU_RECOMPUTE
+  /* clear functions (only when caching is disabled; otherwise basis-function
+     values persist across SCF iterations — see compute_functions caching). */
   gX.deallocate();
   gY.deallocate();
   gZ.deallocate();
@@ -328,37 +346,52 @@ void PointGroupCPU<scalar_type>::solve_opened(
   /** density **/
   if (lda) {
   } else {
+    // Batched density for both spins (see cpu_compute_density_gga_batch).
+    this->density_scratch_a.resize((size_t)10 * npoints);
+    this->density_scratch_b.resize((size_t)10 * npoints);
+    scalar_type* const a_pd  = this->density_scratch_a.data();
+    scalar_type* const a_tx  = a_pd  + npoints; scalar_type* const a_ty = a_tx + npoints;
+    scalar_type* const a_tz  = a_ty  + npoints;
+    scalar_type* const a_d1x = a_tz  + npoints; scalar_type* const a_d1y = a_d1x + npoints;
+    scalar_type* const a_d1z = a_d1y + npoints;
+    scalar_type* const a_d2x = a_d1z + npoints; scalar_type* const a_d2y = a_d2x + npoints;
+    scalar_type* const a_d2z = a_d2y + npoints;
+    scalar_type* const b_pd  = this->density_scratch_b.data();
+    scalar_type* const b_tx  = b_pd  + npoints; scalar_type* const b_ty = b_tx + npoints;
+    scalar_type* const b_tz  = b_ty  + npoints;
+    scalar_type* const b_d1x = b_tz  + npoints; scalar_type* const b_d1y = b_d1x + npoints;
+    scalar_type* const b_d1z = b_d1y + npoints;
+    scalar_type* const b_d2x = b_d1z + npoints; scalar_type* const b_d2y = b_d2x + npoints;
+    scalar_type* const b_d2z = b_d2y + npoints;
+
+    cpu_compute_density_gga_batch<scalar_type>(
+        function_values.asArray(), gX.asArray(), gY.asArray(), gZ.asArray(),
+        hPX.asArray(), hPY.asArray(), hPZ.asArray(),
+        hIX.asArray(), hIY.asArray(), hIZ.asArray(),
+        rmm_input_a.asArray(), group_m, rmm_input_a.stride, npoints,
+        function_values.stride,
+        a_pd, a_tx, a_ty, a_tz, a_d1x, a_d1y, a_d1z, a_d2x, a_d2y, a_d2z);
+    cpu_compute_density_gga_batch<scalar_type>(
+        function_values.asArray(), gX.asArray(), gY.asArray(), gZ.asArray(),
+        hPX.asArray(), hPY.asArray(), hPZ.asArray(),
+        hIX.asArray(), hIY.asArray(), hIZ.asArray(),
+        rmm_input_b.asArray(), group_m, rmm_input_b.stride, npoints,
+        function_values.stride,
+        b_pd, b_tx, b_ty, b_tz, b_d1x, b_d1y, b_d1z, b_d2x, b_d2y, b_d2z);
+
 #pragma omp parallel for num_threads(inner_threads) \
     reduction(+ : localenergy) schedule(static)
     for (int point = 0; point < npoints; point++) {
-      const scalar_type* fv   = function_values.row(point);
-      const scalar_type* gxv  = gX.row(point);
-      const scalar_type* gyv  = gY.row(point);
-      const scalar_type* gzv  = gZ.row(point);
-      const scalar_type* hpxv = hPX.row(point);
-      const scalar_type* hpyv = hPY.row(point);
-      const scalar_type* hpzv = hPZ.row(point);
-      const scalar_type* hixv = hIX.row(point);
-      const scalar_type* hiyv = hIY.row(point);
-      const scalar_type* hizv = hIZ.row(point);
-
-      GGADensity<scalar_type> da = cpu_compute_density_gga(
-          fv, gxv, gyv, gzv, hpxv, hpyv, hpzv, hixv, hiyv, hizv,
-          rmm_input_a.asArray(), group_m, rmm_input_a.stride);
-      GGADensity<scalar_type> db = cpu_compute_density_gga(
-          fv, gxv, gyv, gzv, hpxv, hpyv, hpzv, hixv, hiyv, hizv,
-          rmm_input_b.asArray(), group_m, rmm_input_b.stride);
-
       /** energy / potential **/
       scalar_type exc_corr = 0.0, corr1 = 0.0, corr2 = 0.0;
       scalar_type exc = 0.0, corr = 0.0, y2a = 0.0, y2b = 0.0;
-      const vec_type3 dxyz_a(da.tdx, da.tdy, da.tdz),
-          dxyz_b(db.tdx, db.tdy, db.tdz);
-      const vec_type3 dd1_a(da.tdd1x, da.tdd1y, da.tdd1z),
-          dd1_b(db.tdd1x, db.tdd1y, db.tdd1z);
-      const vec_type3 dd2_a(da.tdd2x, da.tdd2y, da.tdd2z),
-          dd2_b(db.tdd2x, db.tdd2y, db.tdd2z);
-      scalar_type pd_a = da.pd, pd_b = db.pd;
+      const vec_type3 dxyz_a(a_tx[point], a_ty[point], a_tz[point]),
+          dxyz_b(b_tx[point], b_ty[point], b_tz[point]);
+      const vec_type3 dd1_a(a_d1x[point], a_d1y[point], a_d1z[point]),
+          dd1_b(b_d1x[point], b_d1y[point], b_d1z[point]);
+      const vec_type3 dd2_a(a_d2x[point], a_d2y[point], a_d2z[point]),
+          dd2_b(b_d2x[point], b_d2y[point], b_d2z[point]);
+      scalar_type pd_a = a_pd[point], pd_b = b_pd[point];
 
       calc_ggaOS<scalar_type, 3>(pd_a, pd_b, dxyz_a, dxyz_b, dd1_a, dd1_b,
                                  dd2_a, dd2_b, exc_corr, exc, corr, corr1,
@@ -521,8 +554,9 @@ void PointGroupCPU<scalar_type>::solve_opened(
 
   energy += localenergy;
 
-#if CPU_RECOMPUTE or !GPU_KERNELS
-  /* clear functions */
+#if CPU_RECOMPUTE
+  /* clear functions (only when caching is disabled; otherwise basis-function
+     values persist across SCF iterations — see compute_functions caching). */
   gX.deallocate();
   gY.deallocate();
   gZ.deallocate();

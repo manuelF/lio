@@ -210,6 +210,9 @@ class PointGroupCPU : public PointGroup<scalar_type> {
   G2G::HostMatrix<scalar_type> hIX, hIY, hIZ;
   G2G::HostMatrix<scalar_type> hPX, hPY, hPZ;
   G2G::HostMatrix<scalar_type> function_values_transposed;
+  // Reused scratch for batched GGA density outputs (10 vectors per spin),
+  // sized to the group's point count. Avoids per-iteration heap churn.
+  std::vector<scalar_type> density_scratch_a, density_scratch_b;
 };
 
 template<class scalar_type>
