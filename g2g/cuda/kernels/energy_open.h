@@ -94,9 +94,15 @@ __global__ void gpu_compute_density_opened(
 
     __syncthreads();
     if (bj + position < m) {
-      fj_sh[position] = function_values[(m)*point + (bj + position)];
-      if (!lda) {
-        fgj_sh[position] = gradient_values[(m)*point + (bj + position)];
+      if (lda) {
+        fj_sh[position] = function_values[(m)*point + (bj + position)];
+      } else {
+        // Pack fj into the (unused) w lane of the gradient tile: the GGA
+        // inner loop then needs only 3 LDS.128 per j instead of 3 + LDS.32.
+        vec_type<scalar_type, 4> fgj4 =
+            gradient_values[(m)*point + (bj + position)];
+        fgj4.w = function_values[(m)*point + (bj + position)];
+        fgj_sh[position] = fgj4;
         fh1j_sh[position] =
             hessian_values[(m) * 2 * point + (2 * (bj + position) + 0)];
         fh2j_sh[position] =
@@ -124,12 +130,14 @@ __global__ void gpu_compute_density_opened(
     if (j_max > DENSITY_BLOCK_SIZE) j_max = DENSITY_BLOCK_SIZE;
     if (valid_thread) {
       for (int j = 0; j < j_max; j++) {
-        fjreg = fj_sh[j];
-        if (!lda) {
+        if (lda) {
+          fjreg = fj_sh[j];
+        } else {
           // Full 4-wide struct copies so the compiler emits LDS.128.
           const vec_type<scalar_type, 4> fgj4 = fgj_sh[j];
           const vec_type<scalar_type, 4> fh1j4 = fh1j_sh[j];
           const vec_type<scalar_type, 4> fh2j4 = fh2j_sh[j];
+          fjreg = fgj4.w;
           fgjreg = vec_type<scalar_type, 3>(fgj4.x, fgj4.y, fgj4.z);
           fh1jreg = vec_type<scalar_type, 3>(fh1j4.x, fh1j4.y, fh1j4.z);
           fh2jreg = vec_type<scalar_type, 3>(fh2j4.x, fh2j4.y, fh2j4.z);
@@ -241,79 +249,106 @@ __global__ void gpu_compute_density_opened(
     }
   }
 
-  __syncthreads();
-  // Reusing per-block shared memory in order to perform per-block accumulation.
-  // Alpha density
-  if (valid_thread) {
-    fj_sh[position] = partial_density_a;
-    fgj_sh[position] = vec_type<scalar_type, 4>(dxyz_a.x, dxyz_a.y, dxyz_a.z,
-                                                scalar_type(0.0f));
-    fh1j_sh[position] = vec_type<scalar_type, 4>(dd1_a.x, dd1_a.y, dd1_a.z,
-                                                 scalar_type(0.0f));
-    fh2j_sh[position] = vec_type<scalar_type, 4>(dd2_a.x, dd2_a.y, dd2_a.z,
-                                                 scalar_type(0.0f));
+  // Block reduction, bit-exact replacement of the two sequential 6-step
+  // shared-memory trees (alpha then beta): identical addition pairs in
+  // identical order, but the two spins now reduce concurrently — warp 0
+  // folds alpha while warp 1 folds beta — with the five intra-warp steps on
+  // register shuffles (~16 __syncthreads -> 2). Each warp publishes the half
+  // the *other* warp needs through shared memory once: warp 1 stores its
+  // alpha partials at slots 32..63, warp 0 stores its beta partials at slots
+  // 0..31 (disjoint). partial_density rides in the w lane of the dxyz
+  // accumulator. Invalid threads contribute exact zeros, as before.
+  static_assert(DENSITY_BLOCK_SIZE == 64,
+                "reduction epilogue assumes 2 warps of 32 threads");
+  const bool warp0 = (position < WARP_SIZE);
+  vec_type<scalar_type, 4> rA, rB, rC;
+  if (warp0) {
+    rA = vec_type<scalar_type, 4>(dxyz_a.x, dxyz_a.y, dxyz_a.z,
+                                  partial_density_a);
+    rB = vec_type<scalar_type, 4>(dd1_a.x, dd1_a.y, dd1_a.z,
+                                  scalar_type(0.0f));
+    rC = vec_type<scalar_type, 4>(dd2_a.x, dd2_a.y, dd2_a.z,
+                                  scalar_type(0.0f));
   } else {
-    fj_sh[position] = scalar_type(0.0f);
-    fgj_sh[position] = vec_type<scalar_type, 4>(0.0f, 0.0f, 0.0f, 0.0f);
-    fh1j_sh[position] = vec_type<scalar_type, 4>(0.0f, 0.0f, 0.0f, 0.0f);
-    fh2j_sh[position] = vec_type<scalar_type, 4>(0.0f, 0.0f, 0.0f, 0.0f);
-  }
-  __syncthreads();
-
-  // DENSITY_BLOCK_SIZE (64) spans multiple warps, so this tree reduction
-  // needs a __syncthreads inside each iteration to be race-free — matches
-  // the closed-shell energy.h pattern. (Was missing on the open path.)
-  for (int j = 2; j <= DENSITY_BLOCK_SIZE; j = j * 2) {
-    int index = position + DENSITY_BLOCK_SIZE / j;
-    if (position < DENSITY_BLOCK_SIZE / j) {
-      fj_sh[position] += fj_sh[index];
-      fgj_sh[position] += fgj_sh[index];
-      fh1j_sh[position] += fh1j_sh[index];
-      fh2j_sh[position] += fh2j_sh[index];
-    }
-    __syncthreads();
-  }
-  if (threadIdx.x == 0) {
-    const int myPoint = blockIdx.y * points + blockIdx.x;
-    out_partial_density_a[myPoint] = fj_sh[position];
-    out_dxyz_a[myPoint] = vec_type<scalar_type, 4>(fgj_sh[position]);
-    out_dd1_a[myPoint] = vec_type<scalar_type, 4>(fh1j_sh[position]);
-    out_dd2_a[myPoint] = vec_type<scalar_type, 4>(fh2j_sh[position]);
+    rA = vec_type<scalar_type, 4>(dxyz_b.x, dxyz_b.y, dxyz_b.z,
+                                  partial_density_b);
+    rB = vec_type<scalar_type, 4>(dd1_b.x, dd1_b.y, dd1_b.z,
+                                  scalar_type(0.0f));
+    rC = vec_type<scalar_type, 4>(dd2_b.x, dd2_b.y, dd2_b.z,
+                                  scalar_type(0.0f));
   }
 
-  __syncthreads();
-  // Beta density.
-  if (valid_thread) {
-    fj_sh[position] = partial_density_b;
+  __syncthreads();  // tile arrays are being reused below
+  if (warp0) {
+    // Publish warp 0's beta partials for warp 1.
     fgj_sh[position] = vec_type<scalar_type, 4>(dxyz_b.x, dxyz_b.y, dxyz_b.z,
-                                                scalar_type(0.0f));
+                                                partial_density_b);
     fh1j_sh[position] = vec_type<scalar_type, 4>(dd1_b.x, dd1_b.y, dd1_b.z,
                                                  scalar_type(0.0f));
     fh2j_sh[position] = vec_type<scalar_type, 4>(dd2_b.x, dd2_b.y, dd2_b.z,
                                                  scalar_type(0.0f));
   } else {
-    fj_sh[position] = scalar_type(0.0f);
-    fgj_sh[position] = vec_type<scalar_type, 4>(0.0f, 0.0f, 0.0f, 0.0f);
-    fh1j_sh[position] = vec_type<scalar_type, 4>(0.0f, 0.0f, 0.0f, 0.0f);
-    fh2j_sh[position] = vec_type<scalar_type, 4>(0.0f, 0.0f, 0.0f, 0.0f);
+    // Publish warp 1's alpha partials for warp 0.
+    fgj_sh[position] = vec_type<scalar_type, 4>(dxyz_a.x, dxyz_a.y, dxyz_a.z,
+                                                partial_density_a);
+    fh1j_sh[position] = vec_type<scalar_type, 4>(dd1_a.x, dd1_a.y, dd1_a.z,
+                                                 scalar_type(0.0f));
+    fh2j_sh[position] = vec_type<scalar_type, 4>(dd2_a.x, dd2_a.y, dd2_a.z,
+                                                 scalar_type(0.0f));
   }
   __syncthreads();
 
-  for (int j = 2; j <= DENSITY_BLOCK_SIZE; j = j * 2) {
-    int index = position + DENSITY_BLOCK_SIZE / j;
-    if (position < DENSITY_BLOCK_SIZE / j) {
-      fj_sh[position] += fj_sh[index];
-      fgj_sh[position] += fgj_sh[index];
-      fh1j_sh[position] += fh1j_sh[index];
-      fh2j_sh[position] += fh2j_sh[index];
+  // Cross-warp step: pairs (p, p+32) with the warp-0 operand on the left,
+  // exactly like the old trees' first iteration (for both spins).
+  {
+    const int other = warp0 ? position + WARP_SIZE : position - WARP_SIZE;
+    const vec_type<scalar_type, 4> oA = fgj_sh[other];
+    const vec_type<scalar_type, 4> oB = fh1j_sh[other];
+    const vec_type<scalar_type, 4> oC = fh2j_sh[other];
+    if (warp0) {
+      rA.x += oA.x; rA.y += oA.y; rA.z += oA.z; rA.w += oA.w;
+      rB.x += oB.x; rB.y += oB.y; rB.z += oB.z;
+      rC.x += oC.x; rC.y += oC.y; rC.z += oC.z;
+    } else {
+      // Warp 1 folds beta: left operand is warp 0's published value.
+      rA.x = oA.x + rA.x; rA.y = oA.y + rA.y; rA.z = oA.z + rA.z;
+      rA.w = oA.w + rA.w;
+      rB.x = oB.x + rB.x; rB.y = oB.y + rB.y; rB.z = oB.z + rB.z;
+      rC.x = oC.x + rC.x; rC.y = oC.y + rC.y; rC.z = oC.z + rC.z;
     }
-    __syncthreads();
   }
-  if (threadIdx.x == 0) {
+
+#pragma unroll
+  for (int delta = WARP_SIZE / 2; delta >= 1; delta >>= 1) {
+    rA.x += __shfl_down_sync(0xffffffffu, rA.x, delta);
+    rA.y += __shfl_down_sync(0xffffffffu, rA.y, delta);
+    rA.z += __shfl_down_sync(0xffffffffu, rA.z, delta);
+    rA.w += __shfl_down_sync(0xffffffffu, rA.w, delta);
+    rB.x += __shfl_down_sync(0xffffffffu, rB.x, delta);
+    rB.y += __shfl_down_sync(0xffffffffu, rB.y, delta);
+    rB.z += __shfl_down_sync(0xffffffffu, rB.z, delta);
+    rC.x += __shfl_down_sync(0xffffffffu, rC.x, delta);
+    rC.y += __shfl_down_sync(0xffffffffu, rC.y, delta);
+    rC.z += __shfl_down_sync(0xffffffffu, rC.z, delta);
+  }
+
+  if (position == 0) {
     const int myPoint = blockIdx.y * points + blockIdx.x;
-    out_partial_density_b[myPoint] = fj_sh[position];
-    out_dxyz_b[myPoint] = vec_type<scalar_type, 4>(fgj_sh[position]);
-    out_dd1_b[myPoint] = vec_type<scalar_type, 4>(fh1j_sh[position]);
-    out_dd2_b[myPoint] = vec_type<scalar_type, 4>(fh2j_sh[position]);
+    out_partial_density_a[myPoint] = rA.w;
+    out_dxyz_a[myPoint] =
+        vec_type<scalar_type, 4>(rA.x, rA.y, rA.z, scalar_type(0.0f));
+    out_dd1_a[myPoint] =
+        vec_type<scalar_type, 4>(rB.x, rB.y, rB.z, scalar_type(0.0f));
+    out_dd2_a[myPoint] =
+        vec_type<scalar_type, 4>(rC.x, rC.y, rC.z, scalar_type(0.0f));
+  } else if (position == WARP_SIZE) {
+    const int myPoint = blockIdx.y * points + blockIdx.x;
+    out_partial_density_b[myPoint] = rA.w;
+    out_dxyz_b[myPoint] =
+        vec_type<scalar_type, 4>(rA.x, rA.y, rA.z, scalar_type(0.0f));
+    out_dd1_b[myPoint] =
+        vec_type<scalar_type, 4>(rB.x, rB.y, rB.z, scalar_type(0.0f));
+    out_dd2_b[myPoint] =
+        vec_type<scalar_type, 4>(rC.x, rC.y, rC.z, scalar_type(0.0f));
   }
 }

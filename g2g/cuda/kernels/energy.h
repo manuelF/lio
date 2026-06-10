@@ -62,9 +62,15 @@ __launch_bounds__(DENSITY_BLOCK_SIZE, 16) __global__ void gpu_compute_density(
   for (int bj = 0; bj <= min_i; bj += DENSITY_BLOCK_SIZE) {
     __syncthreads();
     if (bj + position < m) {
-      fj_sh[position] = function_values[(m)*point + (bj + position)];
-      if (!lda) {
-        fgj_sh[position] = gradient_values[(m)*point + (bj + position)];
+      if (lda) {
+        fj_sh[position] = function_values[(m)*point + (bj + position)];
+      } else {
+        // Pack fj into the (unused) w lane of the gradient tile: the GGA
+        // inner loop then needs only 3 LDS.128 per j instead of 3 + LDS.32.
+        vec_type<scalar_type, 4> fgj4 =
+            gradient_values[(m)*point + (bj + position)];
+        fgj4.w = function_values[(m)*point + (bj + position)];
+        fgj_sh[position] = fgj4;
 
         fh1j_sh[position] =
             hessian_values[(m) * 2 * point + (2 * (bj + position) + 0)];
@@ -84,13 +90,14 @@ __launch_bounds__(DENSITY_BLOCK_SIZE, 16) __global__ void gpu_compute_density(
     if (j_max > DENSITY_BLOCK_SIZE) j_max = DENSITY_BLOCK_SIZE;
     if (valid_thread) {
       for (int j = 0; j < j_max; j++) {
-        fjreg = fj_sh[j];
-
-        if (!lda) {
+        if (lda) {
+          fjreg = fj_sh[j];
+        } else {
           // Full 4-wide struct copies so the compiler emits LDS.128.
           const vec_type<scalar_type, 4> fgj4 = fgj_sh[j];
           const vec_type<scalar_type, 4> fh1j4 = fh1j_sh[j];
           const vec_type<scalar_type, 4> fh2j4 = fh2j_sh[j];
+          fjreg = fgj4.w;
           fgjreg = vec_type<scalar_type, 3>(fgj4.x, fgj4.y, fgj4.z);
           fh1jreg = vec_type<scalar_type, 3>(fh1j4.x, fh1j4.y, fh1j4.z);
           fh2jreg = vec_type<scalar_type, 3>(fh2j4.x, fh2j4.y, fh2j4.z);
@@ -180,37 +187,58 @@ __launch_bounds__(DENSITY_BLOCK_SIZE, 16) __global__ void gpu_compute_density(
     }
   }
 
-  __syncthreads();
-  // Estamos reutilizando la memoria shared por block para hacer el acumulado
-  // por block.
-  // No hace falta poner en cero porque si no es valid_thread, ya estan en cero
-  fj_sh[position] = partial_density;
-  fgj_sh[position] =
-      vec_type<scalar_type, 4>(dxyz.x, dxyz.y, dxyz.z, scalar_type(0.0f));
-  fh1j_sh[position] =
-      vec_type<scalar_type, 4>(dd1.x, dd1.y, dd1.z, scalar_type(0.0f));
-  fh2j_sh[position] =
-      vec_type<scalar_type, 4>(dd2.x, dd2.y, dd2.z, scalar_type(0.0f));
+  // Block reduction, bit-exact replacement of the old 6-step shared-memory
+  // tree: identical addition pairs in identical order, but warp 1 publishes
+  // its partials through shared memory once and the five intra-warp-0 steps
+  // run on register shuffles (8 __syncthreads -> 2, no shared round-trips).
+  // partial_density rides in the w lane of the dxyz accumulator.
+  // Invalid threads contribute exact zeros, as before.
+  static_assert(DENSITY_BLOCK_SIZE == 64,
+                "reduction epilogue assumes 2 warps of 32 threads");
+  vec_type<scalar_type, 4> rA(dxyz.x, dxyz.y, dxyz.z, partial_density);
+  vec_type<scalar_type, 4> rB(dd1.x, dd1.y, dd1.z, scalar_type(0.0f));
+  vec_type<scalar_type, 4> rC(dd2.x, dd2.y, dd2.z, scalar_type(0.0f));
 
-  __syncthreads();
-
-  for (int j = 2; j <= DENSITY_BLOCK_SIZE; j = j * 2) {
-    int index = position + DENSITY_BLOCK_SIZE / j;
-    if (position < DENSITY_BLOCK_SIZE / j) {
-      fj_sh[position]   += fj_sh[index];
-      fgj_sh[position]  += fgj_sh[index];
-      fh1j_sh[position] += fh1j_sh[index];
-      fh2j_sh[position] += fh2j_sh[index];
-    }
-    __syncthreads();
+  __syncthreads();  // tile arrays are being reused below
+  if (position >= WARP_SIZE) {
+    fgj_sh[position] = rA;
+    fh1j_sh[position] = rB;
+    fh2j_sh[position] = rC;
   }
+  __syncthreads();
+  if (position < WARP_SIZE) {
+    // Cross-warp step: pairs (p, p+32), warp-0 operand on the left, exactly
+    // like the old tree's first iteration.
+    const vec_type<scalar_type, 4> oA = fgj_sh[position + WARP_SIZE];
+    const vec_type<scalar_type, 4> oB = fh1j_sh[position + WARP_SIZE];
+    const vec_type<scalar_type, 4> oC = fh2j_sh[position + WARP_SIZE];
+    rA.x += oA.x; rA.y += oA.y; rA.z += oA.z; rA.w += oA.w;
+    rB.x += oB.x; rB.y += oB.y; rB.z += oB.z;
+    rC.x += oC.x; rC.y += oC.y; rC.z += oC.z;
 
-  if (threadIdx.x == 0) {
-    const int myPoint = blockIdx.y * points + blockIdx.x;
-    out_partial_density[myPoint] = fj_sh[position];
-    // printf("%.4e ",out_partial_density);
-    out_dxyz[myPoint] = vec_type<scalar_type, 4>(fgj_sh[position]);
-    out_dd1[myPoint] = vec_type<scalar_type, 4>(fh1j_sh[position]);
-    out_dd2[myPoint] = vec_type<scalar_type, 4>(fh2j_sh[position]);
+#pragma unroll
+    for (int delta = WARP_SIZE / 2; delta >= 1; delta >>= 1) {
+      rA.x += __shfl_down_sync(0xffffffffu, rA.x, delta);
+      rA.y += __shfl_down_sync(0xffffffffu, rA.y, delta);
+      rA.z += __shfl_down_sync(0xffffffffu, rA.z, delta);
+      rA.w += __shfl_down_sync(0xffffffffu, rA.w, delta);
+      rB.x += __shfl_down_sync(0xffffffffu, rB.x, delta);
+      rB.y += __shfl_down_sync(0xffffffffu, rB.y, delta);
+      rB.z += __shfl_down_sync(0xffffffffu, rB.z, delta);
+      rC.x += __shfl_down_sync(0xffffffffu, rC.x, delta);
+      rC.y += __shfl_down_sync(0xffffffffu, rC.y, delta);
+      rC.z += __shfl_down_sync(0xffffffffu, rC.z, delta);
+    }
+
+    if (position == 0) {
+      const int myPoint = blockIdx.y * points + blockIdx.x;
+      out_partial_density[myPoint] = rA.w;
+      out_dxyz[myPoint] =
+          vec_type<scalar_type, 4>(rA.x, rA.y, rA.z, scalar_type(0.0f));
+      out_dd1[myPoint] =
+          vec_type<scalar_type, 4>(rB.x, rB.y, rB.z, scalar_type(0.0f));
+      out_dd2[myPoint] =
+          vec_type<scalar_type, 4>(rC.x, rC.y, rC.z, scalar_type(0.0f));
+    }
   }
 }
