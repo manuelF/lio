@@ -46,10 +46,12 @@ __launch_bounds__(DENSITY_BLOCK_SIZE, 16) __global__ void gpu_compute_density(
 
   int position = threadIdx.x;
 
+  // 4-wide shared tiles: the inner loop is LSU-bound (~89% pipe utilization),
+  // so each j-iteration must load these with LDS.128 instead of scalar loads.
   __shared__ scalar_type fj_sh[DENSITY_BLOCK_SIZE];
-  __shared__ vec_type<scalar_type, 3> fgj_sh[DENSITY_BLOCK_SIZE];
-  __shared__ vec_type<scalar_type, 3> fh1j_sh[DENSITY_BLOCK_SIZE];
-  __shared__ vec_type<scalar_type, 3> fh2j_sh[DENSITY_BLOCK_SIZE];
+  __shared__ vec_type<scalar_type, 4> fgj_sh[DENSITY_BLOCK_SIZE];
+  __shared__ vec_type<scalar_type, 4> fh1j_sh[DENSITY_BLOCK_SIZE];
+  __shared__ vec_type<scalar_type, 4> fh2j_sh[DENSITY_BLOCK_SIZE];
 
   // Si nos vamos a pasar del bloque con el segundo puntero, hacemos que haga la
   // misma cuenta
@@ -62,13 +64,12 @@ __launch_bounds__(DENSITY_BLOCK_SIZE, 16) __global__ void gpu_compute_density(
     if (bj + position < m) {
       fj_sh[position] = function_values[(m)*point + (bj + position)];
       if (!lda) {
-        fgj_sh[position] = vec_type<scalar_type, 3>(
-            gradient_values[(m)*point + (bj + position)]);
+        fgj_sh[position] = gradient_values[(m)*point + (bj + position)];
 
-        fh1j_sh[position] = vec_type<scalar_type, 3>(
-            hessian_values[(m) * 2 * point + (2 * (bj + position) + 0)]);
-        fh2j_sh[position] = vec_type<scalar_type, 3>(
-            hessian_values[(m) * 2 * point + (2 * (bj + position) + 1)]);
+        fh1j_sh[position] =
+            hessian_values[(m) * 2 * point + (2 * (bj + position) + 0)];
+        fh2j_sh[position] =
+            hessian_values[(m) * 2 * point + (2 * (bj + position) + 1)];
       }
     }
 
@@ -86,9 +87,13 @@ __launch_bounds__(DENSITY_BLOCK_SIZE, 16) __global__ void gpu_compute_density(
         fjreg = fj_sh[j];
 
         if (!lda) {
-          fgjreg = fgj_sh[j];
-          fh1jreg = fh1j_sh[j];
-          fh2jreg = fh2j_sh[j];
+          // Full 4-wide struct copies so the compiler emits LDS.128.
+          const vec_type<scalar_type, 4> fgj4 = fgj_sh[j];
+          const vec_type<scalar_type, 4> fh1j4 = fh1j_sh[j];
+          const vec_type<scalar_type, 4> fh2j4 = fh2j_sh[j];
+          fgjreg = vec_type<scalar_type, 3>(fgj4.x, fgj4.y, fgj4.z);
+          fh1jreg = vec_type<scalar_type, 3>(fh1j4.x, fh1j4.y, fh1j4.z);
+          fh2jreg = vec_type<scalar_type, 3>(fh2j4.x, fh2j4.y, fh2j4.z);
         }
         // fetch es una macro para tex2D
 
@@ -180,9 +185,12 @@ __launch_bounds__(DENSITY_BLOCK_SIZE, 16) __global__ void gpu_compute_density(
   // por block.
   // No hace falta poner en cero porque si no es valid_thread, ya estan en cero
   fj_sh[position] = partial_density;
-  fgj_sh[position] = dxyz;
-  fh1j_sh[position] = dd1;
-  fh2j_sh[position] = dd2;
+  fgj_sh[position] =
+      vec_type<scalar_type, 4>(dxyz.x, dxyz.y, dxyz.z, scalar_type(0.0f));
+  fh1j_sh[position] =
+      vec_type<scalar_type, 4>(dd1.x, dd1.y, dd1.z, scalar_type(0.0f));
+  fh2j_sh[position] =
+      vec_type<scalar_type, 4>(dd2.x, dd2.y, dd2.z, scalar_type(0.0f));
 
   __syncthreads();
 

@@ -76,10 +76,12 @@ __global__ void gpu_compute_density_opened(
 
   int position = threadIdx.x;
 
+  // 4-wide shared tiles: the inner loop is LSU-bound, so each j-iteration
+  // must load these with LDS.128 instead of scalar loads (see energy.h).
   __shared__ scalar_type fj_sh[DENSITY_BLOCK_SIZE];
-  __shared__ vec_type<scalar_type, 3> fgj_sh[DENSITY_BLOCK_SIZE];
-  __shared__ vec_type<scalar_type, 3> fh1j_sh[DENSITY_BLOCK_SIZE];
-  __shared__ vec_type<scalar_type, 3> fh2j_sh[DENSITY_BLOCK_SIZE];
+  __shared__ vec_type<scalar_type, 4> fgj_sh[DENSITY_BLOCK_SIZE];
+  __shared__ vec_type<scalar_type, 4> fh1j_sh[DENSITY_BLOCK_SIZE];
+  __shared__ vec_type<scalar_type, 4> fh2j_sh[DENSITY_BLOCK_SIZE];
 
   // Si nos vamos a pasar del bloque con el segundo puntero, hacemos que haga la
   // misma cuenta
@@ -94,12 +96,11 @@ __global__ void gpu_compute_density_opened(
     if (bj + position < m) {
       fj_sh[position] = function_values[(m)*point + (bj + position)];
       if (!lda) {
-        fgj_sh[position] = vec_type<scalar_type, 3>(
-            gradient_values[(m)*point + (bj + position)]);
-        fh1j_sh[position] = vec_type<scalar_type, 3>(
-            hessian_values[(m) * 2 * point + (2 * (bj + position) + 0)]);
-        fh2j_sh[position] = vec_type<scalar_type, 3>(
-            hessian_values[(m) * 2 * point + (2 * (bj + position) + 1)]);
+        fgj_sh[position] = gradient_values[(m)*point + (bj + position)];
+        fh1j_sh[position] =
+            hessian_values[(m) * 2 * point + (2 * (bj + position) + 0)];
+        fh2j_sh[position] =
+            hessian_values[(m) * 2 * point + (2 * (bj + position) + 1)];
       }
     }
 
@@ -125,9 +126,13 @@ __global__ void gpu_compute_density_opened(
       for (int j = 0; j < j_max; j++) {
         fjreg = fj_sh[j];
         if (!lda) {
-          fgjreg = fgj_sh[j];
-          fh1jreg = fh1j_sh[j];
-          fh2jreg = fh2j_sh[j];
+          // Full 4-wide struct copies so the compiler emits LDS.128.
+          const vec_type<scalar_type, 4> fgj4 = fgj_sh[j];
+          const vec_type<scalar_type, 4> fh1j4 = fh1j_sh[j];
+          const vec_type<scalar_type, 4> fh2j4 = fh2j_sh[j];
+          fgjreg = vec_type<scalar_type, 3>(fgj4.x, fgj4.y, fgj4.z);
+          fh1jreg = vec_type<scalar_type, 3>(fh1j4.x, fh1j4.y, fh1j4.z);
+          fh2jreg = vec_type<scalar_type, 3>(fh2j4.x, fh2j4.y, fh2j4.z);
         }
 
         if ((bj + j) <= i) {
@@ -241,14 +246,17 @@ __global__ void gpu_compute_density_opened(
   // Alpha density
   if (valid_thread) {
     fj_sh[position] = partial_density_a;
-    fgj_sh[position] = dxyz_a;
-    fh1j_sh[position] = dd1_a;
-    fh2j_sh[position] = dd2_a;
+    fgj_sh[position] = vec_type<scalar_type, 4>(dxyz_a.x, dxyz_a.y, dxyz_a.z,
+                                                scalar_type(0.0f));
+    fh1j_sh[position] = vec_type<scalar_type, 4>(dd1_a.x, dd1_a.y, dd1_a.z,
+                                                 scalar_type(0.0f));
+    fh2j_sh[position] = vec_type<scalar_type, 4>(dd2_a.x, dd2_a.y, dd2_a.z,
+                                                 scalar_type(0.0f));
   } else {
     fj_sh[position] = scalar_type(0.0f);
-    fgj_sh[position] = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
-    fh1j_sh[position] = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
-    fh2j_sh[position] = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
+    fgj_sh[position] = vec_type<scalar_type, 4>(0.0f, 0.0f, 0.0f, 0.0f);
+    fh1j_sh[position] = vec_type<scalar_type, 4>(0.0f, 0.0f, 0.0f, 0.0f);
+    fh2j_sh[position] = vec_type<scalar_type, 4>(0.0f, 0.0f, 0.0f, 0.0f);
   }
   __syncthreads();
 
@@ -277,14 +285,17 @@ __global__ void gpu_compute_density_opened(
   // Beta density.
   if (valid_thread) {
     fj_sh[position] = partial_density_b;
-    fgj_sh[position] = dxyz_b;
-    fh1j_sh[position] = dd1_b;
-    fh2j_sh[position] = dd2_b;
+    fgj_sh[position] = vec_type<scalar_type, 4>(dxyz_b.x, dxyz_b.y, dxyz_b.z,
+                                                scalar_type(0.0f));
+    fh1j_sh[position] = vec_type<scalar_type, 4>(dd1_b.x, dd1_b.y, dd1_b.z,
+                                                 scalar_type(0.0f));
+    fh2j_sh[position] = vec_type<scalar_type, 4>(dd2_b.x, dd2_b.y, dd2_b.z,
+                                                 scalar_type(0.0f));
   } else {
     fj_sh[position] = scalar_type(0.0f);
-    fgj_sh[position] = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
-    fh1j_sh[position] = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
-    fh2j_sh[position] = vec_type<scalar_type, 3>(0.0f, 0.0f, 0.0f);
+    fgj_sh[position] = vec_type<scalar_type, 4>(0.0f, 0.0f, 0.0f, 0.0f);
+    fh1j_sh[position] = vec_type<scalar_type, 4>(0.0f, 0.0f, 0.0f, 0.0f);
+    fh2j_sh[position] = vec_type<scalar_type, 4>(0.0f, 0.0f, 0.0f, 0.0f);
   }
   __syncthreads();
 
