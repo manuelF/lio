@@ -55,7 +55,8 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
                             write_final_convergence, write_ls_convergence, &
                             movieprint
    use fileio_data  , only: verbose, movie_nfreq
-   use basis_data   , only: kkinds, kkind, cools, cool, Nuc, nshell, M, MM, c_raw
+   use basis_data   , only: kkinds, kkind, cools, cool, Nuc, nshell, M, MM, &
+                            c_raw, Md, kknumd, kknums
    use basis_subs, only: neighbour_list_2e
    use excited_data,  only: libint_recalc
    use excitedsubs ,  only: ExcProp
@@ -388,6 +389,11 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
          call int3mem(r, d, natom, ntatom)
          call g2g_timer_stop('int3mem')
          call g2g_timer_sum_stop('Coulomb precalc')
+!        Kick off the background GPU upload of cool/cools for the int3lu
+!        Coulomb-fit offload while the GPU is still quiet (pinning/alloc
+!        mid-iteration stalls concurrent XC kernels through the driver
+!        lock). See the notes in subm_int3lu.f90.
+         call int3lu_gpu_prefetch(cool, cools, Md, kknumd, kknums)
       endif
 !
 !##########################################################!
@@ -1053,6 +1059,9 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
 ! TODO: MEMO should be handled differently...
 
       if (MEMO) then
+        ! Release the GPU-resident copy (and host pinning) of cool/cools
+        ! before freeing them (see g2g/cuda/coulomb_fit.cu).
+        call int3lu_gpu_invalidate()
         deallocate(kkind,kkinds)
         deallocate(cool,cools)
       endif

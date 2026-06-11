@@ -5,6 +5,7 @@
   global:
     g2g*;
     aint_*;
+    int3lu_gpu_*;
   local:
     *;
 };

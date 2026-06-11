@@ -49,6 +49,7 @@ subroutine RMMcalc4_FockMao( DensMao, FockMao, DipMom, Energy )
 !------------------------------------------------------------------------------!
    call g2g_timer_start('RMMcalc4')
    call g2g_timer_start('RMMcalc4-start')
+   call int3lu_gpu_invalidate()
    if (allocated(kkind))  deallocate(kkind)
    if (allocated(kkinds)) deallocate(kkinds)
    if (allocated(cool))   deallocate(cool)

@@ -399,6 +399,10 @@ subroutine int3mem(r, d, natom, ntatom)
    enddo
    enddo
 
+   ! cool/cools are about to be rebuilt: drop the GPU-resident copy held by
+   ! the int3lu Coulomb-fit offload, which may have these arrays pinned
+   ! (see g2g/cuda/coulomb_fit.cu).
+   call int3lu_gpu_invalidate()
    if (allocated(cool))   deallocate(cool)
    if (allocated(kkind))  deallocate(kkind)
    if (allocated(cools))  deallocate(cools)

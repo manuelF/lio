@@ -27,6 +27,7 @@ subroutine RMMcalc2_FockMao( FockMao, Energy )
    call g2g_timer_start('RMMcalc2-init')
    call rmmput_fock(FockMao)
 
+   call int3lu_gpu_invalidate()
    if (allocated(kkind))  deallocate(kkind)
    if (allocated(kkinds)) deallocate(kkinds)
    if (allocated(cool))   deallocate(cool)

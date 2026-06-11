@@ -82,6 +82,7 @@ subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo, &
 
    double precision :: Ea, Eb
    integer          :: ll(3), k_ind, kk_ind, m_ind
+   integer          :: use_gpu
 
    ! BLAS function declarations
    double precision, external :: ddot
@@ -122,6 +123,20 @@ subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo, &
          Ll(k_ind) = k_ind * (k_ind - 1) / 2
       enddo
 
+      ! The cool/cools GEMVs are DRAM-bandwidth-bound on the CPU (the two
+      ! matrices are streamed twice per iteration). When a GPU is available
+      ! and the matrices are large enough to amortize the PCIe round-trips,
+      ! they are kept GPU-resident (uploaded once per geometry; rebuilding
+      ! cool invalidates) and the four GEMVs run through cuBLAS. The gathers,
+      ! scatters and all Md-sized math stay on the CPU unchanged; only the
+      ! GEMV summation order shifts (ulp-level Fock change). Heme-class
+      ! open-shell iteration counts are chaotic either way — measured
+      ! distributions with and without the GPU path overlap (hybrid builds
+      ! are run-to-run nondeterministic; see
+      ! research/cpu/int3lu_gpu_offload_2026_06_10.md).
+      use_gpu = 0
+      call int3lu_gpu_ensure(cool, cools, Md, kknumd, kknums, use_gpu)
+
       !--------------------------------------------------------------------
       ! STEP 1: Rc accumulation
       !   Rc(k) = sum over basis pairs kk of: rho(kkind(kk)) * cool(k, kk)
@@ -133,17 +148,23 @@ subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo, &
          do kk_ind = 1, kknumd
             rho_gathered_w(kk_ind) = rho(kkind(kk_ind))
          enddo
-         call dgemv('N', Md, kknumd, 1.0D0, cool, Md, rho_gathered_w, 1, &
-                    0.0D0, Rc_w, 1)
       endif
-
       ! Single-precision integrals: Rc += cools(Md, kknums) * rho_s
       if (kknums > 0) then
          do kk_ind = 1, kknums
             rho_s_w(kk_ind) = real(rho(kkinds(kk_ind)))
          enddo
-         call sgemv('N', Md, kknums, 1.0, cools, Md, rho_s_w, 1, &
-                    0.0, Rc_s_w, 1)
+      endif
+
+      if (use_gpu == 1) then
+         call int3lu_gpu_rc(rho_gathered_w, rho_s_w, Rc_w, Rc_s_w)
+      else
+         if (kknumd > 0) call dgemv('N', Md, kknumd, 1.0D0, cool, Md, &
+                                    rho_gathered_w, 1, 0.0D0, Rc_w, 1)
+         if (kknums > 0) call sgemv('N', Md, kknums, 1.0, cools, Md, &
+                                    rho_s_w, 1, 0.0, Rc_s_w, 1)
+      endif
+      if (kknums > 0) then
          do k_ind = 1, Md
             Rc_w(k_ind) = Rc_w(k_ind) + dble(Rc_s_w(k_ind))
          enddo
@@ -174,54 +195,44 @@ subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo, &
       ! STEP 4: Fock matrix update (Coulomb contribution)
       !--------------------------------------------------------------------
       if (do_fock) then
-      if (open_shell) then
-         ! Double-precision Fock update (open-shell)
-         if (kknumd > 0) then
-            call dgemv('T', Md, kknumd, 1.0D0, cool, Md, af, 1, &
-                       0.0D0, terms_d_w, 1)
-            do kk_ind = 1, kknumd
-               Fmat(kkind(kk_ind))   = Fmat(kkind(kk_ind))   + terms_d_w(kk_ind)
-               Fmat_b(kkind(kk_ind)) = Fmat_b(kkind(kk_ind)) + terms_d_w(kk_ind)
-            enddo
-         endif
-
-         ! Single-precision Fock update (open-shell)
+         ! Coulomb terms per basis pair: terms = cool^T * af (and the
+         ! single-precision mirror). Open and closed shell differ only in
+         ! the scatter below.
          if (kknums > 0) then
             do k_ind = 1, Md
                af_s_w(k_ind) = real(af(k_ind))
             enddo
-            call sgemv('T', Md, kknums, 1.0, cools, Md, af_s_w, 1, &
-                       0.0, terms_s_w, 1)
+         endif
+
+         if (use_gpu == 1) then
+            call int3lu_gpu_terms(af, af_s_w, terms_d_w, terms_s_w)
+         else
+            if (kknumd > 0) call dgemv('T', Md, kknumd, 1.0D0, cool, Md, &
+                                       af, 1, 0.0D0, terms_d_w, 1)
+            if (kknums > 0) call sgemv('T', Md, kknums, 1.0, cools, Md, &
+                                       af_s_w, 1, 0.0, terms_s_w, 1)
+         endif
+
+         if (open_shell) then
+            do kk_ind = 1, kknumd
+               Fmat(kkind(kk_ind))   = Fmat(kkind(kk_ind))   + terms_d_w(kk_ind)
+               Fmat_b(kkind(kk_ind)) = Fmat_b(kkind(kk_ind)) + terms_d_w(kk_ind)
+            enddo
             do kk_ind = 1, kknums
                Fmat(kkinds(kk_ind))   = Fmat(kkinds(kk_ind))   + &
                                         dble(terms_s_w(kk_ind))
                Fmat_b(kkinds(kk_ind)) = Fmat_b(kkinds(kk_ind)) + &
                                         dble(terms_s_w(kk_ind))
             enddo
-         endif
-      else
-         ! Double-precision Fock update (closed-shell)
-         if (kknumd > 0) then
-            call dgemv('T', Md, kknumd, 1.0D0, cool, Md, af, 1, &
-                       0.0D0, terms_d_w, 1)
+         else
             do kk_ind = 1, kknumd
                Fmat(kkind(kk_ind)) = Fmat(kkind(kk_ind)) + terms_d_w(kk_ind)
             enddo
-         endif
-
-         ! Single-precision Fock update (closed-shell)
-         if (kknums > 0) then
-            do k_ind = 1, Md
-               af_s_w(k_ind) = real(af(k_ind))
-            enddo
-            call sgemv('T', Md, kknums, 1.0, cools, Md, af_s_w, 1, &
-                       0.0, terms_s_w, 1)
             do kk_ind = 1, kknums
                Fmat(kkinds(kk_ind)) = Fmat(kkinds(kk_ind)) + &
                                       dble(terms_s_w(kk_ind))
             enddo
          endif
-      endif
       endif
       call g2g_timer_stop('int3lu')
    else

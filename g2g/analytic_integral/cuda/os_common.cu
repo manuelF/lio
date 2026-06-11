@@ -46,16 +46,22 @@ __device__ __constant__ uint gpu_atom_Z[MAX_ATOMS];
 template<class scalar_type>
 void OSIntegral<scalar_type>::load_params(void)
 {
-    // Use the highest cc device available for aint stuff
+    // Use the highest cc device available for aint stuff.
+    // cudaDeviceGetAttribute instead of cudaGetDeviceProperties: the latter
+    // is an ABI-versioned symbol (plain vs _v2) that breaks the link when
+    // nvcc's bundled headers and the libcudart being linked come from
+    // different CUDA majors (12 vs 13 on this machine).
     int devcount = cudaGetGPUCount();
     int devnum = -1, devmajor = -1, devminor = -1;
-    cudaDeviceProp devprop;
     for (int i = 0; i < devcount; i++) {
-      if (cudaGetDeviceProperties(&devprop, i) != cudaSuccess) throw std::runtime_error("Could not get device properties!");
-      if (devprop.major > devmajor || (devprop.major == devmajor && devprop.minor > devminor)) {
+      int major = 0, minor = 0;
+      if (cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, i) != cudaSuccess ||
+          cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, i) != cudaSuccess)
+        throw std::runtime_error("Could not get device properties!");
+      if (major > devmajor || (major == devmajor && minor > devminor)) {
         devnum = i;
-        devmajor = devprop.major;
-        devminor = devprop.minor;
+        devmajor = major;
+        devminor = minor;
       }
     }
 
