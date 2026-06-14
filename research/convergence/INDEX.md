@@ -1,0 +1,15 @@
+# Convergence research — index
+
+Float32-XC noise + DIIS ulp-sensitivity make SCF iter-count the dominant lever
+now that per-iter cost is at the BLAS/LAPACK floor. **Heme iter-count is
+Lyapunov-chaotic — judge every change on the median across OMP={1,4,6,8}, not the
+lucky default.** No-toggle rule: ships unconditionally or stays out.
+
+| File | Status | Impact | Summary |
+|------|--------|--------|---------|
+| [scf_iteration_reduction_strategies_2026_06_14.md](scf_iteration_reduction_strategies_2026_06_14.md) | PLAN | HIGH | **Master catalogue + resume point.** 18 strategies in 5 families (better guess A1-A3; MD cross-step extrapolation B1-B3; accelerators C1-C5; metal/heme physics D1-D3; noise+reformulation E1-E5) with mechanism, LIO-specific failure-mode targeting, impact/risk/effort, code landing site, and a tiered implementation order. Tier 0 = noise-robust criterion (E1, only zero-risk win); production lever = ASPC (B1); cheap heme strike = level-shift+MOM (D1/D3). |
+| [heme_scf_advanced_methods_2026_05_28.md](heme_scf_advanced_methods_2026_05_28.md) | ANALYSIS | HIGH | Deep math/algorithm write-ups for 4 methods: QC-SCF/TRRH direct minimization, ODA, modified Broyden/Anderson mixing, SAD-d guess. Referenced by the master catalogue. |
+| [heme_iter_count_chaos_diagnostics_2026_05_28.md](heme_iter_count_chaos_diagnostics_2026_05_28.md) | DONE | REF | Chaos characterization: 2 stacked variance sources (criterion-noise ~5-7 iters + trajectory-length ~80), basin stable to ±1µHa across OMP. Rejected: windowed DIIS, static ndiis=5, HL-gated level shift (cut 0.005 ≪ real 0.0615 gap), criterion smoothing only shaves tail. Shipped the `[scf_diag]` per-iter log. |
+| [heme_diis_stability_dead_ends_2026_05_28.md](heme_diis_stability_dead_ends_2026_05_28.md) | DEAD | REF | Tikhonov / \|c\|max cap / DGELSD / FULL_DOUBLE all rejected — trajectory is Lyapunov-divergent in iter count, no DIIS-level algebraic fix exists. Wild ‖c‖≈1.87 extrapolations are load-bearing. |
+| [heme_scf_hotpath_and_sad_d_refutation_2026_05_29.md](heme_scf_hotpath_and_sad_d_refutation_2026_05_29.md) | DONE | REF | SAD-d won't run under heme's VCINP=t; aufbau d-shell guess 391 iters vs restart 72; diag basis-locked; CPU hot paths exhausted. (SAD/SAP help fresh runs, not heme-restart.) |
+| [geometry_evaluation.md](geometry_evaluation.md) | REF | — | Partition geometry notes. |

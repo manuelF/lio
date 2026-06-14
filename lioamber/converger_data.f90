@@ -35,6 +35,25 @@ module converger_data
    LIODBLE :: tolD           = 1.0D-6
    LIODBLE :: EtolD          = 1.0D-1
 
+   ! Noise-robust convergence (DIIS-family only). Near the fixed point the
+   ! iteration-to-iteration density change rho_diff bounces inside the
+   ! float32-XC grid-noise band (~1e-6) for several extra iterations while the
+   ! commutator ||[F,P]|| (the true stationarity / orbital-gradient measure,
+   ! computed in double) and the energy are already converged. In addition to
+   ! the original tight test (rho_diff < tolD), accept convergence when the
+   ! commutator confirms stationarity (diis_error < conv_commut_tol) AND the
+   ! density is essentially converged (rho_diff < conv_rho_relax, a relaxed
+   ! multiple of tolD) AND the energy has settled into the noise floor
+   ! (|dE| < conv_ediff_tol, far tighter than EtolD). The energy guard is what
+   ! distinguishes the genuine noise tail (dE ~ few uHr, density wobbling) from
+   ! a mid-descent DIIS drop where the commutator briefly looks small but the
+   ! energy is still moving hundreds of uHr (seen on open-shell restarts). The
+   ! conjunction keeps it from firing in the wild phase, and it can only stop at
+   ! or before the original criterion -- never later.
+   LIODBLE :: conv_commut_tol = 1.0D-4
+   LIODBLE :: conv_rho_relax  = 5.0D-6
+   LIODBLE :: conv_ediff_tol  = 5.0D-6
+
    ! Options for linear search. Rho_LS =1 activates
    ! linear search after failed convergence, =2 means
    ! only attempt linear search.

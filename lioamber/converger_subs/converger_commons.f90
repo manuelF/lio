@@ -362,7 +362,8 @@ subroutine converger_check(rho_old, rho_new, energy_old, energy_new, &
    ! Checks convergence
    use fileio        , only: write_energy_convergence
    use converger_data, only: told, Etold, rho_diff, diis_error, conver_method, &
-                             rho_LS, nMax, scf_prev_energy_rise
+                             rho_LS, nMax, scf_prev_energy_rise,              &
+                             conv_commut_tol, conv_rho_relax, conv_ediff_tol
 
    ! Calculates convergence criteria in density matrix, and
    ! store new density matrix in Pmat_vec.
@@ -395,11 +396,23 @@ subroutine converger_check(rho_old, rho_new, energy_old, energy_new, &
    rho_diff = sqrt(rho_diff) / dble(size(rho_new,1))
 
    is_converged = .false.
-   if ((rho_diff < told) .and. (e_diff < Etold)) then
+   if (e_diff < Etold) then
       if ((conver_method == 1) .or. (rho_LS > 1)) then
-         is_converged = .true.
-      elseif (diis_error < 1D-4) then
-         is_converged = .true.
+         ! Damping / linear-search modes: no reliable commutator is maintained,
+         ! so fall back to the density-change criterion alone (unchanged).
+         if (rho_diff < told) is_converged = .true.
+      else
+         ! DIIS-family. Original tight test, OR a noise-robust stationarity
+         ! test using the commutator ||[F,P]|| (diis_error). See conv_commut_tol
+         ! / conv_rho_relax in converger_data. Whichever fires first; this only
+         ! ever converges at or before the original criterion.
+         if ((rho_diff < told) .and. (diis_error < 1D-4)) then
+            is_converged = .true.
+         elseif ((diis_error < conv_commut_tol) .and. &
+                 (rho_diff   < conv_rho_relax)  .and. &
+                 (e_diff     < conv_ediff_tol)) then
+            is_converged = .true.
+         endif
       endif
    endif
    call write_energy_convergence(n_iterations, energy_new, rho_diff, told, &
