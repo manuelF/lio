@@ -98,6 +98,11 @@ module converger_data
    LIODBLE, allocatable :: EDIIS_E(:)
    LIODBLE, allocatable :: EDIIS_coef(:)
 
+   ! Flag set by the overlap section when it pre-computes the density
+   ! BChange_AOtoON during the int3lu idle window. Cleared by converger_setup
+   ! after it reads (or skips) the pre-computed data_ON.
+   logical :: dens_bchange_done = .false.
+
    ! Internal variables for Linear Search
    logical                   :: first_call = .true.
    LIODBLE              :: Elast      = 1000.0D0

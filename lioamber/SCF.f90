@@ -43,7 +43,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
    use fockbias_subs , only: fockbias_loads, fockbias_setmat, fockbias_apply
    use SCF_aux       , only: seek_nan, standard_coefs, messup_densmat, fix_densmat
    use liosubs_math  , only: transform
-   use converger_data, only: Rho_LS, nMax
+   use converger_data, only: Rho_LS, nMax, dens_bchange_done
    use converger_subs, only: converger_init, converger_fock, converger_setup, &
                              converger_check, rho_ls_init, do_rho_ls,         &
                              rho_ls_switch
@@ -160,6 +160,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
    integer :: prev_max_levels
    integer :: prev_omp_threads
    LIODBLE :: t_int3lu, t_g2g
+   LIODBLE :: t_iter0, t_fock_w, t_build_w, t_accel_w, t_diag_w, t_moc_w
    integer, external :: openblas_get_num_threads
    integer, external :: omp_get_max_active_levels
    integer, external :: omp_get_max_threads
@@ -509,6 +510,12 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
       call g2g_timer_sum_start('Fock integrals')
 
       niter = niter + 1
+      t_iter0   = omp_get_wtime()
+      t_fock_w  = 0.0d0
+      t_build_w = 0.0d0
+      t_accel_w = 0.0d0
+      t_diag_w  = 0.0d0
+      t_moc_w   = 0.0d0
 
       ! Test for NaN
       if (Dbug) call SEEK_NaN(Pmat_vec,1,MM,"RHO Start")
@@ -555,6 +562,15 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
             call int3lu(E2, Pmat_vec, Fmat_vec2, Fmat_vec, Gmat_vec, Ginv_vec, &
                         Hmat_vec, open, MEMO)
             t_int3lu = t_int3lu + omp_get_wtime()
+            if (tbdft_calc == 0) then
+               call spunpack_rho('L', M, rhoalpha, rho_a0)
+               call rho_aop%Sets_data_AO(rho_a0)
+               call rho_aop%BChange_AOtoON(Ymat, M_f)
+               call spunpack_rho('L', M, rhobeta, rho_b0)
+               call rho_bop%Sets_data_AO(rho_b0)
+               call rho_bop%BChange_AOtoON(Ymat, M_f)
+               dens_bchange_done = .true.
+            end if
 !$omp section
             t_g2g = -omp_get_wtime()
             call g2g_solve_groups_into_open(0, Exc, 0, fmat_xc_scratch, &
@@ -569,6 +585,12 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
             call int3lu(E2, Pmat_vec, Fmat_vec2, Fmat_vec, Gmat_vec, Ginv_vec, &
                         Hmat_vec, open, MEMO)
             t_int3lu = t_int3lu + omp_get_wtime()
+            if (tbdft_calc == 0) then
+               call spunpack_rho('L', M, Pmat_vec, rho_a0)
+               call rho_aop%Sets_data_AO(rho_a0)
+               call rho_aop%BChange_AOtoON(Ymat, M_f)
+               dens_bchange_done = .true.
+            end if
 !$omp section
             t_g2g = -omp_get_wtime()
             call g2g_solve_groups_into(0, Exc, 0, fmat_xc_scratch)
@@ -640,6 +662,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
       ! Calculates total energy
       E = E1 + E2 + En + Exc
       call g2g_timer_sum_pause('Fock integrals')
+      t_fock_w = omp_get_wtime() - t_iter0
 
       ! Unpacks Fock/density, applies bias + LJ + exact-exchange terms.
       call g2g_timer_sum_start('Fock matrix build')
@@ -688,6 +711,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
       call rho_aop%Sets_data_AO(rho_a)
       call fock_aop%Sets_data_AO(fock_a)
       call g2g_timer_sum_pause('Fock matrix build')
+      t_build_w = omp_get_wtime() - t_iter0 - t_fock_w
 
       call g2g_timer_sum_start('SCF acceleration setup')
       if (OPEN) then
@@ -699,6 +723,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
          call converger_setup(niter, M_f, rho_aop, fock_aop, E,  Xmat, Ymat)
       endif
       call g2g_timer_sum_pause('SCF acceleration setup')
+      t_accel_w = omp_get_wtime() - t_iter0 - t_fock_w - t_build_w
 
       ! Convergence accelerator processing.
       ! In closed shell, rho_a is the total density matrix; in open shell,
@@ -711,9 +736,10 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
       if ( allocated(morb_coefon) ) deallocate(morb_coefon)
       allocate( morb_coefon(M_f,M_f) )
       call g2g_timer_sum_start('SCF - Fock Diagonalization (sum)')
-
+      t_diag_w = t_diag_w - omp_get_wtime()
       call fock_aop%Diagon_datamat( morb_coefon, morb_energy )
       call g2g_timer_sum_pause('SCF - Fock Diagonalization (sum)')
+      t_diag_w = t_diag_w + omp_get_wtime()
 
       ! Base change of coeficients ( (X^-1)*C ) and construction of new
       ! density matrix.
@@ -744,8 +770,10 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
          allocate( morb_coefon(M_f,M_f) )
 
          call g2g_timer_sum_start('SCF - Fock Diagonalization (sum)')
+         t_diag_w = t_diag_w - omp_get_wtime()
          call fock_bop%Diagon_datamat( morb_coefon, morb_energy )
          call g2g_timer_sum_pause('SCF - Fock Diagonalization (sum)')
+         t_diag_w = t_diag_w + omp_get_wtime()
 
          ! Base change of coeficients ( (X^-1)*C ) and construction of new
          ! density matrix.
@@ -832,6 +860,19 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
       deallocate ( xnano )
       Evieja = E
       call g2g_timer_sum_pause('Rho update & check')
+
+      if (verbose >= 2) then
+         t_moc_w = omp_get_wtime() - t_iter0 - t_fock_w - t_build_w &
+                                   - t_accel_w - t_diag_w
+         write(*,'(A,I3,5(A,F7.1),A,F7.1,A)') &
+            "  [iter]", niter,                 &
+            "  fock=",  t_fock_w *1e3,         &
+            " build=",  t_build_w*1e3,         &
+            " accel=",  t_accel_w*1e3,         &
+            " diag=",   t_diag_w *1e3,         &
+            " rest=",   t_moc_w  *1e3,         &
+            " tot=", (omp_get_wtime()-t_iter0)*1e3, "ms"
+      end if
 
       call g2g_timer_stop('Total iter')
       call g2g_timer_sum_pause('Iteration')

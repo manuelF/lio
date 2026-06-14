@@ -97,7 +97,7 @@ subroutine converger_setup(niter, M_in, dens_op, fock_op, energy, &
 
    ! Sets up matrices needed for convergence acceleration, such as
    ! Emat for DIIS or Bmat for EDIIS
-   use converger_data  , only: conver_method, ndiis, nediis
+   use converger_data  , only: conver_method, ndiis, nediis, dens_bchange_done
    use fileio_data     , only: verbose
    use typedef_operator, only: operator
    use typedef_cumat   , only: cumat_r
@@ -133,9 +133,11 @@ subroutine converger_setup(niter, M_in, dens_op, fock_op, energy, &
    ! Gets [F,P] and therefore the DIIS error.
    if (conver_method /= 1) then
       call g2g_timer_sum_start('Conv setup - BChange AOtoON')
-      call dens_op%BChange_AOtoON(Ymat, M_in)
+      if (.not. dens_bchange_done) then
+         call dens_op%BChange_AOtoON(Ymat, M_in)
+         if (open_shell) call dens_opb%BChange_AOtoON(Ymat, M_in)
+      end if
       call fock_op%BChange_AOtoON(Xmat, M_in)
-      if (open_shell) call dens_opb%BChange_AOtoON(Ymat, M_in)
       if (open_shell) call fock_opb%BChange_AOtoON(Xmat, M_in)
       call g2g_timer_sum_pause('Conv setup - BChange AOtoON')
 
@@ -151,6 +153,7 @@ subroutine converger_setup(niter, M_in, dens_op, fock_op, energy, &
       endif
       call g2g_timer_sum_pause('Conv setup - DIIS commut')
    endif
+   dens_bchange_done = .false.
 
    ! DIIS and EDIIS
    if (conver_method > 1) then
