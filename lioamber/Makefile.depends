@@ -330,6 +330,13 @@ tmplist += SCF.o lionml_data.o
 $(tmplist:%.o=$(OBJPATH)/%.o) : $(OBJPATH)/initial_guess.o
 
 ################################################################################
+OBJECTS += scf_extrapolation.o
+
+tmplist :=
+tmplist += SCF.o
+$(tmplist:%.o=$(OBJPATH)/%.o) : $(OBJPATH)/scf_extrapolation.o
+
+################################################################################
 
 tmplist :=
 tmplist += SCF.o TD.o init_lio.o cublasmath.o propagators.o

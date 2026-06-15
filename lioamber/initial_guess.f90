@@ -109,12 +109,13 @@ module initial_guess_subs
 contains
 
 ! This subroutine is the interface between SCF and the initial guess choice.
-subroutine get_initial_guess(M, MM, NCO, NCOb, Xmat, Hvec, Rhovec, rhoalpha, &
-                             rhobeta, openshell, natom, Iz, nshell, Nuc)
+subroutine get_initial_guess(M, MM, NCO, NCOb, Xmat, Hvec, Smat, Rhovec, &
+                             rhoalpha, rhobeta, openshell, natom, Iz, nshell, &
+                             Nuc)
    use initial_guess_data, only: initial_guess
 
    implicit none
-   LIODBLE, intent(in) :: Xmat(:,:), Hvec(:)
+   LIODBLE, intent(in) :: Xmat(:,:), Hvec(:), Smat(:,:)
    logical         , intent(in) :: openshell
    integer         , intent(in) :: M, MM, NCO, NCOb, natom, Iz(natom), Nuc(M), &
                                    nshell(0:2)
@@ -127,6 +128,11 @@ subroutine get_initial_guess(M, MM, NCO, NCOb, Xmat, Hvec, Rhovec, rhoalpha, &
 
    select case (initial_guess)
    case (0)
+      ! 1e core-Hamiltonian guess (default). Empirically the best of the cheap
+      ! guesses for LIO's main-group QM/MM cases: GWH (case 2) was measured to
+      ! regress agua (14->16) and fosfato (24->27), helping only some
+      ! point-charge cases, so it is not the default. See
+      ! research/convergence/initial_guess_gwh_2026_06_14.md.
       if (.not. openshell) then
          ocupF = 2.0D0
          call initial_guess_1e(M, MM, NCO, ocupF, Hvec, Xmat, Rhovec )
@@ -139,6 +145,20 @@ subroutine get_initial_guess(M, MM, NCO, NCOb, Xmat, Hvec, Rhovec, rhoalpha, &
    case (1)
       call initial_guess_aufbau(M, MM, Rhovec, rhoalpha, rhobeta, natom, NCO,&
                                 NCOb, Iz, nshell, Nuc, openshell)
+   case (2)
+      ! Generalized Wolfsberg-Helmholtz (GWH) guess (selectable, not default).
+      ! Builds an effective Fock from the core-Hamiltonian diagonal and the
+      ! overlap off-diagonals. Guess-only: the converged result is unchanged,
+      ! only the iteration count moves.
+      if (.not. openshell) then
+         ocupF = 2.0D0
+         call initial_guess_gwh(M, MM, NCO, ocupF, Hvec, Smat, Xmat, Rhovec )
+      else
+         ocupF = 1.0D0
+         call initial_guess_gwh(M, MM, NCO , ocupF, Hvec, Smat, Xmat, rhoalpha)
+         call initial_guess_gwh(M, MM, NCOb, ocupF, Hvec, Smat, Xmat, rhobeta)
+         Rhovec   = rhoalpha + rhobeta
+      end if
    case default
       write(*,*) "ERROR - Initial guess: Wrong value for input initial_guess."
    end select
@@ -295,5 +315,80 @@ subroutine initial_guess_1e(Nmat, Nvec, NCO, ocupF, hmat_vec, Xmat, densat_vec)
                WORK, IWORK )
    return
 end subroutine initial_guess_1e
+
+! This subroutine performs the Generalized Wolfsberg-Helmholtz (GWH) guess.   !
+! It builds an effective Fock matrix from the core-Hamiltonian diagonal and   !
+! the overlap matrix,                                                         !
+!     F_ii = H_ii ,  F_ij = 0.5 * K * S_ij * (H_ii + H_jj)  (i /= j) ,        !
+! with the standard empirical K = 1.75. The resulting Fock is diagonalized in !
+! the orthonormal basis (F' = X^T F X) exactly as in the 1e guess, and the    !
+! density is built from the occupied block. This is a starting guess only:    !
+! the converged SCF result is unaffected, only the iteration count changes.   !
+subroutine initial_guess_gwh(Nmat, Nvec, NCO, ocupF, hmat_vec, smat, Xmat, &
+                             densat_vec)
+   use SCF_aux     , only: messup_densmat
+
+   implicit none
+   integer         , intent(in)    :: Nmat, Nvec, NCO
+   LIODBLE, intent(in)    :: ocupF, Xmat(Nmat,Nmat), hmat_vec(Nvec), &
+                                      smat(Nmat,Nmat)
+   LIODBLE, intent(inout) :: densat_vec(Nvec)
+
+   LIODBLE, allocatable   :: morb_energy(:), morb_coefon(:,:),   &
+                                      morb_coefat(:,:), hmat(:,:),        &
+                                      fmat(:,:), dens_mao(:,:), tmp(:,:)
+   LIODBLE, allocatable   :: WORK(:)
+   integer, allocatable            :: IWORK(:)
+   integer                         :: LWORK, LIWORK, info, ii, jj
+   LIODBLE, parameter     :: gwh_k = 1.75D0
+
+   allocate( morb_coefon(Nmat, Nmat), morb_energy(Nmat), dens_mao(Nmat, Nmat) )
+   allocate( morb_coefat(Nmat, Nmat), hmat(Nmat,Nmat), fmat(Nmat,Nmat), &
+             tmp(Nmat,Nmat) )
+
+   call spunpack('L', Nmat, hmat_vec, hmat )
+
+   ! Build the GWH effective Fock from the core-Hamiltonian diagonal and the
+   ! overlap. Diagonal is the bare core element; off-diagonals are interpolated
+   ! between the two on-site energies and scaled by the overlap and K.
+   do jj = 1, Nmat
+      fmat(jj,jj) = hmat(jj,jj)
+      do ii = jj+1, Nmat
+         fmat(ii,jj) = 0.5D0 * gwh_k * smat(ii,jj) * (hmat(ii,ii) + hmat(jj,jj))
+         fmat(jj,ii) = fmat(ii,jj)
+      enddo
+   enddo
+
+   ! Transform the GWH Fock to the orthonormal basis: F' = X^T F X.
+   call DGEMM('N','N', Nmat, Nmat, Nmat, 1.0D0, fmat, Nmat, Xmat, Nmat, &
+              0.0D0, tmp, Nmat)
+   call DGEMM('T','N', Nmat, Nmat, Nmat, 1.0D0, Xmat, Nmat, tmp, Nmat, &
+              0.0D0, morb_coefon, Nmat)
+   morb_energy(:) = 0.0d0
+
+   ! Divide-and-conquer diagonalization (dsyevd).
+   allocate( WORK(1), IWORK(1) )
+   call dsyevd('V', 'L', Nmat, morb_coefon, Nmat, morb_energy, WORK, -1, &
+               IWORK, -1, info)
+   LWORK  = INT( WORK(1) )
+   LIWORK = IWORK(1)
+   deallocate( WORK, IWORK )
+   allocate( WORK(LWORK), IWORK(LIWORK) )
+   call dsyevd('V', 'L', Nmat, morb_coefon, Nmat, morb_energy, WORK, LWORK, &
+               IWORK, LIWORK, info)
+
+   ! Back-transform coefficients to the AO basis and build the density from
+   ! the occupied block: P = ocupF * C_occ C_occ^T.
+   call DGEMM('N','N', Nmat, Nmat, Nmat, 1.0D0, Xmat, Nmat, morb_coefon, &
+              Nmat, 0.0D0, morb_coefat, Nmat)
+   call DGEMM('N','T', Nmat, Nmat, NCO, ocupF, morb_coefat, Nmat, &
+              morb_coefat, Nmat, 0.0D0, dens_mao, Nmat)
+   call messup_densmat( dens_mao )
+   call sprepack( 'L', Nmat, densat_vec, dens_mao)
+
+   deallocate( morb_coefon, morb_energy, dens_mao, morb_coefat, hmat, fmat, &
+               tmp, WORK, IWORK )
+   return
+end subroutine initial_guess_gwh
 
 end module initial_guess_subs

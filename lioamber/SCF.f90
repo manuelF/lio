@@ -51,6 +51,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
    use typedef_cumat   , only: cumat_r
    use trans_Data    , only: gaussian_convert, rho_exc, translation
    use initial_guess_subs, only: get_initial_guess
+   use scf_extrapolation , only: scf_extrap_predict, scf_extrap_store
    use fileio       , only: write_energies, write_energy_convergence, &
                             write_final_convergence, write_ls_convergence, &
                             movieprint
@@ -359,8 +360,8 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
    if ( (.not. VCINP) .and. (npas == 1) ) then
       call get_initial_guess(M, MM, NCO, NCOb, &
                              Xmat%matrix(MTB+1:MTB+M,MTB+1:MTB+M),        &
-                             Hmat_vec, Pmat_vec, rhoalpha, rhobeta, OPEN, &
-                             natom, Iz, nshell, Nuc)
+                             Hmat_vec, Smat, Pmat_vec, rhoalpha, rhobeta, &
+                             OPEN, natom, Iz, nshell, Nuc)
    endif
 
 !----------------------------------------------------------!
@@ -500,6 +501,13 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
       write(*,*)
       write(*,'(A)') "Starting SCF cycles."
    endif
+
+   ! Cross-step density extrapolation (ASPC). On MD / geometry-optimization
+   ! steps after the first, replace the plain VCINP "reuse last density" guess
+   ! with a time-reversible extrapolation of the last few converged densities.
+   ! No-op on single points and on step 1 (no history yet). Guess-only: the
+   ! converged result is unchanged, only the iteration count moves.
+   call scf_extrap_predict(MM, Pmat_vec, rhoalpha, rhobeta, OPEN, r, ntatom)
 
    converged = .false.
    call converger_init( M_f, OPEN )
@@ -889,6 +897,11 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
       call write_final_convergence(.true., niter, Evieja)
       converge   = converge + 1
       noconverge = 0
+
+      ! Push the converged density onto the ASPC history so the next MD /
+      ! geometry step can extrapolate from it. Only converged densities are
+      ! stored, so a failed step never poisons the trajectory history.
+      call scf_extrap_store(MM, Pmat_vec, rhoalpha, rhobeta, OPEN, r, ntatom)
    endif
 
    if (changed_to_LS) then
