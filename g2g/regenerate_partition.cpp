@@ -379,19 +379,22 @@ void Partition::regenerate(void) {
   // lejano
   // y x1 el vertice superior, derecho y mas cercano.
 
-  // For small TD systems the XC solve is launch-bound (the GPU sits ~18% busy
-  // behind ~58 tiny launches/step), so collapse the prism into one cube group.
-  // Only when M is small, where each group already spans ~all M functions and
-  // merging doesn't inflate the npts*M^2 work. Overriding the global is enough
-  // since point binning, cube coords and assign_functions_as_cube all read it;
-  // restored after the cube loop. SCF never merges (td_merge_groups stays off),
-  // keeping heme's float32/DIIS convergence intact.
+  // For small TD systems the XC solve is launch-bound (the GPU sits ~11% busy
+  // behind dozens of tiny launches/step), so collapse the whole grid into one
+  // cube group: enlarge the prism to a single cube and drop the per-atom spheres
+  // (sphere_radius=0). Only when M is small, where each group already spans ~all
+  // M functions so merging doesn't inflate the npts*M^2 work. Overriding the two
+  // globals is enough since point binning, cube coords, assign_functions_*, and
+  // the sphere gate all read them; both are restored below. SCF never merges
+  // (td_merge_groups stays off), keeping heme's float32/DIIS convergence intact.
   const uint TD_MERGE_MAX_M = 80;
   const double saved_little_cube_size = little_cube_size;
+  const double saved_sphere_radius = sphere_radius;
   const bool td_merged = (td_merge_groups && fortran_vars.m <= TD_MERGE_MAX_M);
   if (td_merged) {
     const double extent = max(x1.x - x0.x, max(x1.y - x0.y, x1.z - x0.z));
     little_cube_size = max(little_cube_size, extent + 1.0);
+    sphere_radius = 0.0;
   }
 
   // Generamos la particion en cubos.
@@ -586,9 +589,6 @@ void Partition::regenerate(void) {
     }
   }
 
-  // Cube groups (and their function assignments) are built; restore user value.
-  if (td_merged) little_cube_size = saved_little_cube_size;
-
   // Si esta habilitada la particion en esferas, entonces clasificamos y las
   // agregamos a la particion tambien.
   if (sphere_radius > 0) {
@@ -651,6 +651,12 @@ void Partition::regenerate(void) {
       nco_m += sphere->total_functions() * fortran_vars.nco;
       m_m += sphere->total_functions() * sphere->total_functions();
     }
+  }
+
+  // All groups (and their function assignments) are built; restore user values.
+  if (td_merged) {
+    little_cube_size = saved_little_cube_size;
+    sphere_radius    = saved_sphere_radius;
   }
 
   // TODO fix these sorts now that spheres and cubes are pointers
