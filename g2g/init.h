@@ -118,6 +118,9 @@ extern bool assign_all_functions;
 extern double sphere_radius;  // between 0 and 1!
 extern bool remove_zero_weights;
 extern bool energy_all_iterations;
+// When set, regenerate() collapses small systems into a single cube group.
+// Toggled only around the TD partition rebuild; the SCF partition is never merged.
+extern bool td_merge_groups;
 extern double big_function_cutoff;
 extern double free_global_memory;
 

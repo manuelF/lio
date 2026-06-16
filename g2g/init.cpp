@@ -386,7 +386,12 @@ void compute_new_grid(const unsigned int grid_type) {
 #endif
 }
 //==============================================================================================================
-extern "C" void g2g_reload_atom_positions_(const unsigned int& grid_type, 
+// Toggles single-cube group merging for the next partition rebuild (TD only).
+extern "C" void g2g_set_td_merge_(const bool& enable) {
+  G2G::td_merge_groups = enable;
+}
+
+extern "C" void g2g_reload_atom_positions_(const unsigned int& grid_type,
                                            unsigned int* atom_Z_in) {
   // IGRID indicates the grid type used.
   // atom_Z is updated in case Becke partition is desired.
@@ -576,6 +581,7 @@ bool assign_all_functions = false;
 double sphere_radius = 0.6;
 bool remove_zero_weights = true;
 bool energy_all_iterations = false;
+bool td_merge_groups = false;
 double free_global_memory = 0.0;
 bool timer_single = false;
 bool timer_sum = false;

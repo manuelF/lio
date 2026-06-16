@@ -568,7 +568,11 @@ subroutine td_integration_setup(igrid2, igpu, atom_Z)
    integer, intent(out) :: igpu
 
    call g2g_timer_sum_start('TD - Exchange-correlation grid setup')
+   ! Rebuild the TD partition with single-cube group merging (cuts per-group XC
+   ! launch overhead on small systems); reset so later SCF rebuilds stay fine.
+   call g2g_set_td_merge(.true.)
    call g2g_reload_atom_positions(igrid2, atom_Z)
+   call g2g_set_td_merge(.false.)
    call g2g_timer_sum_stop('TD - Exchange-correlation grid setup')
 
    call aint_query_gpu_level(igpu)

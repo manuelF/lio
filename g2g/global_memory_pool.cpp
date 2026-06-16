@@ -33,7 +33,11 @@ void GlobalMemoryPool::dealloc(size_t size) {
 }
 
 void GlobalMemoryPool::init(double free_global_memory) {
-  if (_init) return;
+  // Re-apply the budget on every call, not just the first: each partition
+  // rebuild computes a fresh fgm for its group sizes, and pinning to the first
+  // (SCF) partition starves later ones -- the TD merged cube would fail tryAlloc
+  // and recompute its functions every step. Safe because init() runs after
+  // Partition::clear() and before any new tryAlloc.
 #if GPU_KERNELS
   int previous_device;
   cudaGetDevice(&previous_device);
@@ -50,14 +54,22 @@ void GlobalMemoryPool::init(double free_global_memory) {
     if (free_factor < 0.0f) free_factor = 0.0f;
     _freeFactor = free_factor;
 
-    _freeGlobalMemory.push_back(
-        static_cast<size_t>(static_cast<double>(free_memory) * _freeFactor));
-    _totalGlobalMemory.push_back(total_memory);
+    size_t budget =
+        static_cast<size_t>(static_cast<double>(free_memory) * _freeFactor);
+    if (!_init) {
+      _freeGlobalMemory.push_back(budget);
+      _totalGlobalMemory.push_back(total_memory);
+    } else {
+      _freeGlobalMemory[i] = budget;
+      _totalGlobalMemory[i] = total_memory;
+    }
   }
   cudaSetDevice(previous_device);
 #else
-  _totalGlobalMemory.push_back(0);
-  _freeGlobalMemory.push_back(0);
+  if (!_init) {
+    _totalGlobalMemory.push_back(0);
+    _freeGlobalMemory.push_back(0);
+  }
   _freeFactor = 0.0f;
 #endif
   _init = true;
