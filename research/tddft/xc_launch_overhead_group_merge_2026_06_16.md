@@ -123,8 +123,29 @@ Next levers, in order:
    but at 8% util the host-launch headroom is large; prior graph attempt was on
    a different path.
 
+## Update — field_calc wasted dipole (commit 95afd376)
+
+`field_calc` (called every step from the predictor and td_calc_energy) computed
+the electronic dipole unconditionally, but `dipxyz` only feeds the field-energy
+term after the no-field early-return. On a field-free run (delta-kick spectrum)
+that dipole() was pure waste. Reordered it after the field-strength check.
+Bit-exact. TD-Pred field 0.475→0.005s, TD-Step Energy 0.478→0.052s, wall
+16.4→15.9s. 05_TDDFTField (has a field) still passes.
+
 ## Cumulative (this line of work)
 
-baseline 25.6s → group-merge 20.9s → sphere-fold 17.6s → inner-Magnus 16.4s
-(**-36%**). XC is still ~55% of the step and host-launch-bound; the BLAS/host
-propagation work is now the second pole.
+baseline 25.6 → group-merge 20.9 → sphere-fold 17.6 → inner-Magnus 16.4 →
+field_calc 15.9s (**-38%**).
+
+Remaining per-step split (15.9s wall): Pred XC 57% · final Magnus BCH 16% · inner
+Magnus 8% · int3lu 3% · base changes (rho ON→AO, rho rebuild, Fock→ON) 6%.
+
+The clean Fortran wins are now spent. Remaining levers:
+- **XC (57%)** — host-launch-bound, 1 group, GPU ~8% util. Only via XC eval
+  frequency (Fortran, but couples to Pmat_vec/dipole; risky) or CUDA-graphing the
+  fixed launch sequence (C++; biggest clean win ~17%).
+- **final Magnus (16%)** — NBCH=10 is load-bearing: with Cl core states
+  ‖Ω‖dt≈16, the BCH series needs all terms, so neither order-reduction nor
+  norm-early-exit is safe (unlike the inner predictor, whose error is corrected).
+- **int3lu/XC overlap** — DEAD on the TD path: per-step OMP team spawn dwarfs the
+  ~0.45s saving (see [[td_overlap_int3lu_reverted_2026_05_19]]).
