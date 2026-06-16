@@ -11,4 +11,7 @@
 
  nfields_iso    = 1
  field_iso_file = 'inputfield.fld'
+
+ timers = 2
+ free_global_memory = -1
 &end
