@@ -110,12 +110,21 @@ The group-count lever is now exhausted (1 group). Per-step split:
 | Pred field / rho rebuild / ON→AO | ~30µs | 9% | host |
 
 Next levers, in order:
-1. **Magnus BCH (28% combined, pure Fortran)** — the BCH series truncates at a
-   fixed NBCH=10; for tdstep=0.004fs the terms decay fast. Early-exit on term
-   norm, or a lower NBCH for the *inner* (predictor-only) magnus, could halve it.
-   Numerically delicate (changes propagation); validate dipole on the 50k run.
+1. ~~**Inner-Magnus order**~~ — DONE (commit 30575bd2). The predictor's inner
+   Magnus only builds a density for the corrector and runs a half step, so it
+   needs far fewer BCH terms than the final propagation. Cut to `max(4,NBCH/2)`
+   (=5): inner Magnus 2.43→1.25s (-48%), TD-step 17.2→15.9s, wall 16.4s. 50k
+   dipole within 1.6e-5 (tol 1e-3); sweep {2..10} all sub-1e-3, order 4-5 ≈ full.
+   The *final* Magnus (also 14%) keeps full NBCH — reducing it shifts the actual
+   dynamics, not just the predictor, so leave it.
 2. **XC eval frequency** — still 1 full XC build/step. Reusing/extrapolating the
    XC Fock on alternating steps could ~halve it; biggest risk to dynamics.
 3. **CUDA-graph the ~13-launch XC sequence** (constant across steps) — now C++,
    but at 8% util the host-launch headroom is large; prior graph attempt was on
    a different path.
+
+## Cumulative (this line of work)
+
+baseline 25.6s → group-merge 20.9s → sphere-fold 17.6s → inner-Magnus 16.4s
+(**-36%**). XC is still ~55% of the step and host-launch-bound; the BLAS/host
+propagation work is now the second pole.
