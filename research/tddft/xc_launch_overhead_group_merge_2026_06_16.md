@@ -88,11 +88,34 @@ was the explicitly-accepted tradeoff. If a tighter trajectory is ever needed, a
 less aggressive merge (cap to 2–4 groups instead of 1) would trade some launch
 savings for smaller reorder.
 
-## What is left
+## Update — sphere fold (commit 5a7bd661)
 
-XC is still 74% of the (smaller) step and still host-bound at the remaining ~42
-launches/step (1 cube + 2 spheres + leapfrog). Next levers: fold the per-atom
-spheres into the merged cube too; or CUDA-graph the fixed per-step launch
-sequence (partition is constant across TD steps) — prior graph attempt was on a
-different path and rejected as net-neutral, but at 11.5% util the headroom here
-is much larger.
+After the cube merge, the per-atom spheres (sphere_radius=0.5) were still ~3.5
+extra groups (~36 launches/step, GPU 11%). Zeroing sphere_radius in the same TD
+merge window folds them into the cube → **~1 group/step, ~13 launches/step**.
+TD-step 20.0→17.1s (-15%), TD-Pred XC 11.7→8.8s (-25%); cumulative wall
+25.6→17.6s (**-31%** vs pre-merge baseline). 07 TD dipole within 3.6e-5 (tol
+1e-3). No-field 50k energy drift grows to 1.7e-3 Ha (cube-only was 7.3e-4) — the
+dipole observable is unaffected.
+
+## What is left (re-profiled at 17.6s wall)
+
+The group-count lever is now exhausted (1 group). Per-step split:
+
+| phase | /step | share | nature |
+|---|---|---|---|
+| Pred XC (g2g) | 176µs | 51% | host-launch-bound, ~13 launches, GPU 8% util |
+| Magnus BCH (final) | 49µs | 14% | host ZGEMM, NBCH=10 |
+| Pred inner Magnus | 49µs | 14% | host ZGEMM, NBCH=10 (predictor only) |
+| Pred field / rho rebuild / ON→AO | ~30µs | 9% | host |
+
+Next levers, in order:
+1. **Magnus BCH (28% combined, pure Fortran)** — the BCH series truncates at a
+   fixed NBCH=10; for tdstep=0.004fs the terms decay fast. Early-exit on term
+   norm, or a lower NBCH for the *inner* (predictor-only) magnus, could halve it.
+   Numerically delicate (changes propagation); validate dipole on the 50k run.
+2. **XC eval frequency** — still 1 full XC build/step. Reusing/extrapolating the
+   XC Fock on alternating steps could ~halve it; biggest risk to dynamics.
+3. **CUDA-graph the ~13-launch XC sequence** (constant across steps) — now C++,
+   but at 8% util the host-launch headroom is large; prior graph attempt was on
+   a different path.
