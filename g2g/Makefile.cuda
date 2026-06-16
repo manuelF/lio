@@ -72,15 +72,20 @@ CWARN_FLAGS := $(CXXWARN_FLAGS) \
 	-Wnested-externs \
 	-Wmain \
 
-# Compiler-specific flags
-NVCCFLAGS   := $(ARCHFLAGS) --compiler-options -fPIC --compiler-options -Wall
+# Compiler-specific flags. -Wall on the nvcc host pass is warning-only; gate it.
+NVCCFLAGS   := $(ARCHFLAGS) --compiler-options -fPIC
+ifeq ($(lint),1)
+  NVCCFLAGS += --compiler-options -Wall
+endif
 
 # Header dependency generation for the per-object device-compile (-dc) rules
 # only. Deliberately NOT added to NVCCFLAGS so the -dlink step does not try to
 # emit a spurious .d file. The .d files are -include'd from g2g/Makefile.
 NVCC_DEPFLAGS := -MMD -MP
 ifeq ($(intel),0)
+ifeq ($(lint),1)
   CXXFLAGS    += $(CXXWARN_FLAGS)
+endif
 endif
 
 # Common flags

@@ -3,7 +3,11 @@
 # Auto-generate header dependencies (.d files) alongside every object so that
 # touching a header forces a rebuild of all dependents. Supersedes the manually
 # maintained Makefile.depends (which could only ever go stale).
-CXXFLAGS+= -fopenmp -fPIC -Wall -Wextra -Wshadow -I. -I$(CUDA_HOME)/include -MMD -MP
+CXXFLAGS+= -fopenmp -fPIC -I. -I$(CUDA_HOME)/include -MMD -MP
+# Warning-only diagnostics (no codegen impact). Gated behind `make lint=1`.
+ifeq ($(lint),1)
+  CXXFLAGS += -Wall -Wextra -Wshadow
+endif
 OPTIMIZECPU :=
 
 # CPU micro-architecture flags. Overridable so release/packaging builds can
@@ -16,7 +20,10 @@ ifeq ($(intel),0)
   # Use default GNU compiler
   CXX          := g++
   OPTIMIZECPU  := -O3 $(ARCHFLAGS_CPU) -fno-semantic-interposition
-  CXXFLAGS     := $(CXXFLAGS) -Wno-unused-variable -Wno-unused-parameter -Wno-sign-compare
+  # Suppressions only matter when the lint warnings above are enabled.
+  ifeq ($(lint),1)
+    CXXFLAGS   := $(CXXFLAGS) -Wno-unused-variable -Wno-unused-parameter -Wno-sign-compare
+  endif
 else
   # Intel compiler requested; ensure icc is available
   ifeq ($(shell command -v icc >/dev/null 2>&1 && echo yes),)

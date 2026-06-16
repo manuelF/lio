@@ -54,6 +54,8 @@ LFLAGS += -Wl,--no-undefined
 # --as-needed drops unused libs (safe under --no-undefined); -Wl,-O1 optimizes
 # the symbol hash table.
 LFLAGS += -Wl,--as-needed -Wl,-O1
+# Faster/safer dynamic loading: full RELRO + eager binding + sorted commons.
+LFLAGS += -Wl,-z,relro -Wl,-z,now -Wl,--sort-common
 LFLAGS += -Wl,-rpath='$$ORIGIN/'
 LFLAGS += -Wl,-rpath='$$ORIGIN/../g2g'
 
@@ -109,12 +111,22 @@ ifeq ($(intel),0)
   FFLAGS += -fipa-pta
   FFLAGS += -fgraphite-identity -floop-nest-optimize
   FFLAGS += -ffrontend-optimize
+  # Verified bit-exact on fosfato (preserve FP evaluation order).
+  FFLAGS += -fno-plt
+  FFLAGS += -funroll-loops
+  FFLAGS += -falign-functions=32 -falign-loops=32
+  # NOTE: -fno-semantic-interposition and -flto are deliberately omitted. Both
+  # enable cross-call inlining that exposes new FMA contraction and perturbs FP
+  # (heme iter count is Lyapunov-sensitive). Re-validate heme before adding.
   # Overridable CPU arch flags (see g2g/Makefile.common). Default targets the
   # build host; override ARCHFLAGS_FC for portable/reproducible release builds.
   ARCHFLAGS_FC ?= -march=native -mtune=native
   FFLAGS += $(ARCHFLAGS_FC)
   FFLAGS += -fstack-arrays
-  FFLAGS += -Warray-temporaries -Wimplicit-interface -Waliasing
+  # Warning-only diagnostics (no codegen impact), gated behind `make lint=1`.
+  ifeq ($(lint),1)
+    FFLAGS += -Warray-temporaries -Wimplicit-interface -Waliasing
+  endif
   LFLAGS += -L/usr/lib -fopenmp
   # -lopenblas is required so SCF.f90's openblas_set_num_threads_/get_ symbols
   # resolve. The Ubuntu reference libblas.so.3 (which itself maps to OpenBLAS)

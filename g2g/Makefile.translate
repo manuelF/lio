@@ -13,6 +13,10 @@ precision ?= 0
 analytics ?= 0
 libxc     ?= 0
 aint_mp   ?= 1
+# lint: enable warning-only diagnostic flags (-Wall/-Wextra/-Wshadow and the
+# CUDA host CXXWARN_FLAGS). No codegen impact; off by default to keep the build
+# quiet. Build with `make lint=1` to surface them.
+lint      ?= 0
 
 ################################################################################
 ifeq ($(cuda),0)

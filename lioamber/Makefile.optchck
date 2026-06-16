@@ -24,6 +24,11 @@ parallel  ?= 0
 precision ?= 0
 cpu_precision ?= 1
 analytics ?= 0
+# lint: enable warning-only diagnostic flags (no codegen impact). Off by
+# default to keep the build quiet; build with `make lint=1` to surface them.
+# Not part of the build-consistency check below, so toggling it does not abort
+# a build; run `make clean` first to force recompilation under the new flags.
+lint      ?= 0
 
 ifeq ("$(shell git rev-parse --is-inside-work-tree 2>/dev/null)","true")
    version = $(shell git describe --tags --dirty --always)
