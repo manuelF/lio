@@ -313,10 +313,12 @@ contains
       dipxyz = 0.0D0  ; g      = 1.00D0
       factor = 2.54D0 ; tol    = 1.00D-16
 
-      call dipole(dipxyz, rho, nElecs, r, d, atom_z, mm_crg, .true.)
-
+      ! dipxyz is only used in the field-energy term below, so compute the
+      ! (non-trivial) dipole only when a field is actually present. On a
+      ! field-free step this skips a wasted dipole() call every TD step.
       call field_calc_all(Fx, Fy, Fz, time)
       if ((abs(Fx).lt.tol) .and. (abs(Fy).lt.tol) .and. (abs(Fz).lt.tol)) return
+      call dipole(dipxyz, rho, nElecs, r, d, atom_z, mm_crg, .true.)
       call intfld(Fmat, Fmat_B, r, d, natom, ntatom, opshell, g, Fx, Fy, Fz)
       energ = - g * (Fx*dipxyz(1) + Fy*dipxyz(2) + Fz*dipxyz(3)) / factor -   &
                 0.50D0 * (1.0D0 - 1.0D0/epsilon) * chrg_sq/a0
