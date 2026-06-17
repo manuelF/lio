@@ -55,6 +55,8 @@
 #include "../datatypes/datatypes.fh"
 
 module subm_intECPG
+   use gpu_interface
+   use gpu_timers_interface
 contains
 subroutine intECPG()
    use basis_data   , only: Nuc,M, ncont, a

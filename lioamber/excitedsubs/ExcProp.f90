@@ -14,6 +14,7 @@ use excited_data, only: lresp, nstates, root, pack_dens_exc, second_LR, &
                         Tdip_save, save_tlr, state_LR, ESAfosc
 use basis_data  , only: M
 use td_data     , only: timedep
+   use gpu_timers_interface
    implicit none
 
    LIODBLE, intent(in)           :: CoefA(:,:), EneA(:)

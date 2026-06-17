@@ -15,6 +15,7 @@
       use garcha_mod, only : r, v, Em, Rm, pc, natom, ntatom, nsol, rqm, &
                              writexyz, Iz
 
+          use gpu_timers_interface
           implicit none
           integer, intent(in) :: nsolin
           LIODBLE , intent(in) :: qmcoords(3,natom), clcoords(4,nsolin)
@@ -81,6 +82,7 @@ subroutine ehren_in( qmcoords, qmvels, clcoords, nsolin, dipxyz, E)
    use ehrensubs,     only: ehrenaux_masses
    use debug_tools,   only: Check_posvel
    use constants_mod, only: bohr
+   use gpu_timers_interface
    implicit none
    integer, intent(in)    :: nsolin
    LIODBLE,  intent(in)    :: qmcoords(3,natom)
@@ -127,6 +129,7 @@ end subroutine ehren_in
       use garcha_mod, only : nsol, ntatom, natom, r, v, Em, Rm, pc, rqm, Iz, &
                              writexyz
 
+          use gpu_timers_interface
           implicit none
           integer, intent(in) :: nsolin
           LIODBLE , intent(in) :: qmcoords(3*natom), clcoords(3*nsolin), &
@@ -192,6 +195,7 @@ subroutine SCF_hyb(hyb_natom, mm_natom, hyb_r, E, fdummy, Iz_cl,do_SCF, do_QM_fo
     use fstsh_data   , only : FSTSH, call_number
     use fstshsubs    , only : do_electronic_interpolation
     use constants_mod, only : H_to_eV
+    use gpu_timers_interface
     implicit none
     integer, intent(in) :: hyb_natom, mm_natom !number of QM and MM atoms
     LIODBLE, intent(in) :: hyb_r(3,hyb_natom+mm_natom), Iz_cl(mm_natom) !positions and charge of MM atoms

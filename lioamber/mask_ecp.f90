@@ -1,6 +1,7 @@
 #include "datatypes/datatypes.fh"
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 module mask_ecp
+   use gpu_timers_interface
    implicit none
    contains
 

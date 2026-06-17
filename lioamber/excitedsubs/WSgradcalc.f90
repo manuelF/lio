@@ -4,6 +4,7 @@ use garcha_mod  , only: Pmat_en_wgt, r, d, ntatom
 use excited_data, only: Cocc, Cocc_trans, Coef_trans, fittExcited
 use faint_cpu   , only: intSG
 use extern_functional_data, only: need_HF
+   use gpu_timers_interface
    implicit none
 
    integer, intent(in) :: M, Mlr, Ndim, NCO, natom

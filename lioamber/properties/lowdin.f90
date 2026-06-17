@@ -7,6 +7,7 @@ subroutine lowdin_cs(Pmat, Smat_sq, atom_of_func, atom_z, atom_q)
    ! Smat_sq     : Lowdin-orthogonalised overlap matrix. Size Nfuncs x Nfuncs.
    ! atom_of_func: Atom center of a given function. Size Nfuncs.
    ! atom_q      : Atomic charges output. Size Natoms
+   use gpu_timers_interface
    implicit none
    integer , intent(in)  :: atom_of_func(:)
    integer , intent(in)  :: atom_z(:)
@@ -44,6 +45,7 @@ subroutine lowdin_os(Pmat_a, Pmat_b, Smat_sq, atom_of_func, atom_z, atom_q, atom
    ! atom_of_func: Atom center of a given function. Size Nfuncs.
    ! atom_q      : Atomic charges output. Size Natoms
    ! atom_s      : Atomic spin population output. Size Natoms
+   use gpu_timers_interface
    implicit none
    integer , intent(in)  :: atom_of_func(:)
    integer , intent(in)  :: atom_z(:)
@@ -76,6 +78,7 @@ end subroutine lowdin_os
 subroutine print_lowdin_cs(Pmat, Smat, atom_of_func, atom_z, real_z)
    use properties_data, only: UIDs, flowdin
    
+   use gpu_timers_interface
    implicit none
    LIODBLE, intent(in) :: Pmat(:,:)
    LIODBLE, intent(in) :: Smat(:,:)
@@ -98,6 +101,7 @@ end subroutine print_lowdin_cs
 subroutine print_lowdin_os(Pmat, Pmat_b, Smat, atom_of_func, atom_z, real_z)
    use properties_data, only: UIDs, flowdin
    
+   use gpu_timers_interface
    implicit none
    LIODBLE, intent(in) :: Pmat(:,:)
    LIODBLE, intent(in) :: Pmat_b(:,:)

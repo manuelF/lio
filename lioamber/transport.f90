@@ -23,6 +23,9 @@ module transport_data
 end module transport_data
 
 module transport_subs
+   use lio_interface
+   use packed_storage_interface
+   use gpu_timers_interface
    implicit none
 contains
 
@@ -165,7 +168,6 @@ subroutine transport_rho_trace(M, dim3, rho)
    TDCOMPLEX, intent(in) :: rho(M,M,dim3)
    integer   :: icount
    TDCOMPLEX :: traza
-   TDCOMPLEX :: liocmplx
 
    traza = liocmplx(0.0D0, 0.0D0)
    do icount = 1, M
@@ -314,7 +316,6 @@ subroutine electrostat(rho1, Gamma0, M,Nuc, spin)
 
    TDCOMPLEX, intent(inout) :: rho1(M,M)
    TDCOMPLEX, allocatable   :: rho_scratch(:,:,:)
-   TDCOMPLEX :: liocmplx
 
    call g2g_timer_start('electrostat')
    allocate(rho_scratch(M,M,2))

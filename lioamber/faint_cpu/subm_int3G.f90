@@ -35,6 +35,8 @@
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 #include "../datatypes/datatypes.fh"
 module subm_int3G
+   use gpu_interface
+   use gpu_timers_interface
 contains
 subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
 
@@ -142,9 +144,9 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    call int2G(frc, natom, ntatom, r, d)
    call g2g_timer_sum_start('Exchange-correlation gradients')
    if (calc_energy) then
-      call g2g_solve_groups(2, t1, frc)
+      call g2g_solve_groups(2, t1, frc(1,1))
    else
-      call g2g_solve_groups(3, t1, frc)
+      call g2g_solve_groups(3, t1, frc(1,1))
    endif
    call g2g_timer_sum_stop('Exchange-correlation gradients')
 

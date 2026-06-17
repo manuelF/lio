@@ -36,6 +36,9 @@ module extern_functional_data
 end module extern_functional_data
 
 module extern_functional_subs
+   use packed_storage_interface
+   use gpu_interface
+   use gpu_timers_interface
    implicit none
 contains
 subroutine libint_init(c_raw,libint_recalc)

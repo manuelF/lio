@@ -36,6 +36,8 @@ subroutine lio_defaults()
                           w_rho_dtheta, w_rho_dphi, write1Drho
 
 
+    use gpu_timers_interface
+    use gpu_interface
     implicit none
 
 !   Names of files used for input and output.
@@ -119,6 +121,8 @@ subroutine init_lio_common(natomin, Izin, nclatom, callfrom)
     use tbdft_data, only: MTB, tbdft_calc
     use dftd3     , only: dftd3_setup
 
+    use gpu_timers_interface
+    use gpu_interface
     implicit none
     integer , intent(in) :: nclatom, natomin, Izin(natomin), callfrom
     integer              :: iostat
@@ -204,6 +208,8 @@ subroutine init_lio_amber_new(natomin, Izin, nclatom, charge_i, amber_dt, &
    use fstshsubs , only: tsh_init
    use lj_switch , only: ljs_initialise
 
+   use gpu_timers_interface
+   use gpu_interface
    implicit none
    character(len=*), intent(in)  :: input_file
    integer         , intent(in)  :: charge_i, nclatom, natomin, Izin(natomin)
@@ -247,6 +253,8 @@ end subroutine init_lio_amber_new
 subroutine init_lio_gromacs(natomin, Izin, nclatom, chargein)
     use garcha_mod, only: charge
 
+    use gpu_timers_interface
+    use gpu_interface
     implicit none
     integer,  intent(in) :: chargein, nclatom, natomin, Izin(natomin)
     integer              :: ierr
@@ -277,6 +285,8 @@ subroutine init_lio_hybrid(version_check, hyb_natom, mm_natom, chargein, iza, sp
     use fstshsubs , only: fstsh_init
     use constants_mod , only: massprot_elec
 
+    use gpu_timers_interface
+    use gpu_interface
     implicit none
     integer, intent(in) :: hyb_natom !number of total atoms
     integer, intent(in) :: mm_natom  !number of MM atoms
@@ -356,6 +366,8 @@ subroutine init_lio_amber(natomin, Izin, nclatom, charge_i, basis_i, output_i, &
    use fileio_data   , only: verbose
    use converger_data, only: DIIS, nDIIS, gOld, tolD, nMax
 
+   use gpu_timers_interface
+   use gpu_interface
    implicit none
 
    ! Variables received from &lio namelist in amber input file.

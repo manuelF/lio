@@ -1,6 +1,7 @@
 subroutine Zvector(C,Ene,X,TundAO,Xmat,Zvec,Qvec,Gxc,NCO,M,Mlr,Ndim,Nvirt)
 use excited_data, only: fittExcited
 use extern_functional_data, only: need_HF
+   use gpu_timers_interface
    implicit none
 
    integer, intent(in) :: NCO, M, Mlr, Ndim, Nvirt

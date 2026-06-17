@@ -27,6 +27,7 @@
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 #include "../datatypes/datatypes.fh"
 module subm_int1G
+   use gpu_interface
 contains
 subroutine int1G(ff, rho, d, r, Iz, natom, ntatom, doNUC, doALL)
    use basis_data   , only: M, a, c, Nuc, ncont, nshell, NORM

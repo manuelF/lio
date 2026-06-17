@@ -18,6 +18,7 @@ subroutine RMMcalc3_FockMao( DensMao, ElecField, FockMao, DipMom, Energy )
 
    use ehrendata, only: eefld_on
 
+   use gpu_timers_interface
    implicit none
    complex(kind=8),intent(in) :: DensMao(M,M)
    LIODBLE,intent(in)     :: ElecField(3)
@@ -41,7 +42,7 @@ subroutine RMMcalc3_FockMao( DensMao, ElecField, FockMao, DipMom, Energy )
    call rmmput_dens( DensMao )
    call int3lu(Energy_Coulomb, Pmat_vec, Fmat_vec2, Fmat_vec, Gmat_vec, &
                Ginv_vec, Hmat_vec, open, MEMO)
-   call g2g_solve_groups( 0, Energy_Exchange, 0 )
+   call g2g_solve_groups( 0, Energy_Exchange, 0.0D0)
    call g2g_timer_stop('RMMcalc3-solve3lu')
 !
 !

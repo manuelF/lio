@@ -4,6 +4,7 @@
 ! MOs. In a closed-shell context, enAH=enBH and enAL=enBL.                     !
 subroutine get_softness(enAH, enAL, enBH, enBL, softness)
 
+   use gpu_timers_interface
    implicit none
    LIODBLE, intent(in)  :: enAH, enAL, enBH, enBL
    LIODBLE, intent(out) :: softness
@@ -26,6 +27,7 @@ subroutine fukui_calc_cs(fukuiRad, fukuiNeg, fukuiPos, coef, nOcc, NofM, Smat, &
    ! shapeX          : Shape factor for the MO of interest = Atomic   !
    !                   contributions to HOMO/LUMO MOs.                !
    ! nDegX, degMOX   : Degeneration of such MOs.                      !
+   use gpu_timers_interface
    implicit none
    integer, intent(in)  :: NofM(:), nOcc
    LIODBLE, intent(in)  :: coef(:,:)  , Smat(:,:)  , ener(:) 
@@ -91,6 +93,7 @@ subroutine fukui_calc_os(fukuiRad, fukuiNeg, fukuiPos, coefAlp, coefBet, &
    ! shapeXY         : Shape factor for the MO of interest = Atomic   !
    !                   contributions to HOMO/LUMO MOs.                !
    ! nDegXY, degMOXY : Degeneration of such MOs.                      !
+   use gpu_timers_interface
    implicit none
    integer, intent(in)  :: NofM(:), nAlpha, nBeta
    LIODBLE, intent(in)  :: coefAlp(:,:), coefBet(:,:), Smat(:,:)
@@ -162,6 +165,7 @@ end subroutine fukui_calc_os
 ! and printing.
 subroutine print_fukui_cs(coefs, nOcc, atom_of_func, Smat, Eorbs, atom_z,&
                           real_atom_z)
+   use gpu_timers_interface
    implicit none
    integer, intent(in)  :: atom_of_func(:), atom_z(:), real_atom_z(:), nOcc
    LIODBLE, intent(in)  :: coefs(:,:), Smat(:,:), Eorbs(:) 
@@ -187,6 +191,7 @@ end subroutine print_fukui_cs
 
 subroutine print_fukui_os(coefs, coefs_b, nOcc, nOcc_b, atom_of_func, Smat, &
                           Eorbs, Eorbs_b, atom_z, real_atom_z)
+   use gpu_timers_interface
    implicit none
    integer, intent(in)  :: atom_of_func(:), atom_z(:), real_atom_z(:)
    integer, intent(in)  :: nOcc, nOcc_b
@@ -218,6 +223,7 @@ end subroutine print_fukui_os
 ! softness for the molecule.                                                   !
 subroutine write_fukui_core(fukuiNeg, fukuiPos, fukuiRad, atom_z, soft)
    use properties_data, only: UIDs
+   use gpu_timers_interface
    implicit none
    integer, intent(in) :: atom_z(:)
    LIODBLE, intent(in) :: fukuiNeg(:)

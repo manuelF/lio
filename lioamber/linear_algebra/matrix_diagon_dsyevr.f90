@@ -21,7 +21,6 @@ subroutine matrix_diagon_dsyevr( matrix_in, eigen_vecs, eigen_vals , info )
 
   integer            :: M
   integer            :: local_stat
-  LIODBLE             :: dlamch
   LIODBLE,  parameter :: zero_d=0.0d0
   integer, parameter :: zero_i=0
 !

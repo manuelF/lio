@@ -27,6 +27,9 @@
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 #include "../datatypes/datatypes.fh"
 module subm_int2
+   use gpu_interface
+   use gpu_timers_interface
+   use linalg_interface
 contains
 subroutine int2(Gmat, Ginv, r, d, ntatom)
    use basis_data   , only: Md, nshelld, ncontd, ad, cd, norm, Nucd

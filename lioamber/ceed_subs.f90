@@ -1,5 +1,6 @@
 #include "datatypes/datatypes.fh"
 module ceed_subs
+   use lio_interface
    implicit none
 contains
 
@@ -84,7 +85,6 @@ subroutine ceed_fock_calculation(fock, rho_aux, M, t_step, dim3, open_shell)
    LIODBLE                :: aux_mat2(M,M,dim3)
    LIODBLE                :: aux_mat3(M,M,dim3)
    TDCOMPLEX              :: aux_mat4(M,M,dim3)
-   TDCOMPLEX              :: liocmplx
 
    if (.not.ceed_calc) return
 

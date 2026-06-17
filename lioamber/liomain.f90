@@ -39,6 +39,8 @@ subroutine liomain(E, dipxyz)
    use properties      , only: do_dipole, dipole
    use extern_functional_data, only: libint_inited
 
+   use gpu_timers_interface
+   use packed_storage_interface
    implicit none
    LIODBLE  , intent(inout) :: E, dipxyz(3)
 
@@ -158,6 +160,8 @@ subroutine do_forces(uid)
     use garcha_mod, only: natom, nsol
     use fileio    , only: write_forces
 
+    use gpu_timers_interface
+    use packed_storage_interface
     implicit none
     integer     , intent(in)  :: uid
     LIODBLE, allocatable :: dxyzqm(:,:), dxyzcl(:,:)
@@ -200,6 +204,8 @@ subroutine do_population_analysis(rho_tot, rho_a, rho_b)
    use ECP_mod         , only: ecpmode, IzECP
    use SCF_aux         , only: fix_densmat
 
+   use gpu_timers_interface
+   use packed_storage_interface
    implicit none
    LIODBLE, intent(in)  :: rho_a(MM), rho_b(MM), rho_tot(MM)
 
@@ -270,6 +276,8 @@ subroutine do_fukui_calc()
    use ECP_mod   , only: ecpmode, IzECP
    use tbdft_data, only: MTB, tbdft_calc
    
+   use gpu_timers_interface
+   use packed_storage_interface
    implicit none
    integer :: NCO_f
    integer, allocatable :: true_iz(:)
@@ -305,6 +313,8 @@ subroutine do_restart(UID, rho_total)
    use fileio     , only: write_coef_restart, write_rho_restart
    use tbdft_data,  only: MTB, tbdft_calc
 
+   use gpu_timers_interface
+   use packed_storage_interface
    implicit none
    integer         , intent(in) :: UID
    LIODBLE, intent(in) :: rho_total(MM)

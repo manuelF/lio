@@ -20,6 +20,7 @@ module cubegen_data
 end module cubegen_data
 
 module cubegen
+   use gpu_timers_interface
    implicit none
 contains
 

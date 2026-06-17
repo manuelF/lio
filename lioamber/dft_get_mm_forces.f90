@@ -8,6 +8,8 @@ subroutine dft_get_mm_forces(dxyzcl, dxyzqm)
    use lj_switch , only: ljs_gradients_qmmm
    use excited_data,only: excited_forces, pack_dens_exc
 
+   use gpu_timers_interface
+   use gpu_interface
    implicit none
    LIODBLE, intent(inout) :: dxyzqm(3, natom)
    LIODBLE, intent(inout) :: dxyzcl(3, nsol)

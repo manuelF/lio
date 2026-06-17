@@ -22,6 +22,7 @@ subroutine rho_ls_init(open_shell, MM)
    use converger_data, only: rho_lambda0, rho_lambda1, rhoa_lambda0, &
                              rhoa_lambda1, rhob_lambda0,        &
                              rhob_lambda1, rho_LS
+   use gpu_timers_interface
    implicit none
    logical, intent(in) :: open_shell
    integer, intent(in) :: MM
@@ -41,6 +42,7 @@ subroutine rho_ls_switch(open_shell, MM, switch_LS)
    use fileio        , only: write_ls_convergence
    use converger_data, only: nMax, rho_ls
 
+   use gpu_timers_interface
    implicit none
    integer, intent(in)  :: MM
    logical, intent(in)  :: open_shell
@@ -58,6 +60,7 @@ subroutine rho_ls_finalise()
    use converger_data, only: rho_lambda0, rho_lambda1, rhoa_lambda0, &
                              rhoa_lambda1, rhob_lambda0,        &
                              rhob_lambda1, rho_LS
+   use gpu_timers_interface
    implicit none
    
    if (rho_LS < 1) return
@@ -77,6 +80,7 @@ subroutine do_rho_ls(En, E1, E2, Ex, rho_new, rho_old, Hmat_vec,        &
    !   = 1 do linear search for density matrix if energy > previous energy.
    !   = 2 do linear search for density matrix in all steps.
 
+   use gpu_timers_interface
    implicit none
    ! Step number and energies.
    LIODBLE, intent(inout) :: E1, E2, Ex, En
@@ -112,6 +116,7 @@ subroutine rho_linear_calc(En, E1, E2, Ex, rho_new, rho_old, Hmat_vec, Fmat_vec,
    use converger_data, only: rho_lambda0, rho_lambda1, rhoa_lambda0,   &
                              rhoa_lambda1, rhob_lambda0, rhob_lambda1, & 
                              Elast, pstepsize, first_call
+   use gpu_timers_interface
    implicit none
    logical     , intent(in)    :: int_memo
    LIODBLE, intent(inout) :: En, E1, E2, Ex
@@ -137,7 +142,6 @@ subroutine rho_linear_calc(En, E1, E2, Ex, rho_new, rho_old, Hmat_vec, Fmat_vec,
    ! g2g fast path is unavailable (GPU groups / libxc), falling back to recompute.
    integer            :: ls_status
    logical            :: ls_reuse
-   integer, external  :: g2g_ls_set_endpoints, g2g_ls_set_endpoints_open
 
    M  = size(rho_new,1)
    MM = size(rho_old,1)
@@ -281,6 +285,7 @@ subroutine give_me_energy(E, En, E1, E2, Ex, Pmat_vec, Hmat_vec, Fmat_vec, &
                           ls_lambda, ls_reuse)
    !  return Energy components for a density matrix stored in Pmat_vec
    use faint_cpu, only: int3lu
+   use gpu_timers_interface
    implicit none
    logical     , intent(in)    :: open_shell, int_memo
    LIODBLE, intent(in)    :: En
@@ -315,7 +320,7 @@ subroutine give_me_energy(E, En, E1, E2, Ex, Pmat_vec, Hmat_vec, Fmat_vec, &
    if (ls_reuse) then
       call g2g_ls_energy(ls_lambda, Ex)
    else
-      call g2g_solve_groups(1,Ex,0)
+      call g2g_solve_groups(1,Ex, 0.0D0)
    endif
    call g2g_timer_sum_pause('LS - XC g2g')
 

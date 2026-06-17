@@ -11,6 +11,7 @@ subroutine linear_response(MatCoef,VecEne,Xexc,Eexc,M,Mlr,Nvirt,NCO,dim,code)
 ! Eexc: Excitation Energies
 use garcha_mod  , only: npas
 use excited_data, only: nstates, fittExcited, use_last, guessLR, max_subs
+   use gpu_timers_interface
    implicit none
    integer, intent(in) :: M, Mlr, Nvirt, NCO, dim, code
    LIODBLE, intent(in)  :: MatCoef(M,Mlr), VecEne(Mlr)

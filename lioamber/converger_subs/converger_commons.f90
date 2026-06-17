@@ -57,6 +57,7 @@ subroutine converger_init( M_in, OPshell )
    ! Initialises and allocates matrices.
    use converger_data, only: fock_damped, told, etold, scf_prev_was_diis, &
                              scf_prev_energy_rise
+   use gpu_timers_interface
    implicit none
    integer         , intent(in) :: M_in
    logical         , intent(in) :: OPshell
@@ -83,6 +84,7 @@ end subroutine converger_init
 subroutine converger_finalise()
    ! Deallocates matrices for the convergence acceleration module.
    use converger_data, only: fock_damped
+   use gpu_timers_interface
    implicit none
 
    if (allocated(fock_damped)) deallocate(fock_damped)
@@ -102,6 +104,7 @@ subroutine converger_setup(niter, M_in, dens_op, fock_op, energy, &
    use typedef_operator, only: operator
    use typedef_cumat   , only: cumat_r
 
+   use gpu_timers_interface
    implicit none
    integer        , intent(in)              :: niter, M_in
    type(cumat_r)  , intent(in)              :: Xmat, Ymat
@@ -188,6 +191,7 @@ subroutine converger_fock(niter, M_in, fock_op, spin, n_orbs, HL_gap, Xmat)
    use typedef_operator, only: operator
    use typedef_cumat   , only: cumat_r
 
+   use gpu_timers_interface
    implicit none
    ! Spin allows to store correctly alpha or beta information. - Carlos
    integer        , intent(in)    :: niter, M_in, spin, n_orbs
@@ -267,6 +271,7 @@ subroutine select_methods(diis_on, ediis_on, bdiis_on, niter, verbose, spin)
                              bdiis_started, scf_prev_energy_rise,     &
                              scf_prev_was_diis, scf_rollback_threshold, &
                              scf_rollback_rho_gate
+   use gpu_timers_interface
    implicit none
    integer, intent(in)      :: niter, verbose, spin
    logical, intent(out)     :: diis_on, ediis_on, bdiis_on
@@ -367,6 +372,7 @@ subroutine converger_check(rho_old, rho_new, energy_old, energy_new, &
 
    ! Calculates convergence criteria in density matrix, and
    ! store new density matrix in Pmat_vec.
+   use gpu_timers_interface
    implicit none
    integer     , intent(in)  :: n_iterations
    logical     , intent(in)  :: open_shell

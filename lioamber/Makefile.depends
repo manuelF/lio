@@ -46,6 +46,12 @@ OBJECTS += field_subs.o
 OBJECTS += propagators.o
 OBJECTS += rhoint.o
 OBJECTS += convert_types.o
+OBJECTS += gpu_timers_interface.o
+OBJECTS += linalg_interface.o
+OBJECTS += gpu_interface.o
+OBJECTS += openblas_interface.o
+OBJECTS += packed_storage_interface.o
+OBJECTS += lio_interface.o
 
 ################################################################################
 # GENERIC DEPENDENCIES
@@ -53,6 +59,50 @@ OBJECTS += convert_types.o
 tmplist := transport.o ceed_subs.o tbdft_subs.o TD.o
 tmplist += packed_storage.o propagators.o liosubs_math.o liosubs_math.mod
 $(tmplist:%.o=$(OBJPATH)/%.o) : convert_types.o
+
+# Explicit interfaces for the g2g_timer_* C hooks (silences -Wimplicit-interface
+# at the timer call sites). Any object whose sources contain
+# `use gpu_timers_interface` must list its object here so the .mod is built
+# first. Files #included into an aggregator object (ehrensubs/, excitedsubs/,
+# converger_subs/, properties/) are covered by the aggregator object below.
+tmplist := SCF.o subm_int3lu.o subm_int2.o subm_int3G.o initial_guess.o
+tmplist += subm_intECP.o subm_intECPG.o
+tmplist += propagators.o mask_ecp.o TD.o extern_functional.o cubegen.o transport.o
+tmplist += liomain.o drive.o init_lio.o lio_finalize.o SCF_exter.o
+tmplist += dft_get_mm_forces.o dft_get_qm_forces.o
+tmplist += ehrensubs.o excitedsubs.o converger_subs.o properties.o
+$(tmplist:%.o=$(OBJPATH)/%.o) : gpu_timers_interface.o
+
+# Explicit BLAS/LAPACK interfaces (silences -Wimplicit-interface at the call
+# sites). Aggregator objects cover their #included subdir fragments.
+tmplist := SCF.o TD.o subm_int2.o subm_int3lu.o initial_guess.o fock_commuts.o
+tmplist += excitedsubs.o ehrensubs.o liosubs_math.o linear_algebra.o mathsubs.o
+tmplist += typedef_cumat.o typedef_operator.o cdft_subs.o converger_subs.o
+$(tmplist:%.o=$(OBJPATH)/%.o) : linalg_interface.o
+
+# Explicit interfaces for the g2g_*/aint_*/int3lu_gpu_* C hooks.
+tmplist := SCF.o TD.o subm_int1.o subm_int1G.o subm_int2.o subm_int3G.o
+tmplist += subm_int3lu.o subm_int3mem.o subm_intECPG.o
+tmplist += extern_functional.o init_lio.o lio_finalize.o drive.o
+tmplist += dft_get_mm_forces.o dft_get_qm_forces.o
+tmplist += cdft_subs.o ehrensubs.o excitedsubs.o converger_subs.o fstshsubs.o
+tmplist += properties.o
+$(tmplist:%.o=$(OBJPATH)/%.o) : gpu_interface.o
+
+# Explicit interfaces for the OpenBLAS thread-control extensions.
+tmplist := SCF.o TD.o
+$(tmplist:%.o=$(OBJPATH)/%.o) : openblas_interface.o
+
+# Explicit interfaces for the packed<->square storage helpers.
+tmplist := SCF.o TD.o drive.o liomain.o propagators.o transport.o tbdft_subs.o
+tmplist += extern_functional.o initial_guess.o
+tmplist += excitedsubs.o cdft_subs.o properties.o
+$(tmplist:%.o=$(OBJPATH)/%.o) : packed_storage_interface.o
+
+# Explicit interfaces for bare-external LIO procedures (liocmplx, ...).
+tmplist := TD.o propagators.o transport.o tbdft_subs.o ceed_subs.o
+tmplist += liosubs_math.o packed_storage.o
+$(tmplist:%.o=$(OBJPATH)/%.o) : lio_interface.o
 
 ################################################################################
 tmplist := SCF.o readECP.o drive.o generalECP.o init.o init_lio.o

@@ -25,6 +25,7 @@ subroutine ehrendyn_main( energy_o, dipmom_o )
    use fileio, &
    &  only: movieprint
 
+   use gpu_timers_interface
    implicit none
    LIODBLE,intent(inout) :: dipmom_o(3), energy_o
    LIODBLE               :: dipmom(3)  , energy  , energy0

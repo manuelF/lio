@@ -13,6 +13,8 @@ subroutine lio_finalize()
    use lj_switch     , only: ljs_finalise
    use ceed_subs     , only: ceed_finalize
 
+   use gpu_timers_interface
+   use gpu_interface
    implicit none
    call basis_deinit() ! Deallocates basis variables.
    if (ecpmode) call generalECP(4) ! Deallocates ECP variables.

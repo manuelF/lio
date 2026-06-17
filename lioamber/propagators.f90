@@ -4,6 +4,9 @@
 ! This file contains the routine for an N-order magnus propagation.            !
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 module propagators
+   use lio_interface
+   use packed_storage_interface
+   use gpu_timers_interface
 
 contains
 
@@ -82,7 +85,7 @@ subroutine predictor(F1a, F1b, FON, rho2, factorial, Xmat, Xtrans, timestep, &
                Hmat_vec, open, MEMO)
    call g2g_timer_sum_pause("TD - Pred int3lu")
    call g2g_timer_sum_start("TD - Pred XC (g2g)")
-   call g2g_solve_groups(0, Ex, 0)
+   call g2g_solve_groups(0, Ex, 0.0D0)
    call g2g_timer_sum_pause("TD - Pred XC (g2g)")
    call g2g_timer_sum_start("TD - Pred ExactX")
    call do_TDexactExchange(Fmat_vec,Fmat_vec2,Ehf,MM,M,open)
@@ -128,7 +131,6 @@ subroutine magnus(Fock, RhoOld, RhoNew, M, N, dt, factorial)
 
    integer       :: icount, jcount
    TDCOMPLEX     :: alpha, beta, ICMPLX
-   TDCOMPLEX     :: liocmplx
 
    ! Persistent scratch across TD steps. Sized on first call, reused.
    ! Avoids per-call alloc/destroy of M*M complex buffers; combined with

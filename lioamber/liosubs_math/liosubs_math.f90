@@ -7,6 +7,8 @@ module math_data
 end module math_data
 
 module liosubs_math
+   use lio_interface
+   use linalg_interface
 !--------------------------------------------------------------------!
    implicit none
 

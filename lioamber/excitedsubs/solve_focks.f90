@@ -2,6 +2,7 @@ subroutine solve_focks(MatCoef,tvecMO,AX,M,Mlr,NCO,Nvirt,Ndim,&
                        max_subs, vec_dim,Subdim,first_vec)
 use excited_data, only: fittExcited
 use extern_functional_data, only: need_HF
+   use gpu_timers_interface
    implicit none
 
    integer, intent(in) :: M, Mlr, NCO, Nvirt, Ndim, max_subs, &

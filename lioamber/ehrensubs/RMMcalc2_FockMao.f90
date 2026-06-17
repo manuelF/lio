@@ -11,6 +11,7 @@ subroutine RMMcalc2_FockMao( FockMao, Energy )
                           Gmat_vec, Ginv_vec, Hmat_vec, Pmat_vec
    use basis_data,  only: M, kkind, kkinds, cool, cools, MM
 
+   use gpu_timers_interface
    implicit none
    LIODBLE,intent(out)    :: FockMao(M,M)
    LIODBLE,intent(out)    :: Energy

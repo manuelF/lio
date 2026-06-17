@@ -11,6 +11,7 @@
 !
 #include "../datatypes/datatypes.fh"
 module typedef_cumat
+   use linalg_interface
    implicit none
 
 #  ifdef CUBLAS

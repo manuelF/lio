@@ -15,6 +15,8 @@ subroutine dft_get_qm_forces(dxyzqm)
    use dftd3      , only: dftd3_gradients
    use excited_data,only: for_exc, excited_forces
    use extern_functional_subs, only: exact_exchange_forces
+   use gpu_timers_interface
+   use gpu_interface
    implicit none
    LIODBLE, intent(out) :: dxyzqm(3,natom)
    LIODBLE, allocatable :: ff1G(:,:),ffSG(:,:),ff3G(:,:), ffECPG(:,:), ffvdw(:,:)
@@ -40,7 +42,10 @@ subroutine dft_get_qm_forces(dxyzqm)
       elseif (nsol .le. 0) then
          call g2g_timer_sum_start('Nuclear attraction gradients')
          call int1G(ff1G, Pmat_vec, d, r, Iz, natom, ntatom, .true., .false.)
-         call aint_qmmm_forces(ff1G,0)
+         ! nsol<=0 => clatoms==0, so the C side never dereferences mm_forces;
+         ! ff1G is passed as a type-correct, non-dereferenced placeholder
+         ! (was a bare integer 0 sentinel under the old implicit interface).
+         call aint_qmmm_forces(ff1G,ff1G)
          call g2g_timer_sum_stop('Nuclear attraction gradients')
       endif
       call g2g_timer_stop('int1G')

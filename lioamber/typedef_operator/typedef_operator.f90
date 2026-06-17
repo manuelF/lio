@@ -1,5 +1,6 @@
 #include "../datatypes/datatypes.fh"
 module typedef_operator
+   use linalg_interface
 
    type operator
      LIODBLE, allocatable     :: data_AO(:,:)

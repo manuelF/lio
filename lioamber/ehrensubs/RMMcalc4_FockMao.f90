@@ -22,6 +22,7 @@ subroutine RMMcalc4_FockMao( DensMao, FockMao, DipMom, Energy )
    &only: eefld_on, eefld_ampx, eefld_ampy, eefld_ampz, eefld_wavelen        &
        &, eefld_timegih, eefld_timegfh, eefld_timepos, eefld_timeamp
 
+   use gpu_timers_interface
    implicit none
    complex(kind=8),intent(in) :: DensMao(M,M)
    LIODBLE,intent(out)    :: FockMao(M,M)
@@ -84,7 +85,7 @@ subroutine RMMcalc4_FockMao( DensMao, FockMao, DipMom, Energy )
    call rmmput_dens(DensMao)
    call int3lu(Energy_Coulomb, Pmat_vec, Fmat_vec2, Fmat_vec, Gmat_vec, &
                Ginv_vec, Hmat_vec, open, MEMO)
-   call g2g_solve_groups(0,Energy_Exchange,0)
+   call g2g_solve_groups(0,Energy_Exchange, 0.0D0)
    call g2g_timer_stop('RMMcalc4-solve3lu')
 
 !

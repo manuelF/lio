@@ -7,6 +7,7 @@
 !   * open_shell: Logical indicating open shell calculation.
 subroutine print_becke(atom_z, open_shell)
    use properties_data, only: UIDs, fbecke
+   use gpu_timers_interface
    implicit none
    integer, intent(in)  :: atom_z(:)
    logical, intent(in)  :: open_shell

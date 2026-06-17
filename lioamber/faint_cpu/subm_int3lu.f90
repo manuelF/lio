@@ -51,6 +51,9 @@
 ! Optimized with BLAS:                    Claude/Manuel Mar/2026               !
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 module subm_int3lu
+   use gpu_interface
+   use gpu_timers_interface
+   use linalg_interface
    implicit none
    private
    public :: int3lu
@@ -85,7 +88,6 @@ subroutine int3lu(E2, rho, Fmat_b, Fmat, Gmat, Ginv, Hmat, open_shell, memo, &
    integer          :: use_gpu
 
    ! BLAS function declarations
-   double precision, external :: ddot
 
    Ea = 0.D0 ; Eb = 0.D0
    do_fock = .true.

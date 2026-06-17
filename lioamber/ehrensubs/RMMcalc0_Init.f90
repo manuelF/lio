@@ -8,6 +8,7 @@ subroutine RMMcalc0_Init()
   use garcha_mod, only: igrid2, natom, d, r, Iz
   use basis_data, only: nuc, nshell, atmin, natomc,  rmax, jatc, nnps, nnpp, &
                         nnpd, M
+  use gpu_timers_interface
   implicit none
   LIODBLE   :: alf,rexp,zij,ti,tj
   integer  :: ii,jj

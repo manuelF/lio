@@ -67,9 +67,15 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
    use dftd3, only: dftd3_energy
    use properties, only: do_lowdin
    use extern_functional_subs, only: libint_init, exact_exchange, exact_energies
+   use gpu_timers_interface
+   use linalg_interface
+   use gpu_interface
+   use openblas_interface
+   use omp_lib
 
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 
+   use packed_storage_interface
    implicit none
    ! E is the total SCF energy.
    ! The others are fock and rho operators alpha and beta (FOCK/RHO Alpha/Beta
@@ -162,14 +168,6 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
    integer :: prev_omp_threads
    LIODBLE :: t_int3lu, t_g2g
    LIODBLE :: t_iter0, t_fock_w, t_build_w, t_accel_w, t_diag_w, t_moc_w
-   integer, external :: openblas_get_num_threads
-   integer, external :: omp_get_max_active_levels
-   integer, external :: omp_get_max_threads
-   integer, external :: g2g_recommended_blas_threads
-   integer, external :: g2g_recommended_omp_threads
-   LIODBLE, external :: omp_get_wtime
-   external :: openblas_set_num_threads, omp_set_max_active_levels
-   external :: omp_set_num_threads
 
    ! Variables related to VdW
    LIODBLE :: E_dftd
@@ -581,7 +579,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
             end if
 !$omp section
             t_g2g = -omp_get_wtime()
-            call g2g_solve_groups_into_open(0, Exc, 0, fmat_xc_scratch, &
+            call g2g_solve_groups_into_open(0, Exc, 0.0D0, fmat_xc_scratch, &
                                             fmat_xc_scratch_b)
             t_g2g = t_g2g + omp_get_wtime()
 !$omp end parallel sections
@@ -601,7 +599,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
             end if
 !$omp section
             t_g2g = -omp_get_wtime()
-            call g2g_solve_groups_into(0, Exc, 0, fmat_xc_scratch)
+            call g2g_solve_groups_into(0, Exc, 0.0D0, fmat_xc_scratch)
             t_g2g = t_g2g + omp_get_wtime()
 !$omp end parallel sections
          endif
@@ -640,7 +638,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
 
          ! XC integration / Fock elements
          call g2g_timer_sum_start('Exchange-correlation Fock')
-         call g2g_solve_groups(0,Exc,0)
+         call g2g_solve_groups(0,Exc, 0.0D0)
          call g2g_timer_sum_pause('Exchange-correlation Fock')
 
          ! Test for NaN
@@ -921,7 +919,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
 !       Resolve with last density to get XC energy
         call g2g_timer_sum_start('Exchange-correlation energy')
         call g2g_new_grid(igrid)
-        call g2g_solve_groups(1, Exc, 0)
+        call g2g_solve_groups(1, Exc, 0.0D0)
         call g2g_timer_sum_stop('Exchange-correlation energy')
 
 !       COmputing the QM/MM contribution to total energy

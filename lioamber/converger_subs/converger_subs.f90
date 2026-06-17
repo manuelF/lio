@@ -1,5 +1,7 @@
 #include "../datatypes/datatypes.fh"
 module converger_subs
+   use gpu_interface
+   use linalg_interface
 
    implicit none
 contains

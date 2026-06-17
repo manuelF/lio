@@ -8,6 +8,7 @@ subroutine calc_forceDS_dds( natoms, nbasis, pos, vel, Mat0, fterm )
   use basis_data, only: angular_momentum=>ang_mom_ehren, gauss_coef=>c_ehren,  &
                         gauss_expo=>a_ehren, orbital_contractions=>nCont,      &
                         parent_atom=>nuc
+  use gpu_timers_interface
   implicit none
   integer,intent(in)     :: natoms          ! Number of atoms
   integer,intent(in)     :: nbasis          ! Number of basis

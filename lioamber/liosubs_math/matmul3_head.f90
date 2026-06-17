@@ -50,7 +50,6 @@ function matmul3_dcd( A_in, Bmat, C_in ) result( Dmat )
    TDCOMPLEX, allocatable :: Xmat(:,:), Amat(:,:), Cmat(:,:)
    logical :: error_found
    integer :: ii, jj
-   TDCOMPLEX :: liocmplx
 
    ! This is necessary to avoid wrong type conversions in matmul.
    allocate(Amat(size(A_in,1), size(A_in,2)))

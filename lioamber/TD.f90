@@ -46,6 +46,13 @@ module td_data
 end module td_data
 
 module time_dependent
+   use lio_interface
+   use packed_storage_interface
+   use gpu_interface
+   use openblas_interface
+   use omp_lib
+   use gpu_timers_interface
+   use linalg_interface
    implicit none
 contains
 
@@ -86,10 +93,6 @@ subroutine TD(fock_aop, rho_aop, fock_bop, rho_bop)
    logical :: is_lpfrg = .false. , fock_restart = .false.
    character(len=20) :: restart_filename
    integer :: prev_blas_threads, td_blas_threads, prev_omp_threads
-   integer, external :: openblas_get_num_threads
-   integer, external :: omp_get_max_threads
-   integer, external :: g2g_recommended_omp_threads
-   external :: openblas_set_num_threads, omp_set_num_threads
 
    LIODBLE , allocatable, dimension(:)   :: factorial
    LIODBLE , allocatable, dimension(:,:) :: overlap, Smat_initial
@@ -103,7 +106,6 @@ subroutine TD(fock_aop, rho_aop, fock_bop, rho_bop)
 
 ! Precision options.
    TDCOMPLEX :: Im
-   TDCOMPLEX :: liocmplx
    TDCOMPLEX, allocatable, dimension(:,:,:) :: rho, rho_aux, rhonew, rhold
    TDCOMPLEX, allocatable, dimension(:,:,:) :: rho_0
 
@@ -643,7 +645,6 @@ subroutine td_overlap_diag(M_f, M, Smat, Xmat, Xtrans, Ymat)
                                 X_trans(:,:), Y_mat(:,:), X_min(:,:), &
                                 Y_min(:,:)
    TDCOMPLEX   , allocatable :: aux_mat(:,:)
-   TDCOMPLEX :: liocmplx
 
    allocate(eigenvalues(M), X_min(M,M), Y_min(M,M), X_mat(M_f,M_f), &
             X_trans(M_f,M_f), Y_mat(M_f,M_f))
@@ -799,7 +800,7 @@ subroutine td_calc_energy(E, E1, E2, En, Ex, Es, Ehf, MM, Pmat, Fmat, Fmat2, &
                   MEMO)
       call g2g_timer_sum_pause("TD - Coulomb")
       call g2g_timer_sum_start("TD - Exc")
-      call g2g_solve_groups(0,Ex,0)
+      call g2g_solve_groups(0,Ex, 0.0D0)
       call g2g_timer_sum_pause("TD - Exc")
       call g2g_timer_sum_start("TD - Exact Exchange")
       call do_TDexactExchange(Fmat,Fmat2,Ehf,MM,M,open_shell)
@@ -1004,7 +1005,6 @@ subroutine td_verlet(M, M_f, dim3, OPEN, fock_aop, rhold, rho_aop, rhonew, &
 
    LIODBLE  , allocatable :: fock_aux(:,:,:)
    TDCOMPLEX, allocatable :: rho(:,:,:), rho_aux(:,:,:)
-   TDCOMPLEX              :: liocmplx
 
    allocate(rho(M_f, M_f, dim3), rho_aux(M_f,M_f,dim3))
    call rho_aop%Gets_dataC_ON(rho(:,:,1))
@@ -1247,7 +1247,6 @@ subroutine calc_trace_c(matrix, msize, message)
    integer          :: icount
    TDCOMPLEX, intent(in) :: matrix(msize, msize)
    TDCOMPLEX :: trace
-   TDCOMPLEX :: liocmplx
    trace = liocmplx(0.0D0, 0.0D0)
 
    do icount = 1, msize

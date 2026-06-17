@@ -2,6 +2,8 @@
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 
 module tbdft_subs
+   use lio_interface
+   use packed_storage_interface
    implicit none
 
 contains
@@ -20,7 +22,6 @@ subroutine tbdft_init(M_in, Nuc, open_shell)
    LIODBLE, allocatable :: rhoTB_real(:,:,:)
    integer                   :: tot_at
    integer                   ::  ii, jj,kk,ll,pp,rr
-   TDCOMPLEX :: liocmplx
 
    MTBDFT = MTB+M_in
 
@@ -144,7 +145,6 @@ subroutine tbdft_td_init (M_in,rho, rho_0, thrddim)
    TDCOMPLEX, intent(in)  :: rho_0(M_in,M_in,thrddim)
    TDCOMPLEX, intent(out) :: rho(MTBDFT,MTBDFT,thrddim)
    integer :: ii, jj
-   TDCOMPLEX :: liocmplx
 
    allocate(rhold_AOTB(MTBDFT,MTBDFT,thrddim), &
             rhonew_AOTB(MTBDFT,MTBDFT,thrddim))
@@ -617,7 +617,6 @@ subroutine transport_TB(M, dim3, rho_aux ,Ymat, istep, OPEN, rho_aop, rho_bop)
    LIODBLE    :: rho_real(MTBDFT,MTBDFT,dim3)
    LIODBLE    :: scratchgamma
    TDCOMPLEX       :: rhoscratch(MTBDFT,MTBDFT,dim3)
-   TDCOMPLEX       :: liocmplx
    integer         :: ii, jj
 
    if (tbdft_calc /= 3) return

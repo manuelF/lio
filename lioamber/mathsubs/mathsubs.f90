@@ -1,6 +1,7 @@
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 #include "../datatypes/datatypes.fh"
 module mathsubs
+   use linalg_interface
    ! INCLUDE FILES WITH HEADERS:
    implicit none
 #   include "commutator_h.f90"

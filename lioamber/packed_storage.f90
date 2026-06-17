@@ -33,6 +33,7 @@
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 
 subroutine spunpack(UPLO, NM, Vector, Matrix)
+    use lio_interface
     implicit none
     character(len=1)    :: UPLO
     integer,intent(in)  :: NM
@@ -66,6 +67,7 @@ subroutine spunpack(UPLO, NM, Vector, Matrix)
 end subroutine spunpack
 
 subroutine spunpack_rho(UPLO, NM, Vector, Matrix)
+    use lio_interface
     implicit none
     character(len=1)     :: UPLO
     integer, intent(in)  :: NM
@@ -101,6 +103,7 @@ subroutine spunpack_rho(UPLO, NM, Vector, Matrix)
 end subroutine spunpack_rho
 
 subroutine sprepack(UPLO, NM, Vector, Matrix)
+    use lio_interface
     implicit none
     character(len=1)    :: UPLO
     integer,intent(in)  :: NM
@@ -130,13 +133,13 @@ subroutine sprepack(UPLO, NM, Vector, Matrix)
 end subroutine sprepack
 
 subroutine spunpack_rtc(UPLO, NM, Vector, Matrix)
+    use lio_interface
     implicit none
     character(len=1)        :: UPLO
     integer   , intent(in)  :: NM
     LIODBLE    , intent(in)  :: Vector(NM*(NM+1)/2)
     TDCOMPLEX , intent(out) :: Matrix(NM,NM)
     integer   :: ii, jj, idx
-    TDCOMPLEX :: liocmplx
 
     if (UPLO.eq.'U') then
         do jj = 1, NM
@@ -170,6 +173,7 @@ subroutine spunpack_rtc(UPLO, NM, Vector, Matrix)
 end subroutine spunpack_rtc
 
 subroutine sprepack_ctr(UPLO,NM,Vector,Matrix)
+    use lio_interface
     implicit none
     character(len=1)        :: UPLO
     integer   ,intent(in)   :: NM

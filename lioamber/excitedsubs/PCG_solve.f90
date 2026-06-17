@@ -1,6 +1,7 @@
 subroutine PCG_solve(bvec,Coef,E,X,M,Mlr,NCO,Nvirt,Ndim)
 use excited_data, only: fittExcited
 use extern_functional_data, only: libint_inited
+   use gpu_timers_interface
    implicit none
 
    integer, intent(in) :: M, Mlr, NCO, Nvirt, Ndim
@@ -88,6 +89,7 @@ use extern_functional_data, only: libint_inited
 end subroutine PCG_solve
 
 subroutine Prec_calculate(Ener,Mprec,Mlr,NCO,Ndim)
+   use gpu_timers_interface
    implicit none
 
    integer, intent(in) :: Mlr, NCO, Ndim
@@ -111,6 +113,7 @@ subroutine Prec_calculate(Ener,Mprec,Mlr,NCO,Ndim)
 end subroutine Prec_calculate
 
 subroutine Pbeta_calc(R,M,beta,P,N)
+   use gpu_timers_interface
    implicit none
 
    integer, intent(in) :: N
@@ -135,6 +138,7 @@ end subroutine Pbeta_calc
 subroutine VecToMat(Vec,Mat,Coef,Ndim,NCO,M,Mlr)
 use excited_data, only: Coef_trans
 
+   use gpu_timers_interface
    implicit none
 
    integer, intent(in) :: Ndim, NCO, M, Mlr
@@ -164,6 +168,7 @@ end subroutine VecToMat
 subroutine Ap_calculate(Fe,Fx,P,E,Ap,M,Mlr,NCO,Nvirt,Ndim)
 use excited_data, only: Cocc_trans, Cvir
 use extern_functional_data, only: HF
+   use gpu_timers_interface
    implicit none
 
    integer, intent(in) :: M, Mlr, NCO, Nvirt, Ndim
@@ -202,6 +207,7 @@ use extern_functional_data, only: HF
 end subroutine Ap_calculate
 
 subroutine Alpha_calc(P,A,alpha,N)
+   use gpu_timers_interface
    implicit none
 
    integer, intent(in) :: N
@@ -219,6 +225,7 @@ subroutine Alpha_calc(P,A,alpha,N)
 end subroutine Alpha_calc
 
 subroutine error(V,convergence,N,iter)
+  use gpu_timers_interface
   implicit none
 
   integer, intent(in) :: N, iter

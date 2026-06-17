@@ -6,6 +6,7 @@ subroutine calc_forceDS &
 ! DESCRIPTION
 !
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
+  use gpu_timers_interface
   implicit none
   integer,intent(in)    :: Natoms
   integer,intent(in)    :: Nbasis

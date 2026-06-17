@@ -1,6 +1,7 @@
 subroutine tsh_probabilities(C,E,Xexc,Eexc,NCO,M,Mlr,Ndim,Nvirt,Etot,Nstat)
 use garcha_mod  , only: natom, Pmat_vec, nucvel, atom_mass
 use excited_data, only: TSH, root, gamma_old
+   use gpu_timers_interface
    implicit none
 
    integer, intent(in) :: NCO, M, Mlr, Ndim, Nvirt, Nstat
@@ -93,6 +94,7 @@ end subroutine tsh_probabilities
 subroutine coef_propagator(g,v,natom,dE)
 use excited_data, only: dE_accum, lambda, tsh_time_dt, B_old, &
                         tsh_Jstate, tsh_Kstate, tsh_coef
+   use gpu_timers_interface
    implicit none
 
    integer, intent(in) :: natom
@@ -187,6 +189,7 @@ use garcha_mod  , only: ntatom, r, d
 use faint_cpu   , only: intSG
 use excited_data, only: fittExcited, Cocc, Cocc_trans, Coef_trans
 use extern_functional_data, only: need_HF
+   use gpu_timers_interface
    implicit none
 
    integer, intent(in) :: NCO, M, Mlr, Ndim, Nvirt, natom

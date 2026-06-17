@@ -66,6 +66,9 @@
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 #include "../datatypes/datatypes.fh"
 module cdft_subs
+   use packed_storage_interface
+   use gpu_interface
+   use linalg_interface
    implicit none
    private
    public :: cdft_input_read

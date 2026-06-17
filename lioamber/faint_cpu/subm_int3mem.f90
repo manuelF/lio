@@ -53,6 +53,7 @@
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 #include "../datatypes/datatypes.fh"
 module subm_int3mem
+   use gpu_interface
 contains
 subroutine int3mem(r, d, natom, ntatom)
    use liosubs_math, only: FUNCT

@@ -16,6 +16,8 @@
 ! in region X.
 #include "../datatypes/datatypes.fh"
 module properties
+   use packed_storage_interface
+   use gpu_interface
    implicit none
    private
 

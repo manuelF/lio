@@ -32,6 +32,9 @@ subroutine drive(iostat)
    use extern_functional_data, only: extern_functional, functional_id, HF,     &
                                      HF_fac, screen
 
+   use gpu_timers_interface
+   use gpu_interface
+   use packed_storage_interface
    implicit none
    integer, intent(inout) :: iostat
 
@@ -209,6 +212,9 @@ end subroutine drive
 subroutine get_nco(atom_Z, n_atoms, n_orbitals, n_unpaired, charge, open_shell,&
                    ext_status)
    use ghost_atoms_subs, only: adjust_ghost_charge
+   use gpu_timers_interface
+   use gpu_interface
+   use packed_storage_interface
    implicit none
    integer, intent(in)  :: n_atoms, n_unpaired, charge, atom_Z(n_atoms)
    logical, intent(in)  :: open_shell

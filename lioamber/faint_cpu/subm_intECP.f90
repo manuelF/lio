@@ -72,6 +72,7 @@
 #include "../datatypes/datatypes.fh"
 
 module subm_intECP
+   use gpu_timers_interface
 contains
 
 SUBROUTINE intECP(tipodecalculo)

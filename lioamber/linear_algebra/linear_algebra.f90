@@ -1,6 +1,7 @@
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 #include "../datatypes/datatypes.fh"
 module linear_algebra
+   use linalg_interface
 !------------------------------------------------------------------------------!
   implicit none
   private

@@ -1,5 +1,6 @@
 #include "../datatypes/datatypes.fh"
 module fstshsubs
+   use gpu_interface
 implicit none
 
 contains

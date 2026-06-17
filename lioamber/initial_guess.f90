@@ -105,6 +105,9 @@ end module initial_guess_data
 
 !##############################################################################!
 module initial_guess_subs
+   use packed_storage_interface
+   use gpu_timers_interface
+   use linalg_interface
 
 contains
 
