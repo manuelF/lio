@@ -1,10 +1,19 @@
 # lioamber Makefile optimizations + interface-lint program (2026-06-16)
 
-Status: **implicit-interface 809 → 86 (-89%)**, all e2e PASS (agua, Fe3H2O6,
-fosfato, TDDFTHCL, 04_ECP, 04_2_ECP), heme 142 iters / correct basin, default
-build warning-clean (lint-gated). Remaining 86 = ECP/driver bare-sub cluster
-(see "Remaining" below). Scope: `lioamber/Makefile*`, compiler-flag audit, and
-the `lint=1` warning workflow ("add as lints → fix → promote to main flags").
+Status: **implicit-interface 809 → 0 (-100%)** and **-Waliasing 0**, all e2e
+PASS (agua, Fe3H2O6, fosfato, TDDFTHCL, 04_ECP, 04_2_ECP). Both flags
+**promoted to the default FFLAGS** (always-on regression guard); only
+`-Warray-temporaries` (305) remains `lint=1`-gated. The final 86 were closed
+by adding explicit-interface blocks for the LIO-internal bare externals rather
+than modularizing the ECP/driver files: the self-reference problem is avoided
+with the rule "a file that both defines and calls a procedure imports its
+*callees* via `use lio_interface, only: ...` so its own name never enters its
+definition scope" (declaration-only, no link-symbol change). `scf` needs
+`type(operator)`, so it lives in a separate `scf_interface` module to avoid a
+module cycle through the low-level `liosubs_math`/`packed_storage` users of
+`lio_interface`. Scope: `lioamber/Makefile*`, compiler-flag audit, and the
+`lint=1` warning workflow ("add as lints → fix → promote to main flags") — now
+fully exercised end to end for the implicit-interface class.
 
 ## Interface modules added (foreign-function + bare-external boundary)
 
@@ -125,9 +134,11 @@ Implicit-interface 471 left, dominated by two clean foreign-boundary classes:
   aint_* ~40, int3lu_gpu_* ~10, scf/liomain/drive, etc. Fix = `use` the defining
   module or add interfaces. Spread across ~50 scoping units.
 
-**Promotion gate:** `-Wimplicit-interface` can only move to default FFLAGS once
-ALL three classes (timers ✓, BLAS, internal) reach zero. Timers alone do not
-unlock promotion — the flag stays `lint=1`-gated until BLAS + internal are done.
+**Promotion gate:** `-Wimplicit-interface` moves to default FFLAGS once ALL
+classes reach zero. **DONE** — timers ✓, BLAS ✓, internal ✓ (incl. the ECP /
+driver self-reference cluster). `-Wimplicit-interface` and `-Waliasing` now
+ship in the default FFLAGS (`lioamber/Makefile.options`) as always-on guards;
+`-Warray-temporaries` is the only flag left under `lint=1`.
 
 - **Phase 2 (array-temporaries, 305)**: the perf-relevant class. FP-fragile —
   rewriting call sites can reorder reductions and double heme iters. Gate every

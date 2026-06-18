@@ -2,6 +2,7 @@
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 ! Calculates the forces in the QM region.
 subroutine dft_get_qm_forces(dxyzqm)
+   use lio_interface, only: get_restrain_forces
    use garcha_mod , only: natom, ntatom, nsol, r, d, Iz, first_step,   &
                           number_restr, doing_ehrenfest, &
                           qm_forces_ds, qm_forces_total, Pmat_en_wgt,  &

@@ -169,6 +169,20 @@ module gpu_interface
          integer :: grid_type
       end subroutine g2g_new_grid
 
+      subroutine g2g_parameter_init(norm, natom, max_atoms, ngaussians, r, Rm, &
+                 Iz, Nr, Nr2, Nuc, M, ncont, nshell, c, a, rho_vec, fock_vec,  &
+                 fockb_vec, rhoalpha, rhobeta, nco, OPEN, nunp, nopt, Iexch, e,&
+                 e2, e3, wang, wang2, wang3, use_libxc, ex_functional_id,      &
+                 ec_functional_id, becke)
+         integer :: natom, max_atoms, ngaussians, M, nco, nunp, nopt
+         integer :: Iexch, ex_functional_id, ec_functional_id
+         integer :: Iz(*), Nr(*), Nr2(*), Nuc(*), ncont(*), nshell(*)
+         logical :: norm, OPEN, use_libxc, becke
+         real(kind=8) :: r(*), Rm(*), c(*), a(*), rho_vec(*), fock_vec(*)
+         real(kind=8) :: fockb_vec(*), rhoalpha(*), rhobeta(*)
+         real(kind=8) :: e(*), e2(*), e3(*), wang(*), wang2(*), wang3(*)
+      end subroutine g2g_parameter_init
+
       integer function g2g_recommended_blas_threads()
       end function g2g_recommended_blas_threads
 

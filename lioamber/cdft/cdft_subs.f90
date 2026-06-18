@@ -66,6 +66,7 @@
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 #include "../datatypes/datatypes.fh"
 module cdft_subs
+   use scf_interface, only: scf
    use packed_storage_interface
    use gpu_interface
    use linalg_interface

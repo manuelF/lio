@@ -81,6 +81,7 @@
 
 
       SUBROUTINE LecturaECP
+      use lio_interface, only: dataecpelement
        USE ECP_mod, ONLY : ecptypes, tipeECP, ZlistECP,asignacion,Zcore, Lmax, nECP, bECP, aECP,verbose_ECP, ECPatoms
        USE garcha_mod, ONLY : Iz, natom
        IMPLICIT NONE

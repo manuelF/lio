@@ -12,6 +12,8 @@
 ! * do_fukui()       (performs Fukui function calculation and printing)        !
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 subroutine liomain(E, dipxyz)
+   use lio_interface, only: do_restart, do_population_analysis, do_fukui_calc, do_forces
+   use scf_interface, only: scf
    use basis_data      , only: M, Nuc
    use cdft_data       , only: doing_cdft
    use cdft_subs       , only: cdft
@@ -157,6 +159,7 @@ end subroutine liomain
 ! Calculates forces for QM and MM regions and writes them to output.           !
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 subroutine do_forces(uid)
+   use lio_interface, only: dft_get_qm_forces, dft_get_mm_forces
     use garcha_mod, only: natom, nsol
     use fileio    , only: write_forces
 
@@ -207,7 +210,7 @@ subroutine do_population_analysis(rho_tot, rho_a, rho_b)
    use gpu_timers_interface
    use packed_storage_interface
    implicit none
-   LIODBLE, intent(in)  :: rho_a(MM), rho_b(MM), rho_tot(MM)
+   LIODBLE, intent(in)  :: rho_a(*), rho_b(*), rho_tot(*)
 
    LIODBLE, allocatable :: rho_m(:,:), rho_mb(:,:)
    integer, allocatable :: true_iz(:)
@@ -317,7 +320,7 @@ subroutine do_restart(UID, rho_total)
    use packed_storage_interface
    implicit none
    integer         , intent(in) :: UID
-   LIODBLE, intent(in) :: rho_total(MM)
+   LIODBLE, intent(in) :: rho_total(*)
    LIODBLE, allocatable :: coef(:,:), coef_b(:,:), tmp_rho(:,:), &
                                     tmp_rho_b(:,:)
    integer :: NCOb, icount, jcount

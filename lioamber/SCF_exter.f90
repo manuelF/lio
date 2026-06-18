@@ -12,13 +12,14 @@
 ! Performs SCF setup and routine calls from AMBER.                             !
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
       subroutine SCF_in(E,qmcoords,clcoords,nsolin,dipxyz)
+      use lio_interface, only: dft_get_mm_forces, dft_get_qm_forces, liomain, recenter_coords
       use garcha_mod, only : r, v, Em, Rm, pc, natom, ntatom, nsol, rqm, &
                              writexyz, Iz
 
           use gpu_timers_interface
           implicit none
           integer, intent(in) :: nsolin
-          LIODBLE , intent(in) :: qmcoords(3,natom), clcoords(4,nsolin)
+          LIODBLE , intent(in) :: qmcoords(3,*), clcoords(4,*)
 
           LIODBLE :: E, dipxyz(3)
           integer :: i, j, n
@@ -82,6 +83,7 @@ subroutine ehren_in( qmcoords, qmvels, clcoords, nsolin, dipxyz, E)
    use ehrensubs,     only: ehrenaux_masses
    use debug_tools,   only: Check_posvel
    use constants_mod, only: bohr
+   use lio_interface, only: scf_in
    use gpu_timers_interface
    implicit none
    integer, intent(in)    :: nsolin
@@ -126,6 +128,7 @@ end subroutine ehren_in
 ! Performs SCF setup and routine calls from GROMACS.                           !
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
       subroutine SCF_gro(E, qmcoords, clcoords, clcharge, nsolin)
+      use lio_interface, only: liomain, recenter_coords
       use garcha_mod, only : nsol, ntatom, natom, r, v, Em, Rm, pc, rqm, Iz, &
                              writexyz
 
@@ -189,6 +192,7 @@ end subroutine ehren_in
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 subroutine SCF_hyb(hyb_natom, mm_natom, hyb_r, E, fdummy, Iz_cl,do_SCF, do_QM_forces, do_properties, &
                    vel, do_HOPP, do_ElecInterp)
+      use lio_interface, only: liomain, recenter_coords, dft_get_qm_forces, dft_get_mm_forces
     use garcha_mod   , only : r,rqm,pc, Iz, natom, nsol, ntatom, hybrid_forces_props
     use fstsh_data   , only : FSTSH, call_number
     use ehrensubs    , only : ehrenaux_masses

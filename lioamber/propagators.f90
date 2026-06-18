@@ -4,6 +4,7 @@
 ! This file contains the routine for an N-order magnus propagation.            !
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 module propagators
+   use gpu_interface, only: g2g_solve_groups
    use lio_interface
    use packed_storage_interface
    use gpu_timers_interface

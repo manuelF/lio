@@ -123,9 +123,15 @@ ifeq ($(intel),0)
   ARCHFLAGS_FC ?= -march=native -mtune=native
   FFLAGS += $(ARCHFLAGS_FC)
   FFLAGS += -fstack-arrays
-  # Warning-only diagnostics (no codegen impact), gated behind `make lint=1`.
+  # Warning-only diagnostics (no codegen impact). These two are at zero across
+  # the lioamber tree (every bare-external call now has an explicit interface),
+  # so they ship in the default build as a regression guard: a new
+  # implicit-interface call or aliasing violation surfaces immediately.
+  FFLAGS += -Wimplicit-interface -Waliasing
+  # Still noisy (~300 array-temporary copies pending cleanup); stays gated
+  # behind `make lint=1` so the default build is quiet until they are fixed.
   ifeq ($(lint),1)
-    FFLAGS += -Warray-temporaries -Wimplicit-interface -Waliasing
+    FFLAGS += -Warray-temporaries
   endif
   LFLAGS += -L/usr/lib -fopenmp
   # -lopenblas is required so SCF.f90's openblas_set_num_threads_/get_ symbols

@@ -25,6 +25,11 @@
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 
 SUBROUTINE generalECP(tipodecalculo)
+   use lio_interface, only: deallocatev, norm_c, obtaindistance, obtainls,    &
+                            read_ecp, search_nan, write_ang_exp, write_basis, &
+                            write_dfock_ecp, write_distance,                  &
+                            write_ecp_parameters, write_fock_ecp,             &
+                            write_fock_ecp_terms, write_post
 ! Rutina principal, llama a las otras rutinas
 ! tipodecalculo=0 allocatea variables comunes y las lee de un restart
 ! tipodecalculo=1 alocatea variables y calcula terminos de un centro (AAA)

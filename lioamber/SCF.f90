@@ -72,6 +72,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
    use gpu_interface
    use openblas_interface
    use omp_lib
+   use lio_interface, only: get_restrain_energy
 
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 

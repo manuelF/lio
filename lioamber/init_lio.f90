@@ -103,6 +103,7 @@ end subroutine lio_defaults
 ! Performs LIO variable initialization.                                        !
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 subroutine init_lio_common(natomin, Izin, nclatom, callfrom)
+   use lio_interface, only: drive, lio_defaults, read_options
 
     use garcha_mod, only : d, r, v, rqm, Em, Rm, pc, Iz, natom,                &
                            ntatom, free_global_memory,                         &
@@ -201,6 +202,7 @@ end subroutine init_lio_common
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 subroutine init_lio_amber_new(natomin, Izin, nclatom, charge_i, amber_dt, &
                               input_file, do_ehren_fsh, do_ljs)
+   use lio_interface, only: lio_defaults, read_options, init_lio_common, dft_get_mm_forces
 
    use garcha_mod, only: charge, first_step, Iz
    use basis_data, only: nuc
@@ -251,6 +253,7 @@ end subroutine init_lio_amber_new
 ! options are read from a file named "lio.in" in the current workspace.        !
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 subroutine init_lio_gromacs(natomin, Izin, nclatom, chargein)
+   use lio_interface, only: lio_defaults, read_options, init_lio_common, dft_get_mm_forces
     use garcha_mod, only: charge
 
     use gpu_timers_interface
@@ -280,6 +283,7 @@ end subroutine init_lio_gromacs
 ! Hybrid software package, in order to conduct a hybrid QM/MM calculation.     !
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 subroutine init_lio_hybrid(version_check, hyb_natom, mm_natom, chargein, iza, spin, dt, mass)
+   use lio_interface, only: lio_defaults, read_options, init_lio_common, dft_get_mm_forces
     use garcha_mod, only: OPEN, Nunp, charge, atom_mass
     use fstsh_data, only: FSTSH
     use fstshsubs , only: fstsh_init
@@ -355,6 +359,7 @@ subroutine init_lio_amber(natomin, Izin, nclatom, charge_i, basis_i, output_i, &
                           IGRID2_i , timedep_i , tdstep_i, ntdstep_i, field_i, &
                           exter_i, a0_i, epsilon_i, Fx_i, Fy_i, Fz_i, NBCH_i,  &
                           propagator_i, writedens_i, tdrestart_i)
+   use lio_interface, only: lio_defaults, read_options, init_lio_common, dft_get_mm_forces
 
    use garcha_mod    , only: fcoord, OPEN, charge, propagator, NBCH,&
                              VCINP, writexyz, frestart, frestartin, IGRID,     &

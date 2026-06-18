@@ -16,6 +16,8 @@ module geometry_optim_data
 end module geometry_optim_data
 
 module geometry_optim
+   use lio_interface, only: dft_get_qm_forces
+   use scf_interface, only: scf
    implicit none
    contains
 

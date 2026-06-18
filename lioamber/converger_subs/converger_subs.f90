@@ -2,6 +2,7 @@
 module converger_subs
    use gpu_interface
    use linalg_interface
+   use packed_storage_interface
 
    implicit none
 contains

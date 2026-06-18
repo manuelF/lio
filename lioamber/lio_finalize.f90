@@ -1,5 +1,6 @@
 #include "datatypes/datatypes.fh"
 subroutine lio_finalize()
+   use lio_interface, only: generalecp
 ! Deallocation and finalizations.
    use garcha_mod , only: Smat, RealRho, sqsm, Eorbs, Eorbs_b, &
                           MO_coef_at, MO_coef_at_b, r, v, rqm, Em, Rm, &

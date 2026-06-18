@@ -3,6 +3,7 @@
 
 module tbdft_subs
    use lio_interface
+   use scf_interface, only: scf
    use packed_storage_interface
    implicit none
 

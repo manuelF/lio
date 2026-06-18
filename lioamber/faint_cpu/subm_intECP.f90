@@ -72,6 +72,7 @@
 #include "../datatypes/datatypes.fh"
 
 module subm_intECP
+   use lio_interface, only: write_post
    use gpu_timers_interface
 contains
 

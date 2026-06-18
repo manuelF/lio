@@ -52,6 +52,7 @@ OBJECTS += gpu_interface.o
 OBJECTS += openblas_interface.o
 OBJECTS += packed_storage_interface.o
 OBJECTS += lio_interface.o
+OBJECTS += scf_interface.o
 
 ################################################################################
 # GENERIC DEPENDENCIES
@@ -81,7 +82,7 @@ tmplist += typedef_cumat.o typedef_operator.o cdft_subs.o converger_subs.o
 $(tmplist:%.o=$(OBJPATH)/%.o) : linalg_interface.o
 
 # Explicit interfaces for the g2g_*/aint_*/int3lu_gpu_* C hooks.
-tmplist := SCF.o TD.o subm_int1.o subm_int1G.o subm_int2.o subm_int3G.o
+tmplist := SCF.o TD.o subm_int1.o subm_int1G.o subm_int2.o subm_int3G.o propagators.o
 tmplist += subm_int3lu.o subm_int3mem.o subm_intECPG.o
 tmplist += extern_functional.o init_lio.o lio_finalize.o drive.o
 tmplist += dft_get_mm_forces.o dft_get_qm_forces.o
@@ -94,15 +95,25 @@ tmplist := SCF.o TD.o
 $(tmplist:%.o=$(OBJPATH)/%.o) : openblas_interface.o
 
 # Explicit interfaces for the packed<->square storage helpers.
-tmplist := SCF.o TD.o drive.o liomain.o propagators.o transport.o tbdft_subs.o
+tmplist := SCF.o TD.o drive.o liomain.o propagators.o transport.o tbdft_subs.o converger_subs.o ceed_subs.o
 tmplist += extern_functional.o initial_guess.o
 tmplist += excitedsubs.o cdft_subs.o properties.o
 $(tmplist:%.o=$(OBJPATH)/%.o) : packed_storage_interface.o
 
-# Explicit interfaces for bare-external LIO procedures (liocmplx, ...).
+# Explicit interfaces for bare-external LIO procedures (liocmplx, driver subs,
+# ECP helpers).
 tmplist := TD.o propagators.o transport.o tbdft_subs.o ceed_subs.o
 tmplist += liosubs_math.o packed_storage.o
+tmplist += SCF.o SCF_exter.o dft_get_qm_forces.o input_read.o init_lio.o
+tmplist += liomain.o drive.o generalECP.o readECP.o cdft_subs.o
+tmplist += geometry_optim.o lio_finalize.o mask_ecp.o subm_intECP.o
 $(tmplist:%.o=$(OBJPATH)/%.o) : lio_interface.o
+
+# scf_interface needs type(operator); only SCF's callers use it. Kept separate
+# from lio_interface to avoid a module cycle via typedef_operator.
+$(OBJPATH)/scf_interface.o : typedef_operator.o
+tmplist := liomain.o geometry_optim.o cdft_subs.o tbdft_subs.o
+$(tmplist:%.o=$(OBJPATH)/%.o) : scf_interface.o
 
 ################################################################################
 tmplist := SCF.o readECP.o drive.o generalECP.o init.o init_lio.o

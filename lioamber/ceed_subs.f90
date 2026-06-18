@@ -1,6 +1,7 @@
 #include "datatypes/datatypes.fh"
 module ceed_subs
    use lio_interface
+   use packed_storage_interface
    implicit none
 contains
 

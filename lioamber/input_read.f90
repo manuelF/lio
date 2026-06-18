@@ -8,6 +8,7 @@
 ! Reads LIO options from an input file.                                        !
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 subroutine read_options(inputFile, extern_stat)
+   use lio_interface, only: recenter_coords
     use converger_subs, only: converger_options_check
     use cdft_subs     , only: cdft_options_check, cdft_input_read
     use lj_switch     , only: ljs_input_read
@@ -55,6 +56,7 @@ end subroutine read_options
 ! Reads atoms' coordinates from an input file.                                 !
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 subroutine read_coords(inputCoord)
+   use lio_interface, only: recenter_coords
 
     use garcha_mod, only : natom, ntatom, nsol, iz, r, rqm, pc
     use constants_mod, only : bohr

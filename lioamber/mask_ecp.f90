@@ -1,6 +1,7 @@
 #include "datatypes/datatypes.fh"
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 module mask_ecp
+   use lio_interface, only: generalecp, write_ecp, write_post
    use gpu_timers_interface
    implicit none
    contains

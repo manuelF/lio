@@ -10,6 +10,7 @@
 !------------------------------------------------------------------------------!
 
 subroutine drive(iostat)
+   use lio_interface, only: gridlio, lecturaecp, allocate_ecp, reasignz, get_nco, read_restrain_params
    use garcha_mod, only: rhoalpha, rhobeta,  charge, e_, e_2, e3, Pmat_vec,    &
                          fcoord, natom, frestart, Iexch, frestartin,&
                          NCO, npas, Nr, Nr2, wang, wang2, wang3, VCINP, OPEN,  &
