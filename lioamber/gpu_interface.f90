@@ -189,6 +189,9 @@ module gpu_interface
       integer function g2g_recommended_omp_threads()
       end function g2g_recommended_omp_threads
 
+      integer function g2g_gpu_threads()
+      end function g2g_gpu_threads
+
       subroutine g2g_reload_atom_positions(grid_type, atom_Z_in)
          integer :: grid_type
          integer :: atom_Z_in(*)

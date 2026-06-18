@@ -95,7 +95,9 @@ extern "C" void g2g_init_(void) {
     G2G::recommended_omp_threads  = ::recommended_omp_threads(phys);
     const char* ov = getenv("LIO_OVERLAP_INT3LU_G2G");
     bool overlap_on = (ov && ov[0] == '1' && ov[1] == '\0');
-    if (overlap_on && verbose > 1) {
+    // Only relevant when the XC solve runs on the GPU; the SCF.f90 overlap is
+    // disabled on CPU-only builds where it would starve the core-bound XC.
+    if (overlap_on && G2G::gpu_threads > 0 && verbose > 1) {
       printf("  [overlap] auto OMP=%d BLAS=%d (phys_cores=%d) "
              "[applied locally around parallel sections]\n",
              G2G::recommended_omp_threads, G2G::recommended_blas_threads, phys);
@@ -117,6 +119,15 @@ extern "C" int g2g_recommended_blas_threads_(void) {
 }
 extern "C" int g2g_recommended_omp_threads_(void) {
   return G2G::recommended_omp_threads;
+}
+// Number of GPU worker threads g2g will use for the XC solve. Zero on a
+// CPU-only build (GPU_KERNELS off) or when no CUDA device is present. The
+// int3lu/g2g overlap in SCF.f90 is only profitable when the XC solve runs on
+// the GPU (so int3lu's cheap CPU BLAS hides under it); when XC runs on the CPU,
+// handing cores to int3lu starves the core-bound XC kernel and the overlap is a
+// net loss versus running both phases sequentially with all cores each.
+extern "C" int g2g_gpu_threads_(void) {
+  return G2G::gpu_threads;
 }
 //==========================================================================================
 namespace G2G {

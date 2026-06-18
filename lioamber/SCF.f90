@@ -421,7 +421,8 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
          call get_environment_variable("LIO_OVERLAP_INT3LU_G2G", &
                                        env_overlap_str, &
                                        status=env_overlap_status)
-         if (env_overlap_status == 0 .and. trim(env_overlap_str) == "1") then
+         if (env_overlap_status == 0 .and. trim(env_overlap_str) == "1" &
+             .and. g2g_gpu_threads() > 0) then
             overlap_int3lu_g2g = .true.
             ! Allow override of BLAS thread split inside the int3lu section.
             call get_environment_variable("LIO_OVERLAP_BLAS_THREADS", &
@@ -472,6 +473,15 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
                omp_get_max_threads(), " ambient, OMP_cap=", &
                overlap_omp_threads, " g2g, BLAS=", &
                overlap_blas_threads, " int3lu)"
+         else if (env_overlap_status == 0 .and. &
+                  trim(env_overlap_str) == "1" .and. g2g_gpu_threads() <= 0) then
+            ! Requested but no GPU: the XC solve runs on the CPU, where it is
+            ! core-bound and ~10x larger than int3lu. Overlapping would steal
+            ! cores from XC and is measurably slower than the sequential path
+            ! (each phase using all cores). Stay sequential.
+            if (verbose > 1) write(*,'(A)') &
+               " [overlap] int3lu/g2g overlap requested but DISABLED " // &
+               "(no GPU; CPU XC is faster run sequentially)"
          endif
          overlap_int3lu_g2g_initialized = .true.
       endif
