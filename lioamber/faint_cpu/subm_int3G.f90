@@ -45,6 +45,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    use basis_data   , only: a, c, nuc, nucd, ad, af, cd, ncont, ncontd, nshell,&
                             nshelld, M, Md, NORM, rmax
    use constants_mod, only: pi52
+   use omp_lib
 
    implicit none
 
@@ -53,80 +54,16 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    LIODBLE, intent(in)    :: rho_mat(:), r(ntatom,3), d(natom,natom)
    LIODBLE, intent(inout) :: frc(natom,3)
 
+   ! Host scope. Jx, Ll, SQ3 and the shell counts ns..ndd are computed once and
+   ! read-only inside the contained worker (shared via host association). The
+   ! per-thread frc accumulators feed a deterministic fixed-order reduction.
    integer         , allocatable :: Jx(:), Ll(:)
-   LIODBLE, allocatable :: Q(:), W(:)
+   LIODBLE, allocatable :: frc_threads(:,:,:)
+   LIODBLE :: SQ3, t1
+   integer :: ns, nsd, np, npd, nd, ndd, igpu, ifunct, l1
+   integer :: tid, nthr_max, it
 
-   ! ccoef is the coefficient product between function, Ci*Cj*Ck.
-   ! f1, f2 and f3 are the normalization coefficients for d-type functions.
-   ! rexp is the function exponent in distance units, while dpc stores distances
-   ! between atoms.
-   ! uf is the parameter used for Boys Function.
-   LIODBLE :: ccoef, rexp, SQ3, uf, dpc, f1, f2, f3
-
-   ! ns, np and nd are the number of basis functions in each shell, while
-   ! nsd, npd and ndd are used for the auxiliary basis.
-   ! igpu checks whether the gradients are done in GPU or CPU.
-   ! rho_ind and af_ind are vector-matrix indeces.
-   integer :: ns, nsd, np, npd, nd, ndd, rho_ind, af_ind, igpu
-
-   ! The following thousand variables store temporary results.
-   LIODBLE :: s0pk, pss, psf, s2dpm, s2dkl, s1pkpl, s1pk, s1ds, s1dpm,&
-                       s2pl, s2pks, s2pkpl, s2pk, s2pjpk, s4pk, s3pl, s3pks,   &
-                       s3pk, s3dkl, s2ds, sks, sp0d, sp0js, sp1d, sp1s, sp2js, &
-                       sp3js, spd, spjpk, spjs, spk, spp, sps, ss0d, ss0p,     &
-                       ss0pj, ss1d, ss1p, ss1pj, ss1pk, ss1s, ss2p, ss2pj,     &
-                       ss2pk, ss2s, ss3s, ss4s, ss5s, ss6s, ss7s, ssd, ssf,    &
-                       ssp, sspj, sspk, sss
-   LIODBLE :: p1s, p2s, p3s, p4s, p5s, p6s, p0pk, p1pk, pi0dd, pi0d,  &
-                       pds, pdp, pdd, pi0sd, pi0pp, pi0p, pi0dp, pi0dkl, pi1dp,&
-                       pi1dkl, pi1dd, pi0spj, pi1pl, pi1pkpm, pi1pk, pi1d,     &
-                       pi1spl, pi1sd, pi1pp, pi1plpm, pi1p, pi2pkpl, pi2pk,    &
-                       pi2p, pi2dklp, pi2dkl, pi2spk, pi2spj, pi2pl, pi2pkpm,  &
-                       pi3pk, pi3p, pi3dkl, pi2spl, pi2plpm, pij1s, pidklp,    &
-                       pidkl, pi4pk, pi3pl, pip0d, pip, pijs, pij3s, pij2s,    &
-                       pis2pk, pis1pk, pipkpl, pipk, pip1d, pj0dkl, pj0dd,     &
-                       pj0d, pispk, pispj, pj0sd, pj0s, pj0pp, pj0p, pj0dp,    &
-                       pjs, pjp0d, pj1p, pj1dp, pj1d, pj1dkl, pj4pk, pjpk,     &
-                       pjp1d, pjp, pj1dd, pj1plpm, pj1pl, pj1pkpm, pj1pk,      &
-                       pj1spl, pj1sd, pj1s, pj1pp, pj2pk, pj2p, pj2dklp, pj2pl,&
-                       pj2pkpm, pj2pkpl, pj2dkl, pj3dkl, pj2spl, pj2s, pj2plpm,&
-                       pj3s, pj3pl, pj3p, pj5s, pj4s, pj3pk, pjdklp, pjdkl,    &
-                       pjpkpl, pjs1pk, pp0p, pp0d, pjs2pk, pp1p, psd, ps1d,    &
-                       pp1s, pp0pl, pp2p, ppd, ppp, ppf, pps, ps, psp, ps0d,   &
-                       pp1d, pp1pl
-   LIODBLE :: d0d, d0p, d0pk, d0pkd, d0pkp, d0pl, d0pld, d0plp, d0s,  &
-                       d1d, d1p, d1pk, d1pkd, d1pkp, d1pl, d1pld, d1plp, d1pp, &
-                       d1s, d1spm, d2d, d2p, dds, ddp, ddf, ddd, dij2plp,      &
-                       dij2pkp, dfs, dfp, dp0p, dp, dijplp, dfd, dd2p, dijpkp, &
-                       dp0pm, dp1d, dp1p, dp1pm, dp1s, dp2p, dpd, dpf, dpk,    &
-                       dpp, dps, ds, ds0p, ds1d, ds1p, dsp, dsf, dsd, ds2pl,   &
-                       ds2p, ds1s, dss, dspl, dd1pn, dd1s, dd1p, dd1d, dd0pn,  &
-                       dd0p, dd, d5s, d4s, d3s, d3pl, d3pk, d3p, d4pk, d3d,    &
-                       d2spm, d2s, d2pl, d2pk
-   LIODBLE :: fdp, fdd, fss, fsp, fsd, fps, fpp, fpd, fds
-
-   LIODBLE :: ta, tb, ti, tj, te, ty, t0, t1, t2, t3, t3a,            &
-                       t3b, t4, t4b,  t5, t5a, t5b, t5x, t5y, t6, t6a, t6b,    &
-                       t6c, t6d, t7, t7a, t7b, t7c, t7d, t8, t8a, t8b, t9, t9b,&
-                       t10, t10a, t10b, t11, t11a, t11b, t12, t12a, t12b, t13, &
-                       t13b, t14, t14b, t15, t15a, t15b, t15p, t16, t16a, t16b,&
-                       t17, t17a, t17b, t18, t18a, t18b, t20, t20b, t21, t21b, &
-                       t22, t22a, t22b, t22c, t22p, t23, t23b, t24, t24b, t25, &
-                       t25b, t26, t26b, t27, t27b, t28, t28b, t29, t29b, t30,  &
-                       t30a, t30b, t31, t31b, t32, t32b, t33, t33b, t34, t34b, &
-                       t35, t35b, t36, t37, t38, t39, t40, t40a, t40b, t41,    &
-                       t41b, t50, t50b, t51, t51b, t60, t60b, t61, t61b, t70,  &
-                       t70b, t80, t80a, t80b
-   LIODBLE :: y2, y2b, y3, y3b, y4, y4b, y6, y6b, y7, y7b, y9, y9b,   &
-                       y12, y12b, y13, y13b, y14, y14b, y15, y15b, y16, y16b,  &
-                       y17, y17b, y18, y18b, y19, y19b, y20, y21, y22, y23,    &
-                       y24, y25, y26, y27, y28, y29, y30, y31
-   LIODBLE :: Z2, Z2a, Zc, Zij
-
-   ! Counters for loops.
-   integer :: ifunct, jfunct, kfunct, nci, ncj, nck, lk, lij, l1, l2, l3, l4, &
-              l5, l6, l7
-   allocate(Jx(M), Ll(3), Q(3), W(3))
+   allocate(Jx(M), Ll(3))
 
    ns  = nshell(0)  ; np  = nshell(1) ; nd  = nshell(2)
    nsd = nshelld(0) ; npd = nshelld(1); ndd = nshelld(2)
@@ -156,10 +93,105 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    if (igpu.gt.2) then
       call aint_coulomb_forces(frc)
       call g2g_timer_sum_stop('Coulomb gradients')
+      deallocate(Jx, Ll)
       return
    endif
 
+   ! Coulomb gradients (CPU path). Every (ifunct,jfunct,kfunct) shell triple is
+   ! independent, so we parallelize the outer basis-shell loop of each block. Each
+   ! thread accumulates into a private frc slot, summed in fixed thread order after
+   ! the region (deterministic). All integral scratch lives in the contained worker
+   ! int3G_cou and is therefore automatically thread-private -- no manual private()
+   ! list to get wrong.
+   nthr_max = 1
+   !$ nthr_max = omp_get_max_threads()
+   allocate(frc_threads(natom, 3, nthr_max))
+   frc_threads = 0.0D0
+
+   !$omp parallel default(shared) private(tid)
+   tid = 0
+   !$ tid = omp_get_thread_num()
+   call int3G_cou(frc_threads(:, :, tid + 1))
+   !$omp end parallel
+
+   do it = 1, nthr_max
+      frc = frc + frc_threads(:, :, it)
+   enddo
+   deallocate(frc_threads, Jx, Ll)
+
+   call g2g_timer_stop('CoulG')
+   call g2g_timer_sum_stop('Coulomb gradients')
+   return
+
+contains
+
+   ! One thread's share of the Coulomb gradients. frc is the caller's per-thread
+   ! accumulator slot; every other variable here is a procedure local and hence
+   ! private to the calling OpenMP thread. The 18 shell-block loops below each
+   ! carry an !$omp do that distributes their outer iterations across the team.
+   subroutine int3G_cou(frc)
+      LIODBLE, intent(inout) :: frc(natom,3)
+
+      LIODBLE :: Q(3), W(3)
+      LIODBLE :: ccoef, rexp, uf, dpc, f1, f2, f3
+      integer :: rho_ind, af_ind
+      LIODBLE :: s0pk, pss, psf, s2dpm, s2dkl, s1pkpl, s1pk, s1ds, s1dpm,&
+                       s2pl, s2pks, s2pkpl, s2pk, s2pjpk, s4pk, s3pl, s3pks,   &
+                       s3pk, s3dkl, s2ds, sks, sp0d, sp0js, sp1d, sp1s, sp2js, &
+                       sp3js, spd, spjpk, spjs, spk, spp, sps, ss0d, ss0p,     &
+                       ss0pj, ss1d, ss1p, ss1pj, ss1pk, ss1s, ss2p, ss2pj,     &
+                       ss2pk, ss2s, ss3s, ss4s, ss5s, ss6s, ss7s, ssd, ssf,    &
+                       ssp, sspj, sspk, sss
+      LIODBLE :: p1s, p2s, p3s, p4s, p5s, p6s, p0pk, p1pk, pi0dd, pi0d,  &
+                       pds, pdp, pdd, pi0sd, pi0pp, pi0p, pi0dp, pi0dkl, pi1dp,&
+                       pi1dkl, pi1dd, pi0spj, pi1pl, pi1pkpm, pi1pk, pi1d,     &
+                       pi1spl, pi1sd, pi1pp, pi1plpm, pi1p, pi2pkpl, pi2pk,    &
+                       pi2p, pi2dklp, pi2dkl, pi2spk, pi2spj, pi2pl, pi2pkpm,  &
+                       pi3pk, pi3p, pi3dkl, pi2spl, pi2plpm, pij1s, pidklp,    &
+                       pidkl, pi4pk, pi3pl, pip0d, pip, pijs, pij3s, pij2s,    &
+                       pis2pk, pis1pk, pipkpl, pipk, pip1d, pj0dkl, pj0dd,     &
+                       pj0d, pispk, pispj, pj0sd, pj0s, pj0pp, pj0p, pj0dp,    &
+                       pjs, pjp0d, pj1p, pj1dp, pj1d, pj1dkl, pj4pk, pjpk,     &
+                       pjp1d, pjp, pj1dd, pj1plpm, pj1pl, pj1pkpm, pj1pk,      &
+                       pj1spl, pj1sd, pj1s, pj1pp, pj2pk, pj2p, pj2dklp, pj2pl,&
+                       pj2pkpm, pj2pkpl, pj2dkl, pj3dkl, pj2spl, pj2s, pj2plpm,&
+                       pj3s, pj3pl, pj3p, pj5s, pj4s, pj3pk, pjdklp, pjdkl,    &
+                       pjpkpl, pjs1pk, pp0p, pp0d, pjs2pk, pp1p, psd, ps1d,    &
+                       pp1s, pp0pl, pp2p, ppd, ppp, ppf, pps, ps, psp, ps0d,   &
+                       pp1d, pp1pl
+      LIODBLE :: d0d, d0p, d0pk, d0pkd, d0pkp, d0pl, d0pld, d0plp, d0s,  &
+                       d1d, d1p, d1pk, d1pkd, d1pkp, d1pl, d1pld, d1plp, d1pp, &
+                       d1s, d1spm, d2d, d2p, dds, ddp, ddf, ddd, dij2plp,      &
+                       dij2pkp, dfs, dfp, dp0p, dp, dijplp, dfd, dd2p, dijpkp, &
+                       dp0pm, dp1d, dp1p, dp1pm, dp1s, dp2p, dpd, dpf, dpk,    &
+                       dpp, dps, ds, ds0p, ds1d, ds1p, dsp, dsf, dsd, ds2pl,   &
+                       ds2p, ds1s, dss, dspl, dd1pn, dd1s, dd1p, dd1d, dd0pn,  &
+                       dd0p, dd, d5s, d4s, d3s, d3pl, d3pk, d3p, d4pk, d3d,    &
+                       d2spm, d2s, d2pl, d2pk
+      LIODBLE :: fdp, fdd, fss, fsp, fsd, fps, fpp, fpd, fds
+
+      LIODBLE :: ta, tb, ti, tj, te, ty, t0, t1, t2, t3, t3a,            &
+                       t3b, t4, t4b,  t5, t5a, t5b, t5x, t5y, t6, t6a, t6b,    &
+                       t6c, t6d, t7, t7a, t7b, t7c, t7d, t8, t8a, t8b, t9, t9b,&
+                       t10, t10a, t10b, t11, t11a, t11b, t12, t12a, t12b, t13, &
+                       t13b, t14, t14b, t15, t15a, t15b, t15p, t16, t16a, t16b,&
+                       t17, t17a, t17b, t18, t18a, t18b, t20, t20b, t21, t21b, &
+                       t22, t22a, t22b, t22c, t22p, t23, t23b, t24, t24b, t25, &
+                       t25b, t26, t26b, t27, t27b, t28, t28b, t29, t29b, t30,  &
+                       t30a, t30b, t31, t31b, t32, t32b, t33, t33b, t34, t34b, &
+                       t35, t35b, t36, t37, t38, t39, t40, t40a, t40b, t41,    &
+                       t41b, t50, t50b, t51, t51b, t60, t60b, t61, t61b, t70,  &
+                       t70b, t80, t80a, t80b
+      LIODBLE :: y2, y2b, y3, y3b, y4, y4b, y6, y6b, y7, y7b, y9, y9b,   &
+                       y12, y12b, y13, y13b, y14, y14b, y15, y15b, y16, y16b,  &
+                       y17, y17b, y18, y18b, y19, y19b, y20, y21, y22, y23,    &
+                       y24, y25, y26, y27, y28, y29, y30, y31
+      LIODBLE :: Z2, Z2a, Zc, Zij
+      integer :: ifunct, jfunct, kfunct, nci, ncj, nck, lk, lij, l1, l2, l3, &
+                 l4, l5, l6, l7
+
    ! (ss|s)
+   !$omp do schedule(dynamic)
    do ifunct = 1, ns
    do jfunct = 1, ifunct
       rho_ind = ifunct + Jx(jfunct)
@@ -220,6 +252,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    !print*, "ss|s", frc
 
    ! (ps|s)
+   !$omp do schedule(dynamic)
    do ifunct = ns+1, ns+np, 3
    do jfunct = 1   , ns
       do nci = 1, ncont(ifunct)
@@ -299,6 +332,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    !print*, "ps|s", frc
 
    ! (pp|s) and grad ients
+   !$omp do schedule(dynamic)
    do ifunct = ns+1, ns+np , 3
    do jfunct = ns+1, ifunct, 3
       do nci = 1, ncont(ifunct)
@@ -406,6 +440,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    !print*, "pp|s", frc
 
    ! (ds|s) and gradients
+   !$omp do schedule(dynamic)
    do ifunct = ns+np+1, M , 6
    do jfunct = 1      , ns
       do nci = 1, ncont(ifunct)
@@ -508,6 +543,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    !print*, "ds|s", frc
 
    ! (dp|s)
+   !$omp do schedule(dynamic)
    do ifunct = ns+np+1, M    , 6
    do jfunct = ns+1   , ns+np, 3
       do nci = 1, ncont(ifunct)
@@ -656,6 +692,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    !print*, "dp|s", frc
 
    ! (dd|s)
+   !$omp do schedule(dynamic)
    do ifunct = ns+np+1, M     , 6
    do jfunct = ns+np+1, ifunct, 6
       do nci = 1, ncont(ifunct)
@@ -882,6 +919,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    !print*, "dd|s", frc
 
    ! (ss|p)
+   !$omp do schedule(dynamic)
    do ifunct = 1, ns
    do jfunct = 1, ifunct
       do nci = 1, ncont(ifunct)
@@ -958,6 +996,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    !print*, "ss|p", frc
 
    ! (ps|p)
+   !$omp do schedule(dynamic)
    do ifunct = ns+1, ns+np, 3
    do jfunct = 1   , ns
       do nci = 1, ncont(ifunct)
@@ -1061,6 +1100,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    !print*, "ps|p", frc
 
    ! (pp|p)
+   !$omp do schedule(dynamic)
    do ifunct = ns+1, ns+np , 3
    do jfunct = ns+1, ifunct, 3
       do nci = 1, ncont(ifunct)
@@ -1208,6 +1248,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    !print*, "pp|p", frc
 
    ! (ds|p)
+   !$omp do schedule(dynamic)
    do ifunct = ns+np+1, M , 6
    do jfunct = 1      , ns
       do nci = 1, ncont(ifunct)
@@ -1360,6 +1401,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    !print*, "ds|p", frc
 
    ! (dp|p)
+   !$omp do schedule(dynamic)
    do ifunct = ns+np+1, M    , 6
    do jfunct = ns+1   , ns+np, 3
       do nci = 1, ncont(ifunct)
@@ -1583,6 +1625,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    !print*, "dp|p", frc
 
    ! (dd|p)
+   !$omp do schedule(dynamic)
    do ifunct = ns+np+1, M     , 6
    do jfunct = ns+np+1, ifunct, 6
       do nci = 1, ncont(ifunct)
@@ -1933,6 +1976,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    !print*, "dd|p", frc
 
    ! (ss|d)
+   !$omp do schedule(dynamic)
    do ifunct = 1, ns
    do jfunct = 1, ifunct
       do nci = 1, ncont(ifunct)
@@ -2039,6 +2083,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    !print*, "ss|d", frc
 
    ! (ps|d)
+   !$omp do schedule(dynamic)
    do ifunct = ns+1, ns+np, 3
    do jfunct = 1   , ns
       do nci = 1, ncont(ifunct)
@@ -2187,6 +2232,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    !print*, "ps|d", frc
 
    ! (pp|d)
+   !$omp do schedule(dynamic)
    do ifunct = ns+1, ns+np  , 3
    do jfunct = ns+1, ifunct , 3
       do nci = 1, ncont(ifunct)
@@ -2412,6 +2458,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    !print*, "pp|d", frc
 
    ! (ds|d)
+   !$omp do schedule(dynamic)
    do ifunct = ns+np+1, M , 6
    do jfunct = 1      , ns
       do nci = 1, ncont(ifunct)
@@ -2637,6 +2684,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    !print*, "ds|d", frc
 
    ! (dp|d) and gradients
+   !$omp do schedule(dynamic)
    do ifunct = ns+np+1, M    , 6
    do jfunct = ns+1   , ns+np, 3
       do nci = 1, ncont(ifunct)
@@ -2996,6 +3044,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    !print*, "dp|d", frc
 
    ! (dd|d) and gradients
+   !$omp do schedule(dynamic)
    do ifunct = ns+np+1, M     , 6
    do jfunct = ns+np+1, ifunct, 6
       do nci = 1, ncont(ifunct)
@@ -3564,9 +3613,7 @@ subroutine int3G(frc, calc_energy, rho_mat, r, d, natom, ntatom)
    enddo
    !print*, "dd|d", frc
 
-   deallocate(Jx, Ll, Q, W)
-   call g2g_timer_stop('CoulG')
-   call g2g_timer_sum_stop('Coulomb gradients')
-   return
-end subroutine
+   end subroutine int3G_cou
+
+end subroutine int3G
 end module subm_int3G
