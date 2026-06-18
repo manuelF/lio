@@ -387,10 +387,16 @@ void Partition::regenerate(void) {
   // globals is enough since point binning, cube coords, assign_functions_*, and
   // the sphere gate all read them; both are restored below. SCF never merges
   // (td_merge_groups stays off), keeping heme's float32/DIIS convergence intact.
+  // Merging only pays off on the GPU, where it cuts per-group launch overhead.
+  // On a CPU-only build (gpu_threads == 0) the merged single cube becomes one
+  // PointGroupCPU handed to a single solve() thread (inner_threads == 1), which
+  // serializes the whole XC solve on one core -- far slower than the normal
+  // multi-group partition that spreads groups across all CPU threads.
   const uint TD_MERGE_MAX_M = 80;
   const double saved_little_cube_size = little_cube_size;
   const double saved_sphere_radius = sphere_radius;
-  const bool td_merged = (td_merge_groups && fortran_vars.m <= TD_MERGE_MAX_M);
+  const bool td_merged = (td_merge_groups && fortran_vars.m <= TD_MERGE_MAX_M &&
+                          G2G::gpu_threads > 0);
   if (td_merged) {
     const double extent = max(x1.x - x0.x, max(x1.y - x0.y, x1.z - x0.z));
     little_cube_size = max(little_cube_size, extent + 1.0);
