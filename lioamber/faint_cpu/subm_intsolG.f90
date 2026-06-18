@@ -35,6 +35,7 @@ subroutine intsolG(frc_qm, frc_mm, natom, ntatom, rho, d, r, pc, Iz)
    use basis_data   , only: M, a, c, Nuc, Ncont, nshell, rmax, NORM
    use liosubs_math , only: FUNCT
    use constants_mod, only: pi
+   use omp_lib
 
    implicit none
    integer         , intent(in)    :: natom, ntatom, Iz(natom)
@@ -42,34 +43,16 @@ subroutine intsolG(frc_qm, frc_mm, natom, ntatom, rho, d, r, pc, Iz)
                                       pc(ntatom)
    LIODBLE, intent(inout) :: frc_qm(natom,3), frc_mm(ntatom,3)
 
-   integer          :: ns, np, nd, iatom, jatom, ifunct, jfunct, nci, ncj, MM, &
-                       M2, rho_ind, lk, lij, l1, l2, l3, l4, l5, l12, l34, Ll(3)
-   LIODBLE :: SQ3, f1, f2, Q(3), q1, q2, q3, rexp, term0, term, Zij,  &
-                       Z2, uf, ccoef, te
-   LIODBLE :: s0p, s1p, s2p, sNpi
-   LIODBLE :: p0s, p1s, p2s, p3s, p4s, pi0p, pi0d, pi1p, pi1d, pi2p,  &
-                       pj0s, pj0p, pj0d, pj1s, pj1p, pj1d, pj2s, pj2p, pj3s,   &
-                       pNp, pNd, pN1p, piNs
-   LIODBLE :: d0s, d0p, d1s, d1p, d2s, d3s, d2p, d0pl, d1pl, dNs, dNp,&
-                       dNd, dNf, dN1s, dN1p
-   LIODBLE :: fNs, fNp, fNd
-   LIODBLE :: t1, t2, t3, t4, t5, t7, t8, t9, t15, t25, t26, t27, t28,&
-                       t29, t30, t31, t32, t33, t34, t50, t51, t52, t53, t54,  &
-                       t55, t56, t57, t58, t59, t60, t61, t62, t63, t64, t65,  &
-                       t66, t67, t68, t69, t70, t71, t72, t73, t74, t81, t81b, &
-                       t82, t82b, t83, t83b, t84, t84b, t85, t85b, t86, t86b,  &
-                       t90, t91, t92, t93, t94, t95, t96, t97, t98
-   LIODBLE :: dn(3)  , dn1(3) , dn2(3) , dn3(3) , dn4(3) , dn5(3) , &
-                       dn6(3) , dn7(3) , dn8(3) , dn9(3) , dn10(3), dn2b(3), &
-                       dn4b(3), dn5b(3), dn7b(3), dn8b(3), dn9b(3)
-   LIODBLE, allocatable :: s0s(:), s1s(:), s2s(:), s3s(:), s4s(:), &
-                                    s5s(:), s6s(:), x0x(:,:), x1x(:,:),     &
-                                    x2x(:,:), x3x(:,:), x4x(:,:)
-
-   allocate(s0s(ntatom), s1s(ntatom), s2s(ntatom), s3s(ntatom), s4s(ntatom), &
-            s5s(ntatom), s6s(ntatom))
-   allocate(x0x(ntatom,3), x1x(ntatom,3), x2x(ntatom,3), x3x(ntatom,3), &
-            x4x(ntatom,3))
+   ! Host-scope variables. ns, np, nd, M2, Ll and SQ3 are computed once here and
+   ! read-only inside the contained worker (shared via host association). The
+   ! rest are used by the serial nuclear-repulsion loop and the parallel driver.
+   integer          :: ns, np, nd, MM, M2, Ll(3), l1, iatom, jatom
+   LIODBLE :: SQ3, t1, t2, t3, term
+   ! Per-thread MM-atom slice and per-thread QM-force accumulators. Each thread
+   ! writes its own slot; the slots are summed back in a fixed thread order after
+   ! the parallel region so the result is deterministic run-to-run.
+   integer          :: tid, nthr, nthr_max, it, n_mm, chunk, mm_lo, mm_hi
+   LIODBLE, allocatable :: frc_qm_threads(:,:,:)
 
    SQ3 = 1.D0
    if (NORM) SQ3 = sqrt(3.D0)
@@ -103,6 +86,83 @@ subroutine intsolG(frc_qm, frc_mm, natom, ntatom, rho, d, r, pc, Iz)
    !print*, frc_qm
    !print*, frc_mm
 
+   ! QM/MM solvent gradients -- the dominant force-evaluation cost. The result is
+   ! a sum over basis-shell pairs of contributions from every MM point charge
+   ! (ntatom-natom of them, typically thousands). Each MM atom is independent, so
+   ! we partition the MM-atom range across OpenMP threads:
+   !   * frc_mm rows are written by disjoint threads -> race-free and identical
+   !     to the serial result (no cross-thread reduction on frc_mm);
+   !   * each thread accumulates QM forces into a private frc_qm_local, summed
+   !     under a critical section at the end (natom*3 is tiny).
+   ! All integral scratch lives in the contained worker, so each thread gets its
+   ! own copies automatically (private by virtue of being procedure locals).
+   nthr_max = 1
+   !$ nthr_max = omp_get_max_threads()
+   allocate(frc_qm_threads(natom, 3, nthr_max))
+   frc_qm_threads = 0.0D0
+
+   !$omp parallel default(shared) &
+   !$omp          private(tid, nthr, n_mm, chunk, mm_lo, mm_hi)
+   tid  = 0
+   nthr = 1
+   !$ tid  = omp_get_thread_num()
+   !$ nthr = omp_get_num_threads()
+   n_mm  = ntatom - natom
+   chunk = (n_mm + nthr - 1) / nthr
+   mm_lo = natom + 1 + tid * chunk
+   mm_hi = min(natom + (tid + 1) * chunk, ntatom)
+
+   if (mm_lo <= mm_hi) &
+      call intsolG_mm(mm_lo, mm_hi, frc_qm_threads(:, :, tid + 1))
+   !$omp end parallel
+
+   ! Deterministic fixed-order reduction of the per-thread QM forces.
+   do it = 1, nthr_max
+      frc_qm = frc_qm + frc_qm_threads(:, :, it)
+   enddo
+   deallocate(frc_qm_threads)
+
+   return
+
+contains
+
+   ! Solvent-gradient contribution from the MM atoms in [mm_lo, mm_hi]. frc_mm
+   ! (host-associated) is written only on those rows; frc_qm is the caller's
+   ! per-thread accumulator. Every other variable below is a procedure local and
+   ! therefore private to the calling OpenMP thread.
+   subroutine intsolG_mm(mm_lo, mm_hi, frc_qm)
+      integer, intent(in)    :: mm_lo, mm_hi
+      LIODBLE, intent(inout) :: frc_qm(natom,3)
+
+      integer          :: iatom, ifunct, jfunct, nci, ncj, rho_ind, lk, lij, &
+                          l1, l2, l3, l4, l5, l12, l34
+      LIODBLE :: f1, f2, Q(3), q1, q2, q3, rexp, term0, term, Zij,  &
+                          Z2, uf, ccoef, te
+      LIODBLE :: s0p, s1p, s2p, sNpi
+      LIODBLE :: p0s, p1s, p2s, p3s, p4s, pi0p, pi0d, pi1p, pi1d, pi2p,  &
+                          pj0s, pj0p, pj0d, pj1s, pj1p, pj1d, pj2s, pj2p, pj3s,   &
+                          pNp, pNd, pN1p, piNs
+      LIODBLE :: d0s, d0p, d1s, d1p, d2s, d3s, d2p, d0pl, d1pl, dNs, dNp,&
+                          dNd, dNf, dN1s, dN1p
+      LIODBLE :: fNs, fNp, fNd
+      LIODBLE :: t1, t2, t3, t4, t5, t7, t8, t9, t15, t25, t26, t27, t28,&
+                          t29, t30, t31, t32, t33, t34, t50, t51, t52, t53, t54,  &
+                          t55, t56, t57, t58, t59, t60, t61, t62, t63, t64, t65,  &
+                          t66, t67, t68, t69, t70, t71, t72, t73, t74, t81, t81b, &
+                          t82, t82b, t83, t83b, t84, t84b, t85, t85b, t86, t86b,  &
+                          t90, t91, t92, t93, t94, t95, t96, t97, t98
+      LIODBLE :: dn(3)  , dn1(3) , dn2(3) , dn3(3) , dn4(3) , dn5(3) , &
+                          dn6(3) , dn7(3) , dn8(3) , dn9(3) , dn10(3), dn2b(3), &
+                          dn4b(3), dn5b(3), dn7b(3), dn8b(3), dn9b(3)
+      LIODBLE, allocatable :: s0s(:), s1s(:), s2s(:), s3s(:), s4s(:), &
+                                       s5s(:), s6s(:), x0x(:,:), x1x(:,:),     &
+                                       x2x(:,:), x3x(:,:), x4x(:,:)
+
+      allocate(s0s(ntatom), s1s(ntatom), s2s(ntatom), s3s(ntatom), s4s(ntatom), &
+               s5s(ntatom), s6s(ntatom))
+      allocate(x0x(ntatom,3), x1x(ntatom,3), x2x(ntatom,3), x3x(ntatom,3), &
+               x4x(ntatom,3))
+
    ! (s|s)
    do ifunct = 1, ns
    do jfunct = 1, ifunct
@@ -123,7 +183,7 @@ subroutine intsolG(frc_qm, frc_mm, natom, ntatom, rho, d, r, pc, Iz)
             Q(3) = (a(ifunct,nci) * r(Nuc(ifunct),3) + &
                     a(jfunct,ncj) * r(Nuc(jfunct),3)) / Zij
 
-            do iatom = natom+1, ntatom
+            do iatom = mm_lo, mm_hi
                uf  = ((Q(1) - r(iatom,1)) * (Q(1) - r(iatom,1)) + &
                       (Q(2) - r(iatom,2)) * (Q(2) - r(iatom,2)) + &
                       (Q(3) - r(iatom,3)) * (Q(3) - r(iatom,3))) * Zij
@@ -147,7 +207,7 @@ subroutine intsolG(frc_qm, frc_mm, natom, ntatom, rho, d, r, pc, Iz)
                t1 = Q(l2) - r(Nuc(ifunct),l2)
                t2 = r(Nuc(ifunct),l2) - r(Nuc(jfunct),l2)
 
-               do iatom = natom+1, ntatom
+               do iatom = mm_lo, mm_hi
                   piNs = t1 * s0s(iatom) - (Q(l2) - r(iatom,l2)) * s1s(iatom)
                   sNpi = piNs + t2 * s0s(iatom)
                   frc_qm(Nuc(ifunct),l2) = frc_qm(Nuc(ifunct),l2) + t4 * piNs
@@ -182,7 +242,7 @@ subroutine intsolG(frc_qm, frc_mm, natom, ntatom, rho, d, r, pc, Iz)
             Q(3) = (a(ifunct,nci) * r(Nuc(ifunct),3) + &
                     a(jfunct,ncj) * r(Nuc(jfunct),3)) / Zij
 
-            do iatom = natom+1, ntatom
+            do iatom = mm_lo, mm_hi
                q1   = Q(1) - r(iatom,1)
                q2   = Q(2) - r(iatom,2)
                q3   = Q(3) - r(iatom,3)
@@ -204,7 +264,7 @@ subroutine intsolG(frc_qm, frc_mm, natom, ntatom, rho, d, r, pc, Iz)
                x1x(iatom,3) = term * q3
             enddo
 
-            do iatom = natom+1, ntatom
+            do iatom = mm_lo, mm_hi
                t50 = (s0s(iatom) - s1s(iatom)) / Z2
 
                do l1 = 1, 3
@@ -268,7 +328,7 @@ subroutine intsolG(frc_qm, frc_mm, natom, ntatom, rho, d, r, pc, Iz)
             Q(3) = (a(ifunct,nci) * r(Nuc(ifunct),3) + &
                     a(jfunct,ncj) * r(Nuc(jfunct),3)) / Zij
 
-            do iatom = natom+1, ntatom
+            do iatom = mm_lo, mm_hi
                q1   = Q(1) - r(iatom,1)
                q2   = Q(2) - r(iatom,2)
                q3   = Q(3) - r(iatom,3)
@@ -296,7 +356,7 @@ subroutine intsolG(frc_qm, frc_mm, natom, ntatom, rho, d, r, pc, Iz)
                x2x(iatom,3) = term * q3
             enddo
 
-            do iatom = natom+1, ntatom
+            do iatom = mm_lo, mm_hi
                t15 = (s0s(iatom)   - s1s(iatom))   / Z2
                t25 = (s1s(iatom)   - s2s(iatom))   / Z2
                t26 = (x0x(iatom,1) - x1x(iatom,1)) / Z2
@@ -407,7 +467,7 @@ subroutine intsolG(frc_qm, frc_mm, natom, ntatom, rho, d, r, pc, Iz)
             Q(3) = (a(ifunct,nci) * r(Nuc(ifunct),3) + &
                     a(jfunct,ncj) * r(Nuc(jfunct),3)) / Zij
 
-            do iatom = natom+1, ntatom
+            do iatom = mm_lo, mm_hi
                q1   = Q(1) - r(iatom,1)
                q2   = Q(2) - r(iatom,2)
                q3   = Q(3) - r(iatom,3)
@@ -435,7 +495,7 @@ subroutine intsolG(frc_qm, frc_mm, natom, ntatom, rho, d, r, pc, Iz)
                x2x(iatom,3) = term * q3
             enddo
 
-            do iatom = natom+1, ntatom
+            do iatom = mm_lo, mm_hi
                t7  = (s0s(iatom)   - s1s(iatom)  ) / Z2
                t8  = (s1s(iatom)   - s2s(iatom)  ) / Z2
                t26 = (x0x(iatom,1) - x1x(iatom,1)) / Z2
@@ -541,7 +601,7 @@ subroutine intsolG(frc_qm, frc_mm, natom, ntatom, rho, d, r, pc, Iz)
             Q(3) = (a(ifunct,nci) * r(Nuc(ifunct),3) + &
                     a(jfunct,ncj) * r(Nuc(jfunct),3)) / Zij
 
-            do iatom = natom+1, ntatom
+            do iatom = mm_lo, mm_hi
                q1   = Q(1) - r(iatom,1)
                q2   = Q(2) - r(iatom,2)
                q3   = Q(3) - r(iatom,3)
@@ -575,7 +635,7 @@ subroutine intsolG(frc_qm, frc_mm, natom, ntatom, rho, d, r, pc, Iz)
                x3x(iatom,3) = term * q3
             enddo
 
-            do iatom = natom+1, ntatom
+            do iatom = mm_lo, mm_hi
                t7  = (s0s(iatom)   - s1s(iatom)  ) / Z2
                t8  = (s1s(iatom)   - s2s(iatom)  ) / Z2
                t9  = (s2s(iatom)   - s3s(iatom)  ) / Z2
@@ -769,7 +829,7 @@ subroutine intsolG(frc_qm, frc_mm, natom, ntatom, rho, d, r, pc, Iz)
             Q(3) = (a(ifunct,nci) * r(Nuc(ifunct),3) + &
                     a(jfunct,ncj) * r(Nuc(jfunct),3)) / Zij
 
-            do iatom = natom+1, ntatom
+            do iatom = mm_lo, mm_hi
                q1   = Q(1) - r(iatom,1)
                q2   = Q(2) - r(iatom,2)
                q3   = Q(3) - r(iatom,3)
@@ -810,7 +870,7 @@ subroutine intsolG(frc_qm, frc_mm, natom, ntatom, rho, d, r, pc, Iz)
                x4x(iatom,3) = term * q3
             enddo
 
-            do iatom = natom +1, ntatom
+            do iatom = mm_lo, mm_hi
                t50 = (s0s(iatom) - s1s(iatom)) / Z2
                t51 = (s1s(iatom) - s2s(iatom)) / Z2
                t52 = (s2s(iatom) - s3s(iatom)) / Z2
@@ -1175,9 +1235,10 @@ subroutine intsolG(frc_qm, frc_mm, natom, ntatom, rho, d, r, pc, Iz)
    !print*, "dd", frc_qm
    !print*, "dd", frc_mm
 
-   deallocate(s0s, s1s, s2s, s3s, s4s, s5s, s6s, x0x, x1x, x2x, x3x, x4x)
-   return
+      deallocate(s0s, s1s, s2s, s3s, s4s, s5s, s6s, x0x, x1x, x2x, x3x, x4x)
+      return
+   end subroutine intsolG_mm
 
-end subroutine
+end subroutine intsolG
 end module subm_intsolG
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
