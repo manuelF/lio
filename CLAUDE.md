@@ -37,9 +37,22 @@ Key build options:
 - `cuda=1|2`: GPU kernels (2 also enables CUBLAS)
 - `cpu=1`: CPU OpenMP kernels
 - `precision=1`: Full double precision (default is hybrid single/double)
+- `aint_mp=1`: float precision for the analytic-integral (Coulomb/QM-MM) kernels (default on)
 - `libxc=1|2`: Enable Libxc (1=CPU mode, 2=GPU mode)
 - `dbg=1`: Debug symbols + `-D_DEBUG`
 - `analytics=0..3`: Profiling/debug verbosity levels
+
+Diagnostic / audit toggles (lioamber, gated — no effect on the default build):
+- `lint=1`: surface warning-only flags still being cleaned up
+  (`-Warray-temporaries`, `-Wrealloc-lhs`, `-Wmaybe-uninitialized`, `-Wuse-without-only`).
+  The correctness guards (`-Wimplicit-interface`, `-Waliasing`, `-fimplicit-none`, …)
+  are already on by default. See `lioamber/Makefile.options`.
+- `check=1`: runtime `-fcheck=bounds,do,pointer,mem,recursion` + backtrace.
+- `check=2`: `-finit-real=snan -ffpe-trap=invalid` — aborts on any uninitialised REAL
+  used in arithmetic. Build with `check=N`, then run the e2e suite to surface the bug.
+
+> `-D` / Makefile flag changes don't invalidate the dep tracker (it tracks sources,
+> not the Makefile) — run `make clean` after changing a build flag.
 
 ## Environment Setup
 
@@ -102,38 +115,42 @@ institutional memory for performance work.
 
 ### How to navigate it
 
-1. **Start at [`research/INDEX.md`](research/INDEX.md)** — it has the area map, current
-   priorities, completed work, and rejected dead ends (~65 lines).
-2. **Drill into the relevant sub-index** (e.g., `research/gpu/INDEX.md`) — each lists
-   every file in that area with status (DONE/OPEN/REJECTED), impact rating, and a
-   one-line summary. Read only the sub-index, not every file.
-3. **Read individual files only when you need the details** for a specific optimization
+There is **no top-level `research/INDEX.md`** — navigation starts at the per-area
+sub-indexes listed in the table below.
+
+1. **Open the relevant `research/<area>/INDEX.md`** — each lists every file in that
+   area with status (`DONE` / `OPEN` / `REJECTED` / `DEAD` / `PLAN`), an impact rating,
+   and a one-line summary. Read only the sub-index, not every file.
+2. **Read individual files only when you need the details** for a specific optimization
    you're about to implement or a constraint you need to understand.
 
 ### When to consult research/
 
-- **Before any GPU kernel optimization**: read `research/guides/cuda_optimization_guide.md`
-  for the tier framework, and `research/convergence/INDEX.md` for float32/DIIS constraints.
-- **Before re-investigating a closed topic**: check the "Rejected / Dead Ends" table in
-  `research/INDEX.md` — several approaches (Kahan summation, `__ldg`, level shifting,
-  single-row restructuring) have been thoroughly tested and ruled out with data.
-- **When profiling**: `g2g/cuda/CLAUDE.md` has project-specific nvprof gotchas;
-  `research/gpu/roofline_gpu_compute_density.md` has the density kernel roofline analysis.
-- **When writing new research**: add the file to the appropriate `research/<area>/` folder
-  and update that area's `INDEX.md` with status and summary. Update `research/INDEX.md`
-  priorities table if the work is high-impact or represents a new dead end.
+- **Before any SCF / convergence change**: read `research/convergence/INDEX.md`. The
+  float32-XC noise + DIIS ulp-sensitivity make iter-count the dominant lever, and
+  **heme iter-count is Lyapunov-chaotic — judge every change on the median across
+  OMP={1,4,6,8}, not the lucky default.** The master catalogue + resume point is
+  `research/convergence/scf_iteration_reduction_strategies_2026_06_14.md`.
+- **Before re-investigating a closed topic**: each sub-index flags dead ends inline
+  with `REJECTED` / `DEAD` status and the data that killed them. Several approaches
+  (Kahan summation, `__ldg`, level shifting, TF32/tensor cores for the density path,
+  CUDA Graphs, per-TD-step int3lu overlap, partition-geometry/mega-kernel) have been
+  tested and ruled out — check before retrying.
+- **No-toggle rule (project owner)**: an optimization ships unconditionally or stays
+  out; do not add `LIO_*` env tuning levers for new work.
+- **When writing new research**: add the file to the appropriate `research/<area>/`
+  folder and update that area's `INDEX.md` with status and summary.
 
 ### Area quick reference
 
-| Area | Sub-index | When to read |
-|------|-----------|--------------|
-| `gpu/` | 20 files (6 done, 14 open) | Modifying any CUDA kernel |
-| `cpu/` | 5 files (all open) | Modifying CPU code path |
-| `convergence/` | 4 files | Touching anything that feeds the SCF loop |
-| `infrastructure/` | 7 files | Memory management, threading, data layout |
-| `fortran/` | 4 files | Working in lioamber/ |
-| `tddft/` | 1 file | TD-DFT / Ehrenfest dynamics |
-| `guides/` | 2 files | Starting any optimization work |
+| Sub-index | When to read |
+|-----------|--------------|
+| `research/gpu/INDEX.md` | Modifying any CUDA kernel (density, RMM, forces) |
+| `research/cpu/INDEX.md` | Modifying the CPU code path / faint_cpu / diag |
+| `research/convergence/INDEX.md` | Touching anything that feeds the SCF loop (DIIS, guess, criterion) |
+| `research/fortran/INDEX.md` | Working in `lioamber/` (overlap, BLAS, interface-lint) |
+| `research/tddft/INDEX.md` | TD-DFT / Ehrenfest / Magnus propagation |
+| `research/build/INDEX.md` | Build system / Bazel-migration scoping |
 
 ## Code Style
 

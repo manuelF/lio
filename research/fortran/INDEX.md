@@ -3,31 +3,26 @@
 Research on modernizing and optimizing the Fortran 90 layer that drives
 the SCF loop, handles I/O, and calls into the C++/CUDA engine.
 
-**2026-04-17 status:** Three rounds of Fortran-side wins landed since the
-April 8 analysis: converger direct P'_ON (2 DGEMMs/iter, commit 7325eeb3),
-int3mem OpenMP parallelization (286ms, commit 7229cad3), and Cholesky for G
-matrix (116ms, commit de2d2f21). Warm wall 3.63s → **~1.84s**. Remaining
-Fortran work is dominated by `int3lu` (10.7ms/iter × 25 = 268ms, 15% wall),
-which is strictly sequential with `g2g solve`. The top remaining lever in
-this area is **overlapping int3lu with g2g solve** — see
-[overlap_int3lu_g2g.md](overlap_int3lu_g2g.md).
+**Status (2026-06-18).** The Fortran-side per-iteration hot paths are
+**exhausted**: the SCF loop is BLAS/LAPACK-floored at M=364, and ~95% of the
+fosfato/TD wall lives in separate compilation units (`libg2g.so` and
+`libopenblas`), not in lioamber's own FFLAGS — so structural compiler flags
+cannot move the needle (see `lto_blas_interposition_dead_end`). The remaining
+levers are algorithmic (iter-count, see `../convergence/`) or live in `g2g`.
 
-Perf flat top (post-optimizations): OpenMP barrier wait 40% (mostly
-legitimate worker idle during serial Fortran), `cpu_compute_density_gga` 18%,
-OpenBLAS dgemv/dgemm 20%, int3mem outlined OpenMP fns ~1.8%.
+Landed Fortran-side wins (details on the `optimizations` branch +
+`MEMORY.md`): int3mem OpenMP parallelization, Cholesky for the G matrix,
+converger direct P'_ON DGEMMs, allocation hoisting, the int3lu↔g2g overlap
+(`LIO_OVERLAP_INT3LU_G2G`, closed/open-shell) with thread auto-tuning, and the
+int3lu GPU-resident cuBLAS offload (gate lifted — see
+[`../cpu/int3lu_gpu_offload_2026_06_10.md`](../cpu/int3lu_gpu_offload_2026_06_10.md)).
 
 ## Files
 
 | File | Status | Summary |
 |------|--------|---------|
-| [overlap_int3lu_g2g.md](overlap_int3lu_g2g.md) | DESIGN | Original design doc — superseded by implementation note below |
-| [overlap_int3lu_g2g_implemented_2026_05_01.md](overlap_int3lu_g2g_implemented_2026_05_01.md) | DONE | Closed-shell overlap shipped behind `LIO_OVERLAP_INT3LU_G2G=1`. Fosfato 1.90→1.66s (-12-15%, ~250-300ms saved); 25 iters preserved; all 8 e2e PASS |
-| [overlap_autotune_2026_05_03.md](overlap_autotune_2026_05_03.md) | DONE | Auto-tunes OMP/BLAS threads from physical core count; `g2g/hardware_topo.{h,cpp}` module; 187-subtest unit test; no manual env vars needed |
-| [int3lu_gpu_offload_evaluation.md](int3lu_gpu_offload_evaluation.md) | REJECTED | Same ceiling as CPU/GPU overlap, 3-5× the effort; revisit at M≥1500 |
-| [full_scf_port_evaluation.md](full_scf_port_evaluation.md) | DEFERRED | 440-565ms ceiling but 11-14 weeks effort; revisit at M≥1500 or MD throughput. First step: try `cuda=2` build |
-| [blas_optimization.md](blas_optimization.md) | DONE | BLAS replacements + allocation hoisting; SCF loop is BLAS-bound at M=364 |
-| [../convergence/heme_scf_hotpath_and_sad_d_refutation_2026_05_29.md](../convergence/heme_scf_hotpath_and_sad_d_refutation_2026_05_29.md) | DONE / DEAD ENDS | Heme SCF Fortran/BLAS per-iter hot paths are **exhausted**: Fock integrals GPU-bound under overlap; base change/DIIS already BLAS3; thread count absorbed by spare cores; diagonalization **basis-locked** (dsyevr-full 72→119 iters). **SAD-d refuted** (no-op under vcinp=t; aufbau d-shell guess is 391 iters vs restart's 72) |
-| [makefile_optimizations_and_interface_lint_2026_06_16.md](makefile_optimizations_and_interface_lint_2026_06_16.md) | DONE (implicit-interface) | Makefile flag audit (10+ opts) + interface-lint program. implicit-interface **809→0** + -Waliasing 0; both **promoted to default FFLAGS** as guards; only -Warray-temporaries (305) stays lint-gated. All e2e PASS. Profiling: 9.2ms/iter g2g idle is the algorithmic pole |
-| [fortran_modernization.md](fortran_modernization.md) | OPEN | Replace global mutable state, improve allocatable arrays, remove pre-F90 patterns |
-| [unit_testing_strategy.md](unit_testing_strategy.md) | REF | Unit test infrastructure audit; 4 existing test programs |
-| [ecp_optimizations.md](ecp_optimizations.md) | OPEN | Effective Core Potential initialization; 3 center-combination routines |
+| [makefile_optimizations_and_interface_lint_2026_06_16.md](makefile_optimizations_and_interface_lint_2026_06_16.md) | DONE | Makefile flag audit (10+ opts) + interface-lint program. implicit-interface **809→0** + -Waliasing 0; both **promoted to default FFLAGS** as guards; only -Warray-temporaries (305) stays `lint=1`-gated. All e2e PASS. Profiling: 9.2ms/iter g2g idle is the algorithmic pole. |
+| [lto_blas_interposition_dead_end_2026_06_18.md](lto_blas_interposition_dead_end_2026_06_18.md) | REJECTED | `-flto` / `-fexternal-blas` / `-fno-semantic-interposition` measured end-to-end: no wall-clock win, two perturb FP-sensitive heme/fosfato. Root cause: ~95% of fosfato/TD wall is in `libg2g.so` + `libopenblas`, not lioamber FFLAGS. Closes the structural-flag branch. |
+| [overlap_autotune_2026_05_03.md](overlap_autotune_2026_05_03.md) | DONE | Auto-tunes OMP/BLAS threads from physical core count for the int3lu↔g2g overlap; `g2g/hardware_topo.{h,cpp}` module; no manual env vars needed. |
+| [int3lu_bandwidth_bound_multizn_2026_06_01.md](int3lu_bandwidth_bound_multizn_2026_06_01.md) | DONE (diag) / threading REJECTED | int3lu (0.54s/call on multiZn) is DRAM-bandwidth-bound BLAS-2 streaming 5.8GB cool/cools 2×/call; CPU threading measured-dead (flat 1→8 threads); overlap can't hide it. Real lever = GPU-resident cuBLAS offload, since shipped (see `../cpu/int3lu_gpu_offload`). |
+| [../convergence/heme_scf_hotpath_and_sad_d_refutation_2026_05_29.md](../convergence/heme_scf_hotpath_and_sad_d_refutation_2026_05_29.md) | DONE / DEAD ENDS | Heme SCF Fortran/BLAS per-iter hot paths **exhausted**: Fock integrals GPU-bound under overlap; base change/DIIS already BLAS3; thread count absorbed by spare cores; diagonalization **basis-locked** (dsyevr-full 72→119 iters). **SAD-d refuted** (no-op under vcinp=t; aufbau d-shell guess 391 iters vs restart 72). |

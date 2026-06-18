@@ -114,7 +114,7 @@ reallocates function/gradient/hessian buffers for all GPU groups (19K malloc/fre
 because the timing-dependent `rebalance()` function makes different group-to-thread
 assignment decisions when the GPU finishes faster. This is NOT a caching correctness bug —
 it's inherent to the timing-dependent rebalancer interacting with FP accumulation order.
-See `../research/gpu/optimize_memory_pool.md` for details.
+See `../research/gpu/INDEX.md` for the partition/caching optimization history.
 
 ### Background
 
@@ -129,12 +129,13 @@ matrices to predict the next iterate.
   shuffles matching old volatile order, shared memory layout, loop unrolling
   without reordering). These don't change numerical results.
 
-- **Always run the full E2E test suite** (`cd test && ./run_tests.py`) after
-  any kernel change, even "precision-only" ones. The fosfatoQMMM test
+- **Always run the full E2E test suite** (`make check`, or `cd test && ./new_tests.py`)
+  after any kernel change, even "precision-only" ones. The fosfatoQMMM test
   (closed-shell, 25 iters) and Fe3H2O6 test (open-shell, restart) are both
   sensitive to float32 changes.
 
-- **Also run `./run_unit.py --sanitize=racecheck`** after any change to
-  `g2g/cuda/kernels/`. Float32 shared-mem races don't produce visibly wrong
+- **Run the kernel unit tests under `compute-sanitizer --tool racecheck`** after any
+  change to `g2g/cuda/kernels/` (the per-kernel test binaries live in
+  `test/unit_tests/kernels/`). Float32 shared-mem races don't produce visibly wrong
   output (32-bit stores are atomic), but the same race explodes in
   FULL_DOUBLE (64-bit stores tear). Racecheck is the only reliable detector.
