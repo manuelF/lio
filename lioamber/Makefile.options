@@ -115,23 +115,70 @@ ifeq ($(intel),0)
   FFLAGS += -fno-plt
   FFLAGS += -funroll-loops
   FFLAGS += -falign-functions=32 -falign-loops=32
-  # NOTE: -fno-semantic-interposition and -flto are deliberately omitted. Both
-  # enable cross-call inlining that exposes new FMA contraction and perturbs FP
-  # (heme iter count is Lyapunov-sensitive). Re-validate heme before adding.
+  # -flto, -fno-semantic-interposition and -fexternal-blas are deliberately
+  # omitted: fosfato and the TD/Ehrenfest cases spend ~95% of wall in libg2g.so
+  # (CUDA) and libopenblas, separate units these FFLAGS do not touch, so there is
+  # no measurable speedup; -flto/-fno-semantic-interposition also perturb the
+  # FP-sensitive SCF path. -fexternal-blas only helps a large-M Ehrenfest
+  # workload (matmul-heavy and matrix-bound); revisit if that becomes a target.
+  # See research/fortran/.
   # Overridable CPU arch flags (see g2g/Makefile.common). Default targets the
   # build host; override ARCHFLAGS_FC for portable/reproducible release builds.
   ARCHFLAGS_FC ?= -march=native -mtune=native
   FFLAGS += $(ARCHFLAGS_FC)
   FFLAGS += -fstack-arrays
-  # Warning-only diagnostics (no codegen impact). These two are at zero across
-  # the lioamber tree (every bare-external call now has an explicit interface),
-  # so they ship in the default build as a regression guard: a new
-  # implicit-interface call or aliasing violation surfaces immediately.
+  # Correctness guards: warning-only, no codegen/FP impact, all at zero across
+  # the tree. They keep the default build clean and turn a regression into an
+  # immediate diagnostic. Each catches a class of bug that would compile silently:
+  #   -Wimplicit-interface  : call to a procedure with no explicit interface
+  #   -Waliasing            : aliased dummy arguments
+  #   -Wcompare-reals       : fragile REAL == / /= comparison
+  #   -Wunused-dummy-argument / -Wunused-variable : vestigial args / dead imports
+  #   -Wline-truncation     : source past the line limit silently dropped
+  #   -Wcharacter-truncation: CHARACTER assignment/arg truncated
+  #   -Wsurprising          : surprising constructs (e.g. non-conformant logic)
+  #   -Wreturn-type         : function result never assigned
+  #   -Wzerotrip            : DO loop that never executes as written
+  #   -Wundefined-do-loop   : DO loop bound overflow / undefined trip count
+  #   -Wdo-subscript        : array subscript provably out of bounds at compile time
+  #   -Wintrinsic-shadow    : user procedure silently shadows an intrinsic
+  #   -Wconversion          : implicit type conversion that may change the value
+  #   -Wreal-q-constant     : 'q' real constant losing precision
+  #   -Wtarget-lifetime     : pointer outliving its target
+  #   -Wc-binding-type      : C-interop kind mismatch
+  #   -Wampersand           : missing continuation ampersand (silent string join)
+  # -fimplicit-none forbids implicit typing tree-wide, so a mistyped name is a
+  # hard error instead of a silent new variable (files with an explicit
+  # `implicit real*8(a-h,o-z)` legacy rule are unaffected).
   FFLAGS += -Wimplicit-interface -Waliasing
-  # Still noisy (~300 array-temporary copies pending cleanup); stays gated
-  # behind `make lint=1` so the default build is quiet until they are fixed.
+  FFLAGS += -Wcompare-reals -Wunused-dummy-argument -Wunused-variable
+  FFLAGS += -Wline-truncation -Wcharacter-truncation -Wsurprising
+  FFLAGS += -Wreturn-type -Wzerotrip -Wundefined-do-loop -Wdo-subscript
+  FFLAGS += -Wintrinsic-shadow -Wconversion -Wreal-q-constant
+  FFLAGS += -Wtarget-lifetime -Wc-binding-type -Wampersand
+  FFLAGS += -fimplicit-none
+  # Runtime correctness audit tiers (gated; no effect on the default build).
+  # Build with `make check=N`, then run the e2e suite to surface bugs that only
+  # appear at execution time:
+  #   check=1: array-bounds / do-loop / pointer / memory / recursion violations.
+  #   check=2: -finit-real=snan + trap on invalid => any uninitialised REAL used
+  #            in arithmetic aborts with a backtrace.
+  ifeq ($(check),1)
+    FFLAGS += -g -fbacktrace -fcheck=bounds,do,pointer,mem,recursion
+  endif
+  ifeq ($(check),2)
+    FFLAGS += -g -fbacktrace -finit-real=snan -ffpe-trap=invalid
+  endif
+  # Gated diagnostics still being cleaned up (`make lint=1`):
+  #   -Warray-temporaries / -Wrealloc-lhs : hidden heap allocation+copy or a
+  #     runtime shape-check+realloc on an assignment (perf; ~305 / ~374 sites).
+  #   -Wmaybe-uninitialized : ~153 false positives in the faint_cpu integral
+  #     routines (scalar temps the compiler cannot prove assigned-before-use;
+  #     confirmed harmless by the check=2 audit).
+  #   -Wuse-without-only : module-import hygiene (~161 sites).
   ifeq ($(lint),1)
-    FFLAGS += -Warray-temporaries
+    FFLAGS += -Warray-temporaries -Wrealloc-lhs
+    FFLAGS += -Wmaybe-uninitialized -Wuse-without-only
   endif
   LFLAGS += -L/usr/lib -fopenmp
   # -lopenblas is required so SCF.f90's openblas_set_num_threads_/get_ symbols

@@ -60,9 +60,10 @@ subroutine read_coords(inputCoord)
 
     use garcha_mod, only : natom, ntatom, nsol, iz, r, rqm, pc
     use constants_mod, only : bohr
+    implicit none
     character(len=20), intent(in) :: inputCoord
 
-    integer :: ios, whitespace_count, word_count
+    integer :: ios, whitespace_count, word_count, i
     logical :: fileExists
     character(len=1)  :: char_read
 

@@ -50,6 +50,9 @@ subroutine RMMcalc3_FockMao( DensMao, ElecField, FockMao, DipMom, Energy )
 !------------------------------------------------------------------------------!
    call g2g_timer_start('RMMcalc3-field')
    call dipole( DipMom, Pmat_vec, 2*NCO+Nunp, r, d, Iz, pc, .true.)
+   ! No external field => no field-energy contribution. Initialise here so the
+   ! Energy accumulation below is well-defined when the eefld_on branch is skipped.
+   Energy_Efield = 0.0d0
    if (eefld_on) then
       write(666,*) eefld_on
       g = 1.0d0

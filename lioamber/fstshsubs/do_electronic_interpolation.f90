@@ -62,6 +62,9 @@ use fstsh_data, only: tsh_file, first_interp, vel_old, sigma_old, sigma_now,    
 !  call print_sigma(sigma_1,all_states,  "t      ")
 
    state_before = current_state
+   ! Default surface if the substep loop below runs zero times (tsh_Enstep <= 0):
+   ! no hop, so the post-loop new_surf /= state_before test is well-defined.
+   new_surf     = state_before
    allocate(elec_vel(3,natom),probFinal(all_states))
    probFinal = 0.0d0
    dt_elec = tsh_time_dt / real(tsh_Enstep)

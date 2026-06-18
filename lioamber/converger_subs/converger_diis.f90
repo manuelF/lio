@@ -56,12 +56,12 @@ subroutine diis_finalise()
 
 end subroutine diis_finalise
 
-subroutine diis_fock_commut(dens_op, fock_op, dens, M_in, spin, ndiist)
+subroutine diis_fock_commut(dens_op, fock_op, dens, M_in, spin)
    use converger_data  , only: fockm, FP_PFm, FP_PFm_T, ndiis, diis_head
    use typedef_operator, only: operator
 
    implicit none
-   integer       , intent(in)    :: M_in, ndiist, spin
+   integer       , intent(in)    :: M_in, spin
    LIODBLE  , intent(inout) :: dens(:,:)
    type(operator), intent(inout) :: dens_op, fock_op
 
@@ -90,7 +90,7 @@ subroutine diis_fock_commut(dens_op, fock_op, dens, M_in, spin, ndiist)
 end subroutine diis_fock_commut
 
 subroutine diis_get_error(M_in, spin, verbose)
-   use converger_data, only: ndiis, FP_PFm, diis_error, diis_head
+   use converger_data, only: FP_PFm, diis_error, diis_head
    integer, intent(in)  :: M_in, spin, verbose
 
    integer      :: ii, jj, head_slot

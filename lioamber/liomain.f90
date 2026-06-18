@@ -203,7 +203,7 @@ subroutine do_population_analysis(rho_tot, rho_a, rho_b)
    use garcha_mod      , only: Smat, Iz, sqsm, OPEN
    use properties      , only: print_mulliken, print_becke, print_lowdin, &
                                do_becke, do_mulliken, do_lowdin
-   use basis_data      , only: M, Nuc, MM
+   use basis_data      , only: M, Nuc
    use ECP_mod         , only: ecpmode, IzECP
    use SCF_aux         , only: fix_densmat
 
@@ -311,7 +311,7 @@ end subroutine do_fukui_calc
 subroutine do_restart(UID, rho_total)
    use garcha_mod , only: OPEN, NCO, NUNP, MO_coef_at, MO_coef_at_b, &
                           rhoalpha, rhobeta
-   use basis_data , only: M, MM, indexii
+   use basis_data , only: M, indexii
    use fileio_data, only: rst_dens
    use fileio     , only: write_coef_restart, write_rho_restart
    use tbdft_data,  only: MTB, tbdft_calc

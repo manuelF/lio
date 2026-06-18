@@ -122,7 +122,10 @@ subroutine scf_extrap_predict(MM, Pmat, rhoalpha, rhobeta, openshell, r, ntatom)
    ! at fixed geometry the density history is not a smooth trajectory.
    fp = geo_fingerprint(r, ntatom)
    if (.not. have_geo_fp)          return
-   if (fp == geo_fp_last)          return
+   ! Bit-exact "geometry unchanged" test. geo_fingerprint is pure and serial, so
+   ! identical coordinates reproduce identical bits; compare the bit patterns as
+   ! integers for an exact equality test.
+   if (transfer(fp, 0_8) == transfer(geo_fp_last, 0_8)) return
 
    order = min(stored, max_order)
    call aspc_coeffs(order, coef)
