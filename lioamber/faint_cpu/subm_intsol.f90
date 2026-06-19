@@ -54,8 +54,6 @@ subroutine intsol(Rho, Hmat, Iz, pc, r, d, natom, ntatom, E1s, Ens, elec)
                         pi1p, pi0p, d1s, d2s, d1p, d0s, d0p, Q(3)
    LIODBLE, allocatable :: s0s(:), s1s(:), s2s(:), s3s(:), s4s(:)
 
-   allocate(s0s(ntatom), s1s(ntatom), s2s(ntatom), s3s(ntatom), s4s(ntatom))
-
    sq3 = 1.D0
    if (NORM) sq3 = sqrt(3.D0)
    do l1 = 1, 3
@@ -80,7 +78,19 @@ subroutine intsol(Rho, Hmat, Iz, pc, r, d, natom, ntatom, E1s, Ens, elec)
    E1s = 0.0D0
    if (.not. elec) return
 
+   ! Parallel over the outer shell index ifunct: distinct ifunct own disjoint
+   ! packed Hmat indices (jfunct<=ifunct), so Hmat writes are race-free and
+   ! bit-exact. The MM-atom sum stays serial per thread (partitioning it would
+   ! reorder the sum); E1s reorders harmlessly (energy only, tol 1.5e-2).
+   !$omp parallel default(shared) reduction(+:E1s) &
+   !$omp   private(s0s, s1s, s2s, s3s, s4s, ifunct, jfunct, nci, ncj, iatom, &
+   !$omp           lk, lij, l1, l2, l3, l4, vecmat_ind, rexp, ccoef, term, tna, &
+   !$omp           uf, Z2, Zij, t1, t2, f1, f2, Q, p3s, p2s, p1s, p0s, &
+   !$omp           pj2s, pj1s, pj1p, pj0s, pj0p, pi1p, pi0p, d1s, d2s, d1p, d0s, d0p)
+   allocate(s0s(ntatom), s1s(ntatom), s2s(ntatom), s3s(ntatom), s4s(ntatom))
+
    ! (s|s)
+   !$omp do schedule(dynamic)
    do ifunct = 1, ns
    do jfunct = 1, ifunct
       do nci = 1, ncont(ifunct)
@@ -117,7 +127,10 @@ subroutine intsol(Rho, Hmat, Iz, pc, r, d, natom, ntatom, E1s, Ens, elec)
    enddo
    enddo
 
+   !$omp end do
+
    ! (p|s)
+   !$omp do schedule(dynamic)
    do ifunct = ns+1, ns+np, 3
    do jfunct = 1, ns
       do nci = 1, ncont(ifunct)
@@ -162,7 +175,10 @@ subroutine intsol(Rho, Hmat, Iz, pc, r, d, natom, ntatom, E1s, Ens, elec)
    enddo
    enddo
 
+   !$omp end do
+
    ! (p|p)
+   !$omp do schedule(dynamic)
    do ifunct = ns+1, ns+np , 3
    do jfunct = ns+1, ifunct, 3
       do nci = 1, ncont(ifunct)
@@ -220,7 +236,10 @@ subroutine intsol(Rho, Hmat, Iz, pc, r, d, natom, ntatom, E1s, Ens, elec)
    enddo
    enddo
 
+   !$omp end do
+
    ! (d|s)
+   !$omp do schedule(dynamic)
    do ifunct = ns+np+1, M, 6
    do jfunct = 1, ns
       do nci = 1, ncont(ifunct)
@@ -279,7 +298,10 @@ subroutine intsol(Rho, Hmat, Iz, pc, r, d, natom, ntatom, E1s, Ens, elec)
    enddo
    enddo
 
+   !$omp end do
+
    ! (d|p)
+   !$omp do schedule(dynamic)
    do ifunct = ns+np+1, M    , 6
    do jfunct = ns+1   , ns+np, 3
       do nci = 1, ncont(ifunct)
@@ -353,7 +375,10 @@ subroutine intsol(Rho, Hmat, Iz, pc, r, d, natom, ntatom, E1s, Ens, elec)
    enddo
    enddo
 
+   !$omp end do
+
    ! (d|d)
+   !$omp do schedule(dynamic)
    do ifunct = ns+np+1, M     , 6
    do jfunct = ns+np+1, ifunct, 6
       do nci = 1, ncont(ifunct)
@@ -466,8 +491,11 @@ subroutine intsol(Rho, Hmat, Iz, pc, r, d, natom, ntatom, E1s, Ens, elec)
       enddo
    enddo
    enddo
+   !$omp end do
 
    deallocate(s0s, s1s, s2s, s3s, s4s)
+   !$omp end parallel
+
    return
 end subroutine
 end module subm_intsol
