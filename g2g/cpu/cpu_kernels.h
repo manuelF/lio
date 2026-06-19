@@ -512,37 +512,35 @@ void cpu_compute_density_gga_batch(
   // This keeps the kernel compute-bound (as the scalar per-point version was)
   // while exposing the points dimension to the vectorizer as an axpy.
   constexpr int B = 8;  // one AVX-256 float vector (or 2 doubles); no remainder
+  constexpr int NCH = 10;       // function channels: value + 3 grad + 6 hessian
+  constexpr int FS = NCH * B;   // per-function stride in the interleaved tile
 
-  static thread_local std::vector<scalar_type> tbuf;  // 10 * m * B transposed tile
-  const size_t tneed = (size_t)10 * m * B;
+  // Interleaved transposed tile: T[(j*NCH + k)*B + b] holds channel k of
+  // function j at lane b. Interleaving the 10 channels (rather than 10 separate
+  // [m*B] arrays) makes the per-channel offset a *compile-time* k*B instead of a
+  // runtime k*(m*B): the matvec inner loop below then addresses all 10 channels
+  // off ONE base register (Tj) with constant displacements. With the old layout
+  // the 10 runtime base pointers spilled to the stack and were reloaded every
+  // j-iteration (1 stack-load per FMA — the loop was load-port bound). Same
+  // arithmetic and summation order ⇒ bit-exact with the per-point kernel.
+  static thread_local std::vector<scalar_type> tbuf;  // NCH * m * B tile
+  const size_t tneed = (size_t)NCH * m * B;
   if (tbuf.size() < tneed) tbuf.resize(tneed);
-
-  scalar_type* const Tfv  = tbuf.data();
-  scalar_type* const Tgx  = Tfv  + (size_t)m * B;
-  scalar_type* const Tgy  = Tgx  + (size_t)m * B;
-  scalar_type* const Tgz  = Tgy  + (size_t)m * B;
-  scalar_type* const Thpx = Tgz  + (size_t)m * B;
-  scalar_type* const Thpy = Thpx + (size_t)m * B;
-  scalar_type* const Thpz = Thpy + (size_t)m * B;
-  scalar_type* const Thix = Thpz + (size_t)m * B;
-  scalar_type* const Thiy = Thix + (size_t)m * B;
-  scalar_type* const Thiz = Thiy + (size_t)m * B;
-  scalar_type* const Tk[10] = {Tfv, Tgx, Tgy, Tgz, Thpx, Thpy, Thpz, Thix, Thiy, Thiz};
-  const scalar_type* const src[10] = {fv, gx, gy, gz, hpx, hpy, hpz, hix, hiy, hiz};
+  scalar_type* const T = tbuf.data();
+  const scalar_type* const src[NCH] = {fv, gx, gy, gz, hpx, hpy, hpz, hix, hiy, hiz};
 
   for (int p0 = 0; p0 < np; p0 += B) {
     const int bn = (np - p0 < B) ? (np - p0) : B;
 
-    // Transpose this tile: Tk[k][j*B + b] = src[k][(p0+b)*src_stride + j].
-    for (int k = 0; k < 10; ++k) {
-      scalar_type* __restrict__ Tkk = Tk[k];
+    // Transpose this tile: T[(j*NCH + k)*B + b] = src[k][(p0+b)*src_stride + j].
+    for (int k = 0; k < NCH; ++k) {
       const scalar_type* __restrict__ s = src[k];
       for (int b = 0; b < bn; ++b) {
         const scalar_type* __restrict__ srow = s + (size_t)(p0 + b) * src_stride;
-        for (int j = 0; j < m; ++j) Tkk[(size_t)j * B + b] = srow[j];
+        for (int j = 0; j < m; ++j) T[(size_t)(j * NCH + k) * B + b] = srow[j];
       }
       for (int b = bn; b < B; ++b)
-        for (int j = 0; j < m; ++j) Tkk[(size_t)j * B + b] = scalar_type(0);
+        for (int j = 0; j < m; ++j) T[(size_t)(j * NCH + k) * B + b] = scalar_type(0);
     }
 
     scalar_type acc_pd[B], acc_tdx[B], acc_tdy[B], acc_tdz[B];
@@ -565,26 +563,26 @@ void cpu_compute_density_gga_batch(
       const scalar_type* __restrict__ rmm_row = &rmm[(size_t)i * rmm_stride];
       for (int j = 0; j <= i; ++j) {
         const scalar_type rmj = rmm_row[j];
-        const size_t off = (size_t)j * B;
+        const scalar_type* __restrict__ Tj = T + (size_t)j * FS;
         for (int b = 0; b < B; ++b) {
-          Wfv[b]  += Tfv[off + b]  * rmj;
-          Wgx[b]  += Tgx[off + b]  * rmj;
-          Wgy[b]  += Tgy[off + b]  * rmj;
-          Wgz[b]  += Tgz[off + b]  * rmj;
-          Whpx[b] += Thpx[off + b] * rmj;
-          Whpy[b] += Thpy[off + b] * rmj;
-          Whpz[b] += Thpz[off + b] * rmj;
-          Whix[b] += Thix[off + b] * rmj;
-          Whiy[b] += Thiy[off + b] * rmj;
-          Whiz[b] += Thiz[off + b] * rmj;
+          Wfv[b]  += Tj[0 * B + b] * rmj;
+          Wgx[b]  += Tj[1 * B + b] * rmj;
+          Wgy[b]  += Tj[2 * B + b] * rmj;
+          Wgz[b]  += Tj[3 * B + b] * rmj;
+          Whpx[b] += Tj[4 * B + b] * rmj;
+          Whpy[b] += Tj[5 * B + b] * rmj;
+          Whpz[b] += Tj[6 * B + b] * rmj;
+          Whix[b] += Tj[7 * B + b] * rmj;
+          Whiy[b] += Tj[8 * B + b] * rmj;
+          Whiz[b] += Tj[9 * B + b] * rmj;
         }
       }
-      const size_t ioff = (size_t)i * B;
+      const scalar_type* __restrict__ Ti = T + (size_t)i * FS;
       for (int b = 0; b < B; ++b) {
-        const scalar_type Fi  = Tfv[ioff + b];
-        const scalar_type igx = Tgx[ioff + b],  igy = Tgy[ioff + b],  igz = Tgz[ioff + b];
-        const scalar_type ihpx = Thpx[ioff + b], ihpy = Thpy[ioff + b], ihpz = Thpz[ioff + b];
-        const scalar_type ihix = Thix[ioff + b], ihiy = Thiy[ioff + b], ihiz = Thiz[ioff + b];
+        const scalar_type Fi  = Ti[0 * B + b];
+        const scalar_type igx = Ti[1 * B + b],  igy = Ti[2 * B + b],  igz = Ti[3 * B + b];
+        const scalar_type ihpx = Ti[4 * B + b], ihpy = Ti[5 * B + b], ihpz = Ti[6 * B + b];
+        const scalar_type ihix = Ti[7 * B + b], ihiy = Ti[8 * B + b], ihiz = Ti[9 * B + b];
         const scalar_type w = Wfv[b];
         acc_pd[b]  += Fi * w;
         acc_tdx[b] += igx * w + Wgx[b] * Fi;
