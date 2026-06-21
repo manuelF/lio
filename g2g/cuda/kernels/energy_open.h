@@ -26,7 +26,7 @@ float y)
 // already runtime-dead at block_height==1, the template just lets ptxas
 // see it.
 template <class scalar_type, bool lda, bool single_pointer>
-__global__ void gpu_compute_density_opened(
+__launch_bounds__(DENSITY_BLOCK_SIZE, 14) __global__ void gpu_compute_density_opened(
     cudaTextureObject_t rmm_input_gpu_tex,
     cudaTextureObject_t rmm_input_gpu_tex2, uint points,
     const scalar_type* __restrict__ function_values,
