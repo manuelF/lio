@@ -17,13 +17,25 @@ subroutine Commut_data_r(this, Bmat, AB_BAmat, Nsize)
    Amat = this%data_ON
    AB_BAmat = commutator_cublas(Amat, Bmat)
 #else
-   ! AB_BAmat = A*B - B*A computed via two DGEMMs, avoiding the
-   ! matmul-internal path and the temporary copies (Amat/ABmat/BAmat plus
-   ! the function-return assignment) the previous version allocated.
+   ! AB_BAmat = A*B - B*A with A = F'(ON), B = P'(ON), both symmetric in the
+   ! orthonormal basis. Since B*A = (A*B)^T for symmetric A,B, the second
+   ! (full M^3) DGEMM is replaced by an O(M^2) antisymmetrization of the first
+   ! product: AB_BAmat = AB - AB^T. Halves the commutator's BLAS-3 work.
+   ! NOTE: A,B are symmetric only up to the ulp-level asymmetry left by their
+   ! DGEMM base changes, so this is not bit-identical to the 2-DGEMM form.
+   integer :: ii, jj
+   LIODBLE :: aij, aji
    call DGEMM('N','N',Nsize,Nsize,Nsize, 1.0d0, this%data_ON, Nsize, &
               Bmat, Nsize, 0.0d0, AB_BAmat, Nsize)
-   call DGEMM('N','N',Nsize,Nsize,Nsize,-1.0d0, Bmat, Nsize, &
-              this%data_ON, Nsize, 1.0d0, AB_BAmat, Nsize)
+   do jj = 1, Nsize
+      AB_BAmat(jj,jj) = 0.0d0
+      do ii = jj+1, Nsize
+         aij = AB_BAmat(ii,jj)
+         aji = AB_BAmat(jj,ii)
+         AB_BAmat(ii,jj) = aij - aji
+         AB_BAmat(jj,ii) = aji - aij
+      enddo
+   enddo
 #endif
 
 end subroutine Commut_data_r
