@@ -579,15 +579,10 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
             call int3lu(E2, Pmat_vec, Fmat_vec2, Fmat_vec, Gmat_vec, Ginv_vec, &
                         Hmat_vec, open, MEMO)
             t_int3lu = t_int3lu + omp_get_wtime()
-            if (tbdft_calc == 0) then
-               call spunpack_rho('L', M, rhoalpha, rho_a0)
-               call rho_aop%Sets_data_AO(rho_a0)
-               call rho_aop%BChange_AOtoON(Ymat, M_f)
-               call spunpack_rho('L', M, rhobeta, rho_b0)
-               call rho_bop%Sets_data_AO(rho_b0)
-               call rho_bop%BChange_AOtoON(Ymat, M_f)
-               dens_bchange_done = .true.
-            end if
+!           Density BChange_AOtoON is left to converger_setup, not done here:
+!           OpenBLAS serializes its M^3 DGEMM to one thread inside an OpenMP
+!           section, which made it (not int3lu) the cost hidden under the
+!           'Coulomb fit + Fock' timer.
 !$omp section
             t_g2g = -omp_get_wtime()
             call g2g_solve_groups_into_open(0, Exc, 0.0D0, fmat_xc_scratch, &
@@ -602,12 +597,7 @@ subroutine SCF(E, fock_aop, rho_aop, fock_bop, rho_bop)
             call int3lu(E2, Pmat_vec, Fmat_vec2, Fmat_vec, Gmat_vec, Ginv_vec, &
                         Hmat_vec, open, MEMO)
             t_int3lu = t_int3lu + omp_get_wtime()
-            if (tbdft_calc == 0) then
-               call spunpack_rho('L', M, Pmat_vec, rho_a0)
-               call rho_aop%Sets_data_AO(rho_a0)
-               call rho_aop%BChange_AOtoON(Ymat, M_f)
-               dens_bchange_done = .true.
-            end if
+!           Density BChange_AOtoON is left to converger_setup (see open branch).
 !$omp section
             t_g2g = -omp_get_wtime()
             call g2g_solve_groups_into(0, Exc, 0.0D0, fmat_xc_scratch)
