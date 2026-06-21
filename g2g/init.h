@@ -124,8 +124,20 @@ extern bool td_merge_groups;
 extern double big_function_cutoff;
 extern double free_global_memory;
 
-extern bool timer_sum;
-extern bool timer_single;
+// Timer granularity (from the Fortran `timers` input). Monotonic:
+//   0 off  1 phases  2 sections  3 diagnostic
+// Levels 1-2 are sync-free (production-representative); only 3 adds a device
+// sync for exact GPU timing.
+extern unsigned int timer_level;
+
+inline bool timers_on(void)        { return timer_level >= 1; }  // tree active
+inline bool timers_sections(void)  { return timer_level >= 2; }  // full detail
+inline bool timers_gpu_exact(void) { return timer_level >= 3; }  // sync
+
+// Deprecated aliases of the helpers above; kept only so existing call sites
+// compile. Do not use in new code.
+extern bool timer_sum;     // == timers_on()
+extern bool timer_single;  // == timers_gpu_exact()
 extern uint verbose;
 }
 

@@ -594,8 +594,9 @@ bool remove_zero_weights = true;
 bool energy_all_iterations = false;
 bool td_merge_groups = false;
 double free_global_memory = 0.0;
-bool timer_single = false;
-bool timer_sum = false;
+unsigned int timer_level = 0;
+bool timer_single = false;  // derived alias, see init.h
+bool timer_sum = false;     // derived alias, see init.h
 uint verbose = 0;
 }
 
@@ -605,8 +606,6 @@ extern "C" void g2g_set_options_(double* fort_fgm, double* fort_lcs,
                                  bool* fort_eai, bool* fort_rzw,
                                  uint& fort_mppc, uint& fort_mfe,
                                  uint& fort_time, uint& fort_verbose) {
-  uint timer_level = 0;
-
   free_global_memory = *fort_fgm;
   little_cube_size = *fort_lcs;
   sphere_radius = *fort_sr;
@@ -618,12 +617,8 @@ extern "C" void g2g_set_options_(double* fort_fgm, double* fort_lcs,
   timer_level = fort_time;
   verbose = fort_verbose;
 
-  if (timer_level > 1) {
-    timer_sum = true;
-  }
-  if (timer_level % 2 == 1) {
-    timer_single = true;
-  }
+  timer_sum = (timer_level >= 1);
+  timer_single = (timer_level >= 3);
 }
 
 //=================================================================================================================

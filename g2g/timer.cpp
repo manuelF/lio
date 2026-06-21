@@ -91,7 +91,9 @@ bool Timer::operator<(const Timer& other) const {
 
 void Timer::sync(void) {
 #if GPU_KERNELS
-  if (G2G::timer_single) {
+  // Only device sync in the timing path; level 3 only, so levels 1-2 don't
+  // perturb the run.
+  if (G2G::timers_gpu_exact()) {
     cudaDeviceSynchronize();
   }
 #endif
@@ -129,11 +131,23 @@ map<string, Timer*> all_timers;
 map<string, Timer*> top_timers;
 map<string, Timer> fortran_timers;
 
+// Live nesting depth of the sum-timer tree (Total == 0). Tracked on every
+// start/stop/pause even when the node isn't recorded, so the phases level can
+// suppress deep nodes while staying balanced.
+int timer_depth = 0;
+// Phases level (timers==1) records down to this depth (Total > SCF > Iteration
+// > Fock/diag/accel); sections (>=2) records the whole tree.
+static const int kPhaseMaxDepth = 3;
+
+static inline bool timer_node_recorded(int node_depth) {
+  return G2G::timers_sections() || node_depth <= kPhaseMaxDepth;
+}
+
 // One-time Fortran timer calls - these time sections and report timings
 // immediately
 extern "C" void g2g_timer_start_(const char* timer_name,
                                  unsigned int length_arg) {
-  if (G2G::timer_single) {
+  if (G2G::timers_gpu_exact()) {
     string tname(timer_name, length_arg);
     tname.append("\0");
 
@@ -147,7 +161,7 @@ extern "C" void g2g_timer_start_(const char* timer_name,
 
 extern "C" void g2g_timer_stop_(const char* timer_name,
                                 unsigned int length_arg) {
-  if (G2G::timer_single) {
+  if (G2G::timers_gpu_exact()) {
     string tname(timer_name, length_arg);
     tname.append("\0");
 
@@ -163,7 +177,7 @@ extern "C" void g2g_timer_stop_(const char* timer_name,
 
 extern "C" void g2g_timer_pause_(const char* timer_name,
                                  unsigned int length_arg) {
-  if (G2G::timer_single) {
+  if (G2G::timers_gpu_exact()) {
     string tname(timer_name, length_arg);
     tname.append("\0");
 
@@ -183,7 +197,10 @@ extern "C" void g2g_timer_pause_(const char* timer_name,
 // of all timings up to that point is given in a tree-sorted display
 extern "C" void g2g_timer_sum_start_(const char* timer_name,
                                      unsigned int length_arg) {
-  if (G2G::timer_sum) {
+  if (G2G::timers_on()) {
+    // Skip deep nodes at the phases level before any string/map work.
+    const int node_depth = timer_depth++;
+    if (!timer_node_recorded(node_depth)) return;
     string tname(timer_name, length_arg);
     tname.append("\0");
     if (timer_children.find(tname) == timer_children.end()) {
@@ -230,7 +247,10 @@ extern "C" void g2g_timer_sum_start_(const char* timer_name,
 
 extern "C" void g2g_timer_sum_stop_(const char* timer_name,
                                     unsigned int length_arg) {
-  if (G2G::timer_sum) {
+  if (G2G::timers_on()) {
+    // Mirror sum_start's decision so a skipped node never touches current_timer.
+    const int node_depth = --timer_depth;
+    if (!timer_node_recorded(node_depth)) return;
     string tname(timer_name, length_arg);
     tname.append("\0");
     Timer::sync();
@@ -251,7 +271,9 @@ extern "C" void g2g_timer_sum_stop_(const char* timer_name,
 
 extern "C" void g2g_timer_sum_pause_(const char* timer_name,
                                      unsigned int length_arg) {
-  if (G2G::timer_sum) {
+  if (G2G::timers_on()) {
+    const int node_depth = --timer_depth;  // see sum_stop
+    if (!timer_node_recorded(node_depth)) return;
     string tname(timer_name, length_arg);
     tname.append("\0");
     Timer::sync();
@@ -270,7 +292,7 @@ extern "C" void g2g_timer_sum_pause_(const char* timer_name,
 }
 
 extern "C" void g2g_timer_clear_(void) {
-  if (G2G::timer_sum) {
+  if (G2G::timers_on()) {
     for (map<string, Timer*>::iterator it = all_timers.begin();
          it != all_timers.end(); ++it) {
       delete it->second;
@@ -281,6 +303,7 @@ extern "C" void g2g_timer_clear_(void) {
     timer_children.clear();
     timer_stack.clear();
     current_timer = "";
+    timer_depth = 0;
   }
 }
 
@@ -303,7 +326,7 @@ void print_timer(string indent, string timer_name, Timer& timer, float total,
 }
 
 extern "C" void g2g_timer_summary_(void) {
-  if (G2G::timer_sum) {
+  if (G2G::timers_on()) {
     Timer total_timer = *all_timers["Total"];
     float total_time = 0.0f;
     total_time =
