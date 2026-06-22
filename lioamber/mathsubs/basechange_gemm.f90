@@ -39,6 +39,41 @@ function basechange_d_gemm(M,Mati,Umat,mode) result(Mato)
 end function
 
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
+! In-place congruence transform: Mat <- Umat^T * Mat * Umat ('dir')
+! or Mat <- Umat * Mat * Umat^T ('inv'). Bit-identical to basechange_d_gemm
+! (same two DGEMM calls, same order) but writes the result straight back into
+! Mat, avoiding the allocatable function-result `Mato` (one M*M allocation +
+! one M*M copy at the call site) on every invocation. Valid because the second
+! DGEMM's destination (Mat) is not one of its operands — A=Matm, B=Umat — so
+! overwriting Mat in place cannot corrupt the product.
+subroutine basechange_d_gemm_inplace(M, Mat, Umat, mode)
+   implicit none
+   integer         , intent(in)    :: M
+   character(len=3), intent(in)    :: mode
+   LIODBLE    , intent(in)    :: Umat(M,M)
+   LIODBLE    , intent(inout) :: Mat(M,M)
+
+   ! Persistent intermediate scratch, shared shape-cache with the functional
+   ! form's pattern. Reallocated only when M grows.
+   LIODBLE, allocatable, save :: Matm(:,:)
+   integer,             save :: cached_M = 0
+
+   if (cached_M /= M) then
+      if (allocated(Matm)) deallocate(Matm)
+      allocate(Matm(M,M))
+      cached_M = M
+   endif
+
+   if (mode == 'inv') then
+      call DGEMM('N','N',M,M,M,1.0D0,Umat,M,Mat ,M,0.0D0,Matm,M)
+      call DGEMM('N','T',M,M,M,1.0D0,Matm,M,Umat,M,0.0D0,Mat ,M)
+   else
+      call DGEMM('T','N',M,M,M,1.0D0,Umat,M,Mat ,M,0.0D0,Matm,M)
+      call DGEMM('N','N',M,M,M,1.0D0,Matm,M,Umat,M,0.0D0,Mat ,M)
+   endif
+end subroutine
+
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%!
 function basechange_cc_gemm(M,Mati,Umat,mode) result(Mato)
    implicit none
    integer         , intent(in)  :: M

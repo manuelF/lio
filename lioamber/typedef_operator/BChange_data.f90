@@ -10,18 +10,16 @@ subroutine BChange_AOtoON_r(this, Xmat, Nsize, invert_mode)
    logical         , intent(in), optional :: invert_mode
 
    character(len=3) :: mode = 'dir'
-   LIODBLE, allocatable :: Dmat(:,:)
 
    if (present(invert_mode)) then
       if (invert_mode) mode = 'inv'
    endif
 
-   allocate(Dmat(Nsize,Nsize))
-   Dmat = this%data_AO
-
-   call Xmat%change_base(Dmat, mode) 
-   call this%Sets_data_ON(Dmat)
-   deallocate(Dmat)
+   ! Seed data_ON with data_AO (handles (re)allocation), then transform it in
+   ! place — drops the separate Dmat scratch (one M*M allocation + copy) that
+   ! the old path used. Numerically identical: same DGEMMs on the same data.
+   call this%Sets_data_ON(this%data_AO)
+   call Xmat%change_base(this%data_ON, mode)
 end subroutine BChange_AOtoON_r
 
 subroutine BChange_ONtoAO_r(this, Xmat, Nsize, invert_mode)
@@ -34,19 +32,14 @@ subroutine BChange_ONtoAO_r(this, Xmat, Nsize, invert_mode)
    logical         , intent(in), optional :: invert_mode
 
    character(len=3) :: mode = 'inv'
-   LIODBLE, allocatable :: Dmat(:,:)
-   
-   allocate(Dmat(Nsize,Nsize))
-   Dmat = this%data_ON
 
    if (present(invert_mode)) then
       if (invert_mode) mode = 'dir'
-   endif  
+   endif
 
-   call Xmat%change_base(Dmat, mode)
-
-   call this%Sets_data_AO(Dmat)
-   deallocate(Dmat)
+   ! Seed data_AO with data_ON, transform in place (see BChange_AOtoON_r).
+   call this%Sets_data_AO(this%data_ON)
+   call Xmat%change_base(this%data_AO, mode)
  end subroutine BChange_ONtoAO_r
 
  subroutine BChange_AOtoON_x(this, Xmat, Nsize, invert_mode)

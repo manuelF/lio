@@ -5,7 +5,7 @@ subroutine change_base_rr(this, input_matrix, mode)
 #ifdef CUBLAS
    use cublasmath, only: basechange_cublas
 #else
-   use mathsubs  , only: basechange_gemm
+   use mathsubs  , only: basechange_d_gemm_inplace
 #endif
    use liosubs_math
    implicit none
@@ -17,7 +17,9 @@ subroutine change_base_rr(this, input_matrix, mode)
    input_matrix = basechange_cublas(size(input_matrix,1), input_matrix, &
                                     this%cu_pointer, mode)
 #else
-   input_matrix = basechange_gemm(size(input_matrix,1), input_matrix, &
+   ! In-place congruence (bit-identical to basechange_gemm) — avoids the
+   ! allocatable function-result temporary and its copy-back on every call.
+   call basechange_d_gemm_inplace(size(input_matrix,1), input_matrix, &
                                   this%matrix, mode)
 #endif
 
